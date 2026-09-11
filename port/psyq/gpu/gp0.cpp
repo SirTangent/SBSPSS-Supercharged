@@ -390,7 +390,7 @@ static void verifyArenaWindowOnce(void)
 		fprintf(stderr, "[gpu] arena straddles a 16MB window (%p..%p) - "
 						"24-bit prim tags cannot be reconstructed; aborting\n",
 				(void *)base, (void *)end);
-		abort();
+		Port_Exit(PORT_EXIT_FAULT);
 	}
 	g_arenaBase = base;
 	g_arenaEnd  = end + 1;
@@ -497,13 +497,13 @@ extern "C" void DrawOTag(u_long *p)
 							"was not allocated from the game heap\n",
 					(unsigned long)tag, (void *)tagp, (void *)addr,
 					(void *)g_arenaBase, (void *)g_arenaEnd);
-			abort();
+			Port_Exit(PORT_EXIT_FAULT);
 		}
 		tagp = (uint32_t *)addr;
 		if (--guard == 0)
 		{
 			fprintf(stderr, "[gpu] DrawOTag: runaway tag chain - corrupt OT?\n");
-			abort();
+			Port_Exit(PORT_EXIT_FAULT);
 		}
 	}
 }

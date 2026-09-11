@@ -27,13 +27,14 @@
 	    Map#2+30:2000             30 vblanks after the 2nd open of "Map"
 	    FMA:INTRO#1+10:0800       (FMA scripts use the [scene] FMA:<name>)
 	    # epoch 3000 ram=123456 crc=89ABCDEF
-	A scene-relative entry is in force only while its anchor occurrence is
-	the CURRENT scene: the moment another scene opens, entries anchored to
-	the previous one expire (an absolute entry never does).  That is what a
-	route author means by "during the 2nd Map", and it lets a boot-time
-	button pulse train anchored to FrontEnd#1 stop by itself when the
-	first level opens.  Within the entries in force, the latest one that
-	has come due wins.
+	A scene open releases every button: an entry is in force only if it
+	came due at or after the most recent scene open (for a scene-relative
+	entry that also means its anchor occurrence is the current scene).
+	That is what a route author means by "during the 2nd Map", it lets a
+	boot-time button pulse train anchored to FrontEnd#1 stop by itself when
+	the first level opens, and it keeps an absolute press recorded before
+	the first scene from outliving its scene-relative release.  Within the
+	entries in force, the latest one that has come due wins.
 
 	The `# epoch` markers come from SBSP_RECORD_PAD=<path>, which writes
 	the applied mask in the scene-relative form plus one marker every 300
@@ -186,7 +187,7 @@ static int parsePadEntry(const char *tok, PadEntry *e, const char **why)
 	}
 	e->mask = mask & 0xFFFF;
 
-	if (!hash || hash > colon)
+	if (!hash)
 	{
 		e->vblank = strtoul(tok, &end, 10);
 		if (end == tok || end != colon)
@@ -252,11 +253,12 @@ static void padFileParse(void)
 			}
 			continue;
 		}
-		char *c = strstr(s, " #");
-		if (!c)
-			c = strstr(s, "\t#");
-		if (c)
-			*c = 0;
+		for (char *c = s + 1; *c; c++)		/* first '#' preceded by a blank */
+			if (*c == '#' && (c[-1] == ' ' || c[-1] == '\t'))
+			{
+				*c = 0;
+				break;
+			}
 		char *e = s + strlen(s);
 		while (e > s && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\r' || e[-1] == '\n'))
 			*--e = 0;
@@ -323,8 +325,8 @@ static unsigned scriptMask(unsigned long vblank)
 		const PadEntry &e = g_entries[i];
 		if (!e.resolved || vblank < e.vblank)
 			continue;
-		if (e.scene[0] && e.anchor != current)
-			continue;					/* anchored to a scene that is over */
+		if (e.vblank < current || (e.scene[0] && e.anchor != current))
+			continue;					/* released by a later scene open */
 		if (!found || e.vblank >= best)
 		{
 			best  = e.vblank;

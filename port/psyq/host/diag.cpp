@@ -19,7 +19,6 @@
 #include "host/pump.h"
 
 extern "C" unsigned long GPU_PrimPoolPeak(void);	/* gpu/gp0.cpp */
-extern "C" int Port_InputAtExit(void);				/* host/input.cpp */
 
 namespace
 {
@@ -286,9 +285,6 @@ extern "C" void Port_Exit(int code)
 		fflush(stderr);
 		_exit(code);
 	}
-
-	if (code == PORT_EXIT_CLEAN && Port_InputAtExit())
-		code = PORT_EXIT_ORACLE;
 
 	fprintf(stderr, "[summary] exit=%d vblanks=%lu scene=%s asserts=%lu "
 					"peak_ram=%lu peak_memnodes=%d/256 peak_prim=%lu\n",

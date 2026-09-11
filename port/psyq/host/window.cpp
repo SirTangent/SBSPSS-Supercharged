@@ -224,7 +224,7 @@ extern "C" void Host_VBlank(unsigned long vblankNo)
 	if (g_exitAfter && vblankNo >= g_exitAfter)
 	{
 		fprintf(stderr, "[host] SBSP_EXIT_AFTER=%lu reached - exiting\n", g_exitAfter);
-		Port_Exit(PORT_EXIT_CLEAN);
+		Port_Exit(Port_InputAtExit() ? PORT_EXIT_ORACLE : PORT_EXIT_CLEAN);
 	}
 
 	inHere = 0;

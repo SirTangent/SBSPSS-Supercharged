@@ -8,7 +8,9 @@
 	process: the shim-only unit exes can legitimately run for a long time
 	without advancing the vblank counter.  The watchdog thread only READS
 	Port_VBlankCount; it never touches game state.  SBSP_WATCHDOG=<seconds>
-	(default 30, 0 = off); off under a debugger.
+	(default 30, 0 = off) arms it; without it, only scripted runs
+	(--uncapped / --pad-file / --exit-after / --pad-script) get the default,
+	an interactive session never does.  Off under a debugger.
 */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -71,12 +73,30 @@ static DWORD WINAPI watchdogThread(LPVOID arg)
 	}
 }
 
+/*	Armed only for harness runs: SBSP_WATCHDOG given explicitly, or any of
+	the scripted-run flags present.  An interactive session legitimately
+	stops pumping for as long as the user holds the title bar (Win32's
+	modal move loop runs inside SDL_PollEvent), which must not be a kill.  */
+static int harnessRun(void)
+{
+	static const char *const flags[] = { "SBSP_UNCAPPED", "SBSP_PAD_FILE", "SBSP_EXIT_AFTER", "SBSP_PAD_SCRIPT" };
+	for (size_t i = 0; i < sizeof(flags) / sizeof(flags[0]); i++)
+	{
+		const char *e = getenv(flags[i]);
+		if (e && *e)
+			return 1;
+	}
+	return 0;
+}
+
 extern "C" void Port_WatchdogStart(void)
 {
 	int limit = 30;
 	const char *e = getenv("SBSP_WATCHDOG");
 	if (e && *e)
 		limit = atoi(e);
+	else if (!harnessRun())
+		return;
 	if (limit <= 0)
 		return;
 	if (IsDebuggerPresent())

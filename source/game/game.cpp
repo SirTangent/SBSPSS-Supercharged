@@ -557,6 +557,13 @@ void CGameScene::think_playing(int _frames)
 	{
 		m_player->dieYouPorousFreak();
 	}
+	// PC: a death holds the autoplay finish timer and re-arms it for the respawn
+	// (respawnLevel() never re-runs initLevel); a dead player never finishes a level
+	if(Port_AutoplayFinish()>=0&&m_player->isDead())
+	{
+		s_levelFinished=false;
+		m_timer=Port_AutoplayFinish();
+	}
 #else
 #line 553	// keep the PS1 build's __LINE__ (DBGMSG below) byte-identical
 #endif

@@ -7,8 +7,10 @@ and the exit-code self-test, over the PC build of the game.
     run_tier.py --exe ... --selftest
 
 Every run uses the determinism set (--uncapped --no-cd-pace --no-audio
---seed N --frame-crc) plus --record-pad into a temp file, so a route also
-re-verifies itself against its own epoch markers.
+--seed N --frame-crc) plus --record-pad into a temp file; a passing Tier 1
+route is then replayed from that recording with the same seed, which checks
+the recording's "# epoch" ram/CRC markers and requires identical [scene] and
+[frame] streams - the determinism proof, per route (--no-replay skips it).
 
 Tier 1 routes live in port/tests/routes/<name>.pad.  A route's header is
 plain pad-file comments the game ignores and this script reads:
@@ -179,7 +181,7 @@ def report_common(res, name):
     return ok
 
 
-def run_route(exe, route, seed, logdir):
+def run_route(exe, route, seed, logdir, replay):
     with tempfile.NamedTemporaryFile(prefix=f"{route.name}_", suffix=".rec.pad", delete=False) as tmp:
         rec = tmp.name
     args = ["--pad-file", str(route.path), "--record-pad", rec, "--seed", str(seed),
@@ -203,6 +205,28 @@ def run_route(exe, route, seed, logdir):
           f"{res.summary.get('vblanks', '?')} vblanks, {len(res.scenes)} scenes, "
           f"peak_ram={res.summary.get('peak_ram', '?')} peak_prim={res.summary.get('peak_prim', '?')} "
           f"peak_memnodes={res.summary.get('peak_memnodes', '?')}")
+    if ok and replay:
+        # Replay the recording with the same seed: input now comes from the
+        # recorded scene-relative entries, its "# epoch" ram/CRC markers are
+        # checked, and the [scene]/[frame] streams must match the first run
+        # - so a wall-clock leak or an uninitialised read that survives the
+        # determinism set shows up here as a desync.
+        args = ["--pad-file", rec, "--seed", str(seed),
+                "--exit-after", str(route.exit_after)] + DETERMINISM + route.args
+        log2 = Path(logdir) / f"{route.name}.replay.log" if logdir else None
+        res2 = run_game(exe, args, route.env, route.timeout, log2)
+        ok = report_common(res2, route.name + " (replay)")
+        if res2.scenes != res.scenes:
+            print(f"  FAIL {route.name} (replay): [scene] sequence differs from the recorded run")
+            ok = False
+        frames1 = [l for l in res.lines if l.startswith("[frame] ")]
+        frames2 = [l for l in res2.lines if l.startswith("[frame] ")]
+        if frames1 != frames2:
+            print(f"  FAIL {route.name} (replay): [frame] CRC stream differs from the recorded run")
+            ok = False
+        epochs = sum(1 for l in Path(rec).read_text(encoding="utf-8").splitlines() if l.startswith("# epoch"))
+        print(f"  {'PASS' if ok else 'FAIL'} {route.name} (replay): {res2.wall:.1f}s wall, "
+              f"{len(frames1)} frames compared, {epochs} epochs checked")
     if ok:
         os.unlink(rec)
     else:
@@ -210,10 +234,13 @@ def run_route(exe, route, seed, logdir):
     return ok
 
 
-def tier1(exe, seed, fast, logdir, only):
+def tier1(exe, seed, fast, logdir, only, replay):
     names = FAST_ROUTES if fast else sorted(p.stem for p in ROUTES.glob("*.pad") if p.stem != "walk_right")
-    if only:
-        names = [n for n in names if n in only]
+    if only is not None:
+        names = only
+        if not names:
+            print("  tier 1: nothing selected by --only")
+            return True
     ok = True
     for n in names:
         path = ROUTES / f"{n}.pad"
@@ -221,14 +248,17 @@ def tier1(exe, seed, fast, logdir, only):
             print(f"  FAIL {n}: route file missing: {path}")
             ok = False
             continue
-        ok &= run_route(exe, Route(path), seed, logdir)
+        ok &= run_route(exe, Route(path), seed, logdir, replay)
     return ok
 
 
 def tier2(exe, seed, short, logdir, only):
     levels = TIER2_SHORT_LEVELS if short else list(range(25))
-    if only:
-        levels = [int(x) for x in only]
+    if only is not None:
+        levels = only
+        if not levels:
+            print("  tier 2: nothing selected by --only")
+            return True
     budget = 900 if short else 3600
     walk = ROUTES / "walk_right.pad"
     ok = True
@@ -280,7 +310,8 @@ def main():
     ap.add_argument("--tier2", action="store_true")
     ap.add_argument("--short", action="store_true", help=f"tier 2: levels {TIER2_SHORT_LEVELS}, 900 vblanks")
     ap.add_argument("--selftest", action="store_true", help="exit-code proofs via SBSP_SELFTEST")
-    ap.add_argument("--only", nargs="*", help="route names (tier 1) / level indices (tier 2)")
+    ap.add_argument("--only", nargs="*", help="route names (tier 1) and/or level indices 0-24 (tier 2)")
+    ap.add_argument("--no-replay", action="store_true", help="tier 1: skip replaying each route's recording")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--logs", help="directory to keep every run's log")
     a = ap.parse_args()
@@ -294,13 +325,21 @@ def main():
     if not (a.tier1 or a.tier2 or a.selftest):
         ap.error("nothing to do: pass --tier1, --tier2 and/or --selftest")
 
+    only_routes = only_levels = None
+    if a.only is not None:
+        only_routes = [x for x in a.only if not x.isdigit()]
+        only_levels = [int(x) for x in a.only if x.isdigit()]
+        bad = [x for x in only_levels if not 0 <= x <= 24]
+        if bad:
+            ap.error(f"--only: level index out of range 0-24: {bad}")
+
     ok = True
     if a.selftest:
         ok &= selftest(exe, a.seed, a.logs)
     if a.tier1:
-        ok &= tier1(exe, a.seed, a.fast, a.logs, a.only)
+        ok &= tier1(exe, a.seed, a.fast, a.logs, only_routes, not a.no_replay)
     if a.tier2:
-        ok &= tier2(exe, a.seed, a.short, a.logs, a.only)
+        ok &= tier2(exe, a.seed, a.short, a.logs, only_levels)
     print("ALL PASSED" if ok else "FAILURES")
     return 0 if ok else EXIT_ORACLE
 

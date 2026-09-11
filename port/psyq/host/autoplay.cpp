@@ -6,12 +6,13 @@
 	                  is armed for every level (game.cpp, conv_pc.md #28)
 	  spatulas=all    on finish, the save slot records every spatula
 	                  (bookkeeping only; the player's carried count is untouched)
-	  lives=N         starting GameSlot.m_lives - written at the FIRST
-	                  initLevel only (a death restarts the level through
-	                  initLevel again; re-writing there would make lives
-	                  inexhaustible).  Game over comes when m_lives goes
-	                  negative, so lives=0,die=1 is the shortest game over.
-	  continues=N     starting GameSlot.m_continues, same one-shot rule
+	  lives=N         starting GameSlot.m_lives (0..127, a signed char) -
+	                  written at the FIRST initLevel only: game over ->
+	                  continue -> Map -> level runs initLevel again, and
+	                  re-writing there would make continues inexhaustible.
+	                  Game over comes when m_lives goes negative, so
+	                  lives=0,die=1 is the shortest game over.
+	  continues=N     starting GameSlot.m_continues (0..127), same one-shot rule
 	  die=N           kill the player N times (CPlayer::dieYouPorousFreak),
 	                  one per observed death->respawn cycle
 
@@ -53,9 +54,9 @@ static void parse(void)
 			g_spatulasAll = 1;
 		else if (numeric && strncmp(tok, "finish=", 7) == 0)
 			g_finish = v;
-		else if (numeric && strncmp(tok, "lives=", 6) == 0)
-			g_lives = v;
-		else if (numeric && strncmp(tok, "continues=", 10) == 0)
+		else if (numeric && v <= 127 && strncmp(tok, "lives=", 6) == 0)
+			g_lives = v;			/* GameSlot.m_lives is a signed char */
+		else if (numeric && v <= 127 && strncmp(tok, "continues=", 10) == 0)
 			g_continues = v;
 		else if (numeric && strncmp(tok, "die=", 4) == 0)
 			g_die = v;

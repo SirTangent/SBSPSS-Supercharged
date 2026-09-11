@@ -350,9 +350,11 @@ after it).  The guard is `port/build-psx.cmd` + a SHA-256 compare of
       new finish logic.  `lives=N` / `continues=N` write
       `CGameSlotManager::getSlotData()->m_lives/m_continues` directly
       (public `typedef struct`, the idiom `game.cpp:319` already uses) -
-      once, at the first `initLevel()`: a death restarts the level through
-      `initLevel()` again (`pmdead.cpp` `m_lives--` + `restartlevel()`),
-      so the shim's accessor returns -1 after its first answer.
+      once, at the first `initLevel()`: game over -> continue -> Map ->
+      level runs `initLevel()` again, and re-writing there would make
+      continues inexhaustible, so the shim's accessor returns -1 after
+      its first answer.  (A plain death goes through `respawnLevel()`,
+      not `initLevel()`.)
     - the level-finished block, after the hi-spatula-count check:
       `spatulas=all` records every spatula in the save slot
       (`setSpatulaCollectedCount(total,total)`) - slot bookkeeping only,
@@ -361,7 +363,11 @@ after it).  The guard is `port/build-psx.cmd` + a SHA-256 compare of
       `CPlayer::dieYouPorousFreak()` when the shim's
       `Port_AutoplayDie(m_player->isDead())` says so - one death per
       observed death->respawn cycle, so N is exactly N life-losses and
-      game-over is reached through the retail `pmdead.cpp` path.
+      game-over is reached through the retail `pmdead.cpp` path.  The
+      same arm holds the `finish=N` countdown at N while the player is
+      dead and clears any finish it fired during the death sequence: a
+      level is never recorded as completed by a dead player, and the
+      respawned attempt gets the full N again.
     Parser and accessors: `port/psyq/host/autoplay.cpp`; prototypes in
     `asmport.h`.
 

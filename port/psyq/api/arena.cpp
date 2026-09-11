@@ -22,6 +22,7 @@
 #include "system/types.h"
 #include "system/asmport.h"		/* declares PORT_Scratchpad */
 #include "system/lnkopt.h"
+#include "host/diag.h"
 
 extern "C" { __attribute__((aligned(16))) unsigned char PORT_Scratchpad[1024+PORT_SCRATCHPAD_GUARD]; }
 
@@ -62,7 +63,7 @@ struct ArenaBoot
 		if (!base)
 		{
 			fprintf(stderr, "[shim] arena: VirtualAlloc failed, aborting\n");
-			ExitProcess(1);
+			Port_Exit(PORT_EXIT_FAULT);
 		}
 
 		OPT_LinkerOpts.RamSize           = 2;			/* matches LNK_RamSize on PS1 */

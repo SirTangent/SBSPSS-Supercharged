@@ -18,6 +18,12 @@ enum
 	PORT_EXIT_ORACLE   = 13,	/* replay/oracle mismatch */
 };
 
+/*	host/input.cpp: reports pad-file entries the run never satisfied and
+	replay desyncs; nonzero = the run failed its own script.  Only the
+	scripted exit (SBSP_EXIT_AFTER) consults it - a user closing the window
+	mid-route is not a failure.  */
+int		Port_InputAtExit(void);
+
 /*	The one way out of the process: prints [summary] then _exit(code).
 	_exit, not exit: the game never shuts down on PS1, so its static
 	destructors were never designed to run (one traps).  */

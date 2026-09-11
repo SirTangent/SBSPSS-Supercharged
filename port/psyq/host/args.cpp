@@ -36,10 +36,10 @@
 	  --no-cd-pace          SBSP_CD_PACE=0
 	  --no-audio            SBSP_NO_AUDIO=1
 	  --pace-log            SBSP_PACE_LOG=1
-	  --uncapped            SBSP_UNCAPPED=1 (M8: host/pump.cpp - one vblank per
-	                        pump, no wall clock; with --no-cd-pace --no-audio
-	                        --seed the run is deterministic and faster than
-	                        real time)
+	  --uncapped            SBSP_UNCAPPED=1 (M8: host/pump.cpp - emulated time
+	                        passes only while the game waits; implies
+	                        SBSP_CD_PACE=0; with --no-audio --seed the run is
+	                        deterministic and faster than real time)
 
 	Both "--flag value" and "--flag=value" spellings work.  Unknown
 	arguments warn and are ignored (the run continues).  --help prints
@@ -92,6 +92,17 @@ static void parseSeed(const char *s, const char *what)
 	g_seedSet = 1;
 }
 
+static int uncappedRequested(int argc, char **argv)
+{
+	const char *e = getenv("SBSP_UNCAPPED");
+	if (e && *e && *e != '0')
+		return 1;
+	for (int i = 1; i < argc; i++)
+		if (strcmp(argv[i], "--uncapped") == 0)
+			return 1;
+	return 0;
+}
+
 static void usage(void)
 {
 	fprintf(stderr,
@@ -119,7 +130,7 @@ static void usage(void)
 		"  --no-audio            no playback device       (SBSP_NO_AUDIO=1)\n"
 		"  --pace-log            frame-pacing stderr log  (SBSP_PACE_LOG=1)\n"
 		"  --uncapped            vblanks not wall-paced   (SBSP_UNCAPPED=1)\n"
-		"                        (+ --no-cd-pace --no-audio --seed: deterministic, fast)\n"
+		"                        (implies --no-cd-pace; + --no-audio --seed: deterministic)\n"
 		"Env only: SBSP_ASSERT_CONTINUE=1 (log asserts, keep running),\n"
 		"          SBSP_PRIM_LOG=1 / SBSP_MEM_LOG=1 (prim-pool / RamUsed high-water logs),\n"
 		"          SBSP_WATCHDOG=<s> (exit 12 after s seconds without a vblank; 30, 0=off),\n"
@@ -180,6 +191,14 @@ static void parseArgs(void)
 	e = getenv("SBSP_SEED");
 	if (e && *e)
 		parseSeed(e, "SBSP_SEED");
+	if (uncappedRequested(__argc, __argv))
+	{
+		/*	The CD read deadline (cd.cpp) is wall-clock; under --uncapped a
+			paced load would spin through vblanks at CPU speed.  */
+		_putenv("SBSP_UNCAPPED=1");
+		_putenv("SBSP_CD_PACE=0");
+		fprintf(stderr, "[args] uncapped: CD pacing off (SBSP_CD_PACE=0)\n");
+	}
 
 	for (int i = 1; i < __argc; i++)
 	{
@@ -215,10 +234,7 @@ static void parseArgs(void)
 			continue;
 		}
 		if (strcmp(__argv[i], "--uncapped") == 0)
-		{
-			_putenv("SBSP_UNCAPPED=1");
-			continue;
-		}
+			continue;		/* handled up front - see uncappedRequested */
 		int matched = 0;
 		if ((v = argValue("--level", &i, __argc, __argv, &matched)) != NULL)
 		{

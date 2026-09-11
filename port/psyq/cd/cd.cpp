@@ -25,6 +25,7 @@
 
 #include "stub_log.h"
 #include "host/pump.h"
+#include "host/diag.h"
 #include "cd/xa_stream.h"
 #include "cd/str_stream.h"
 #include "spu/spu_core.h"
@@ -161,7 +162,7 @@ extern "C" int CdInit(void)
 		fprintf(stderr, "[shim] CdInit: cannot open %s\n"
 						"       run port/build-data.cmd, or point SBSP_DATA_DIR at the directory holding it\n",
 				path);
-		abort();
+		Port_Exit(PORT_EXIT_FAULT);
 	}
 	return 1;
 }
@@ -281,7 +282,7 @@ extern "C" int CdRead(int sectors, u_long *buf, int mode)
 			fprintf(stderr, "[shim] CdRead: LBA %ld is inside %s (raw XA, "
 							"%d-byte sectors) - data reads cannot go there\n",
 					g_curLBA, vf->name, vf->bytesPerSector);
-			abort();
+			Port_Exit(PORT_EXIT_FAULT);
 		}
 		if (!vf || !vf->fp)
 		{
@@ -291,7 +292,7 @@ extern "C" int CdRead(int sectors, u_long *buf, int mode)
 				problem is unrecoverable, so stop at the cause.  */
 			fprintf(stderr, "[shim] CdRead: LBA %ld maps to no host file "
 							"(missing data file or wrong SBSP_DATA_DIR)\n", g_curLBA);
-			abort();
+			Port_Exit(PORT_EXIT_FAULT);
 		}
 
 		long offset = (g_curLBA - vf->startLBA) * SECTOR;
