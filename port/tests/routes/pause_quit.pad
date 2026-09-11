@@ -1,0 +1,21 @@
+# Tier 1: pause in play, QUIT, confirm YES -> FrontEnd (slot select).
+# Menu: CONTINUE / VIBRATION / QUIT, cursor on CONTINUE; confirm box NO / YES.
+# args --level 1-1
+# exit-after 3000
+# max peak_ram=1400000
+# max peak_prim=65536
+# max peak_memnodes=64
+# expect Game
+# expect FrontEnd
+Game#1+400:0800
+Game#1+410:0000
+Game#1+440:4000
+Game#1+450:0000
+Game#1+480:4000
+Game#1+490:0000
+Game#1+520:0040
+Game#1+530:0000
+Game#1+560:4000
+Game#1+570:0000
+Game#1+600:0040
+Game#1+610:0000

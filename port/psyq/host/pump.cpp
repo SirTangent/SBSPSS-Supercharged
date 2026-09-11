@@ -46,10 +46,41 @@ static void clockInit(void)
 	}
 }
 
+/*	SBSP_UNCAPPED=1 (--uncapped, M8): emulated time advances only when the
+	game WAITS for it.  Each Port_PumpIdle - the body of every blocking
+	wait (VSync, DrawSync(0), CdReadSync...) - moves the target one vblank
+	ahead of the counter, so that wait iteration delivers exactly one
+	callback and returns; non-blocking pumps (VSync(-1), DrawSync(1),
+	PadGetState) deliver nothing, exactly as they would between two real
+	vblanks.  A game frame therefore costs one vblank, as on a capped host
+	keeping full rate (paceLog vbl/frame 1.0), only without the wall-clock
+	wait.  (Firing on EVERY pump instead made a frame cost as many vblanks
+	as it pumps - 5 - and the simulation diverged from a capped run.)  The
+	single-fire block, backlog rebase and re-entrancy guard in Port_Pump are
+	untouched: the target never gets more than one ahead.  With
+	--no-cd-pace and --no-audio this removes every wall-clock input, so two
+	runs with the same --seed are bit-identical.  */
+static unsigned long	g_uncappedTarget;
+
+extern "C" int Port_Uncapped(void)
+{
+	static int uncapped = -1;
+	if (uncapped < 0)
+	{
+		const char *e = getenv("SBSP_UNCAPPED");
+		uncapped = (e && *e && *e != '0');
+		if (uncapped)
+			fprintf(stderr, "[pace] uncapped: vblanks advance one per pump, not by wall clock\n");
+	}
+	return uncapped;
+}
+
 static unsigned long wallVblank(void)
 {
 	LARGE_INTEGER now;
 	clockInit();
+	if (Port_Uncapped())
+		return g_uncappedTarget;
 	QueryPerformanceCounter(&now);
 	return g_vblankBase +
 		   (unsigned long)(((now.QuadPart - g_qpcBase.QuadPart) * g_hz) / g_qpcFreq.QuadPart);
@@ -187,7 +218,10 @@ extern "C" void Port_Pump(void)
 	that without the Sleep pins a core at 100% for the whole wait.  */
 extern "C" void Port_PumpIdle(void)
 {
-	Sleep(1);
+	if (Port_Uncapped())
+		g_uncappedTarget = g_vblank + 1;	/* the wait itself is what passes time */
+	else
+		Sleep(1);
 	Port_Pump();
 }
 

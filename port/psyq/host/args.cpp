@@ -12,6 +12,10 @@
 	                    bonus level; 6-N also addresses bonus level N).
 	                    N: raw LvlTable index 0..24.
 	                    Env equivalent: SBSP_BOOT_LEVEL (same formats).
+	  --seed <n>        fixed setRndSeed value instead of the boot tick count
+	                    (Port_BootSeed hook, M8).  Env: SBSP_SEED.
+	  --invincible      SBSP_INVINCIBLE=1: the DEBUG pause menu's
+	                    invincibleSponge, set at Port_RegisterGameGlobals (M8).
 
 	The rest are aliases for the SBSP_* environment variables - the argument
 	just sets the variable (overriding an inherited one), and the existing
@@ -26,9 +30,16 @@
 	                        disables the playback device)
 	  --save-dir <path>     SBSP_SAVE_DIR (M6: memory-card image directory,
 	                        default %APPDATA%\SBSPSS)
+	  --pad-file <path>     SBSP_PAD_FILE   (M8: see host/input.cpp)
+	  --record-pad <path>   SBSP_RECORD_PAD (M8)
+	  --frame-crc           SBSP_FRAME_CRC=1 (M8: [frame] line per vblank)
 	  --no-cd-pace          SBSP_CD_PACE=0
 	  --no-audio            SBSP_NO_AUDIO=1
 	  --pace-log            SBSP_PACE_LOG=1
+	  --uncapped            SBSP_UNCAPPED=1 (M8: host/pump.cpp - emulated time
+	                        passes only while the game waits; implies
+	                        SBSP_CD_PACE=0; with --no-audio --seed the run is
+	                        deterministic and faster than real time)
 
 	Both "--flag value" and "--flag=value" spellings work.  Unknown
 	arguments warn and are ignored (the run continues).  --help prints
@@ -39,6 +50,8 @@
 #include <string.h>
 
 static int	g_bootLevel = -1;		/* -1 = normal boot (frontend) */
+static long	g_seed;
+static int	g_seedSet;
 
 /*	"C-L" (chapter-level) or a raw LvlTable index.  Returns 0..24, or -1 on
 	a malformed/out-of-range value.  Index math mirrors LvlTable's layout
@@ -66,14 +79,48 @@ static int parseLevel(const char *s)
 	return (a >= 0 && a <= 24) ? (int)a : -1;
 }
 
+static void parseSeed(const char *s, const char *what)
+{
+	char *end;
+	long v = strtol(s, &end, 0);
+	if (end == s || *end)
+	{
+		fprintf(stderr, "[args] bad %s '%s' - using the boot tick count\n", what, s);
+		return;
+	}
+	g_seed = v;
+	g_seedSet = 1;
+}
+
+static int uncappedRequested(int argc, char **argv)
+{
+	const char *e = getenv("SBSP_UNCAPPED");
+	if (e && *e && *e != '0')
+		return 1;
+	for (int i = 1; i < argc; i++)
+		if (strcmp(argv[i], "--uncapped") == 0)
+			return 1;
+	return 0;
+}
+
 static void usage(void)
 {
 	fprintf(stderr,
 		"sbsp [options]\n"
 		"  --level C-L | N       boot straight into a level (chapter 1-5,\n"
 		"                        level 1-5; L=5 = bonus; or LvlTable index 0-24)\n"
+		"  --seed <n>            fixed random seed        (SBSP_SEED)\n"
+		"  --invincible          player takes no damage   (SBSP_INVINCIBLE=1)\n"
 		"  --data-dir <path>     CD data directory        (SBSP_DATA_DIR)\n"
 		"  --pad-script <s>      scripted input           (SBSP_PAD_SCRIPT)\n"
+		"  --pad-file <path>     scripted input from file (SBSP_PAD_FILE)\n"
+		"                        lines: <vblank>:<hex> | <Scene>#<n>+<off>:<hex>\n"
+		"                        hex mask: START=0800 SELECT=0100 UP=1000 RIGHT=2000\n"
+		"                        DOWN=4000 LEFT=8000 CROSS=0040 CIRCLE=0020 SQUARE=0080\n"
+		"                        TRIANGLE=0010 L1=0004 R1=0008 L2=0001 R2=0002\n"
+		"  --record-pad <path>   write the applied input  (SBSP_RECORD_PAD)\n"
+		"                        in --pad-file form, with # epoch desync markers\n"
+		"  --frame-crc           [frame] <vbl> crc= line  (SBSP_FRAME_CRC=1)\n"
 		"  --dump-frames <list>  BMP dump vblanks         (SBSP_DUMP_FRAMES)\n"
 		"  --dump-dir <path>     where dumps go           (SBSP_DUMP_DIR)\n"
 		"  --exit-after <n>      clean exit at vblank n   (SBSP_EXIT_AFTER)\n"
@@ -82,7 +129,13 @@ static void usage(void)
 		"  --no-cd-pace          instant loads            (SBSP_CD_PACE=0)\n"
 		"  --no-audio            no playback device       (SBSP_NO_AUDIO=1)\n"
 		"  --pace-log            frame-pacing stderr log  (SBSP_PACE_LOG=1)\n"
-		"See port/docs/debug-tools.md for details.\n");
+		"  --uncapped            vblanks not wall-paced   (SBSP_UNCAPPED=1)\n"
+		"                        (implies --no-cd-pace; + --no-audio --seed: deterministic)\n"
+		"Env only: SBSP_ASSERT_CONTINUE=1 (log asserts, keep running),\n"
+		"          SBSP_PRIM_LOG=1 / SBSP_MEM_LOG=1 (prim-pool / RamUsed high-water logs),\n"
+		"          SBSP_WATCHDOG=<s> (exit 12 after s seconds without a vblank; 30, 0=off),\n"
+		"          SBSP_SELFTEST=assert|fault|hang@<vblank> (exercise an exit path)\n"
+		"Exit codes: 0 clean, 10 assert, 11 fault, 12 watchdog, 13 replay/oracle\n");
 }
 
 /*	If argv[*i] names this option, set *matched and return its value:
@@ -124,6 +177,8 @@ static void parseArgs(void)
 		{ "--exit-after",  "SBSP_EXIT_AFTER"  },
 		{ "--dump-audio",  "SBSP_DUMP_AUDIO"  },
 		{ "--save-dir",    "SBSP_SAVE_DIR"    },
+		{ "--pad-file",    "SBSP_PAD_FILE"    },
+		{ "--record-pad",  "SBSP_RECORD_PAD"  },
 	};
 
 	const char *e = getenv("SBSP_BOOT_LEVEL");
@@ -132,6 +187,17 @@ static void parseArgs(void)
 		g_bootLevel = parseLevel(e);
 		if (g_bootLevel < 0)
 			fprintf(stderr, "[args] bad SBSP_BOOT_LEVEL '%s' - booting normally\n", e);
+	}
+	e = getenv("SBSP_SEED");
+	if (e && *e)
+		parseSeed(e, "SBSP_SEED");
+	if (uncappedRequested(__argc, __argv))
+	{
+		/*	The CD read deadline (cd.cpp) is wall-clock; under --uncapped a
+			paced load would spin through vblanks at CPU speed.  */
+		_putenv("SBSP_UNCAPPED=1");
+		_putenv("SBSP_CD_PACE=0");
+		fprintf(stderr, "[args] uncapped: CD pacing off (SBSP_CD_PACE=0)\n");
 	}
 
 	for (int i = 1; i < __argc; i++)
@@ -157,6 +223,18 @@ static void parseArgs(void)
 			_putenv("SBSP_NO_AUDIO=1");
 			continue;
 		}
+		if (strcmp(__argv[i], "--invincible") == 0)
+		{
+			_putenv("SBSP_INVINCIBLE=1");
+			continue;
+		}
+		if (strcmp(__argv[i], "--frame-crc") == 0)
+		{
+			_putenv("SBSP_FRAME_CRC=1");
+			continue;
+		}
+		if (strcmp(__argv[i], "--uncapped") == 0)
+			continue;		/* handled up front - see uncappedRequested */
 		int matched = 0;
 		if ((v = argValue("--level", &i, __argc, __argv, &matched)) != NULL)
 		{
@@ -164,6 +242,8 @@ static void parseArgs(void)
 			if (g_bootLevel < 0)
 				fprintf(stderr, "[args] bad --level '%s' - booting normally\n", v);
 		}
+		if (!matched && (v = argValue("--seed", &i, __argc, __argv, &matched)) != NULL)
+			parseSeed(v, "--seed");
 		for (int a = 0; !matched && a < (int)(sizeof(aliases) / sizeof(aliases[0])); a++)
 		{
 			if ((v = argValue(aliases[a].arg, &i, __argc, __argv, &matched)) != NULL)
@@ -188,4 +268,13 @@ static void parseArgs(void)
 extern "C" int Port_BootLevel(void)
 {
 	return g_bootLevel;
+}
+
+/*	Hook read by system/main.cpp's InitSystem: 1 and the seed when --seed /
+	SBSP_SEED was given, else 0 (the game keeps setRndSeed(VidGetTickCount())).  */
+extern "C" int Port_BootSeed(long *seed)
+{
+	if (g_seedSet)
+		*seed = g_seed;
+	return g_seedSet;
 }

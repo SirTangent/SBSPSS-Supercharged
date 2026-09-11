@@ -1,0 +1,12 @@
+# Tier 1: chapter 1 bonus level ended by the timer -> Shop -> TRIANGLE -> Map.
+# args --level 1-5
+# env SBSP_AUTOPLAY=finish=60
+# exit-after 2500
+# max peak_ram=1400000
+# max peak_prim=65536
+# max peak_memnodes=64
+# expect Game
+# expect Shop
+# expect Map
+Shop#1+60:0010
+Shop#1+70:0000

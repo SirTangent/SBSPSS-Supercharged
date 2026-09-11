@@ -17,6 +17,7 @@
 	-------- */
 
 #include "dbg.h"
+#include "system\asmport.h"
 
 #ifdef	DBG_ACTIVE
 
@@ -252,6 +253,10 @@ char *__getDbgLineFromLog(int _line)
 /*****************************************************************************/
 void DoAssert( const char * Txt, const char * file, const int line )
 {
+#if !defined(PSX_MIPS_ASM)
+	Port_Assert(Txt,file,line);		// PC: [assert] line, exit 10 / SBSP_ASSERT_CONTINUE (conv_pc.md #25)
+	return;
+#endif
 	printf( "%s", Txt );
 
 #ifdef	OnScreenDebug

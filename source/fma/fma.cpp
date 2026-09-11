@@ -1273,6 +1273,11 @@ void	CFmaScene::init()
 
 	m_scriptRunning=true;
 	m_pc=s_fmaScripts[s_chosenScript];
+#if !defined(PSX_MIPS_ASM)
+	Port_FmaEvent(s_chosenScript);		// PC: [scene] FMA:<script> (conv_pc.md #24)
+#else
+#line 1275	// keep the PS1 build's __LINE__ (ASSERTs below) byte-identical
+#endif
 
 	m_musicPlaying=false;
 	m_tuneLoaded=false;

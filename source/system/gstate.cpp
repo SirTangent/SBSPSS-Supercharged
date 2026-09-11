@@ -121,6 +121,11 @@ void GameState::think()
 			}
 			SYSTEM_DBGMSG("GameState: Opening new scene '%s' ( with %d bytes used )",s_currentScene->getSceneName(),s_baseMemory);
 #endif
+#if !defined(PSX_MIPS_ASM)
+			Port_SceneEvent(s_currentScene->getSceneName());	// PC: [scene] epoch, every variant (conv_pc.md #23)
+#else
+#line 123	// keep the PS1 build's __LINE__ (ASSERT/DBGMSG below) byte-identical
+#endif
 			s_currentScene->init();
 #ifdef __VERSION_DEBUG__
 			s_baseSceneMemory=MainRam.RamUsed;

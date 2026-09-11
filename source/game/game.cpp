@@ -551,6 +551,22 @@ void CGameScene::think_playing(int _frames)
 			s_levelFinished=true;
 		}
 	}
+#if !defined(PSX_MIPS_ASM)
+	// PC: SBSP_AUTOPLAY die=N - one death per observed respawn (conv_pc.md #28)
+	if(m_gamestate==GAMESTATE_PLAYING&&Port_AutoplayDie(m_player->isDead()))
+	{
+		m_player->dieYouPorousFreak();
+	}
+	// PC: a death holds the autoplay finish timer and re-arms it for the respawn
+	// (respawnLevel() never re-runs initLevel); a dead player never finishes a level
+	if(Port_AutoplayFinish()>=0&&m_player->isDead())
+	{
+		s_levelFinished=false;
+		m_timer=Port_AutoplayFinish();
+	}
+#else
+#line 553	// keep the PS1 build's __LINE__ (DBGMSG below) byte-identical
+#endif
 
 	if(s_levelFinished)
 	{
@@ -588,6 +604,15 @@ void CGameScene::think_playing(int _frames)
 		{
 			gameSlot->setSpatulaCollectedCount(chapter-1,level-1,m_player->getSpatulasHeld(),getTotalSpatCountForThisLevel());
 		}
+#if !defined(PSX_MIPS_ASM)
+		// PC: SBSP_AUTOPLAY spatulas=all - slot bookkeeping only (conv_pc.md #28)
+		if(Port_AutoplaySpatulasAll())
+		{
+			gameSlot->setSpatulaCollectedCount(chapter-1,level-1,getTotalSpatCountForThisLevel(),getTotalSpatCountForThisLevel());
+		}
+#else
+#line 590	// keep the PS1 build's __LINE__ (DBGMSG below) byte-identical
+#endif
 
 		// Level finished - go to map or fma
 		CFmaScene::FMA_SCRIPT_NUMBER	fma;
@@ -835,6 +860,27 @@ void	CGameScene::initLevel()
 	{
 		m_levelHasTimer=false;
 	}
+#if !defined(PSX_MIPS_ASM)
+	// PC: SBSP_AUTOPLAY finish=N rides the bonus-level timer above; lives=/continues= (conv_pc.md #28)
+	if(Port_AutoplayFinish()>=0)
+	{
+		m_levelHasTimer=true;
+		m_timer=Port_AutoplayFinish();
+	}
+	{
+		int	n;		// the accessors are one-shot: read each exactly once
+		if((n=Port_AutoplayLives())>=0)
+		{
+			CGameSlotManager::getSlotData()->m_lives=n;
+		}
+		if((n=Port_AutoplayContinues())>=0)
+		{
+			CGameSlotManager::getSlotData()->m_continues=n;
+		}
+	}
+#else
+#line 837	// keep the PS1 build's __LINE__ (DBGMSG below) byte-identical
+#endif
 
 	CActorPool::SetUpCache();
 

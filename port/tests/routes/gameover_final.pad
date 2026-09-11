@@ -1,0 +1,12 @@
+# Tier 1: die with no lives and no continues; START on GAME OVER -> FrontEnd.
+# args --level 1-1
+# env SBSP_AUTOPLAY=lives=0,continues=0,die=1
+# exit-after 3000
+# max peak_ram=1400000
+# max peak_prim=65536
+# max peak_memnodes=64
+# expect Game
+# expect GameOver/Continue
+# expect FrontEnd
+GameOver/Continue#1+150:0800
+GameOver/Continue#1+160:0000
