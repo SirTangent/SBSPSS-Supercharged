@@ -5,11 +5,12 @@
 #   port/build-pc.sh test [usa|eur]    build, then ctest -L unit and -L playthrough on each tree
 #   port/build-pc.sh soak [usa|eur]    build, then the full Tier 1 + Tier 2 sweep on each tree
 #
-# Presets (port/CMakePresets.json): debug, final (USA) and eur-debug,
-# eur-final (EUR, PAL 50Hz); `usa` / `eur` name a territory's pair and `all`
-# is every tree.  Each tree needs its territory+variant data first:
-#   port/build-data.cmd USA DEBUG      (out/USA/include + out/USA/DEBUG/version/CD)
-#   port/build-data.cmd EUR FINAL      (out/EUR/include + out/EUR/FINAL/version/CD)
+# Presets (port/CMakePresets.json): debug, final (USA; usa-debug / usa-final
+# are accepted aliases) and eur-debug, eur-final (EUR, PAL 50Hz); `usa` /
+# `eur` name a territory's pair and `all` is every tree.  Each tree needs
+# its territory+variant data first, built with the SAME word:
+#   port/build-data.cmd final          (= USA FINAL: out/USA/include + out/USA/FINAL/version/CD)
+#   port/build-data.cmd eur-debug      (= EUR DEBUG: out/EUR/include + out/EUR/DEBUG/version/CD)
 # - build_one checks for both and names the missing command.
 #
 # Requires the MSYS2 mingw32 toolchain:
@@ -29,7 +30,7 @@ shift 2>/dev/null || true
 
 usage()
 {
-    echo "usage: port/build-pc.sh [debug|final|eur-debug|eur-final|usa|eur|all|test [usa|eur]|soak [usa|eur]] [ninja args]" >&2
+    echo "usage: port/build-pc.sh [debug|final|usa-debug|usa-final|eur-debug|eur-final|usa|eur|all|test [usa|eur]|soak [usa|eur]] [ninja args]" >&2
     exit 1
 }
 
@@ -41,6 +42,8 @@ presets_for()
         eur)  echo "eur-debug eur-final" ;;
         all|"") echo "debug final eur-debug eur-final" ;;
         debug|final|eur-debug|eur-final) echo "$1" ;;
+        usa-debug) echo "debug" ;;      # the build-data.sh spelling, same tree
+        usa-final) echo "final" ;;
         *) usage ;;
     esac
 }
@@ -58,7 +61,7 @@ check_data()
     ver=$(echo "${preset##*-}" | tr '[:lower:]' '[:upper:]')
     for f in "../out/$terr/include/BigLump.h" "../out/$terr/$ver/version/CD/BIGLUMP.BIN"; do
         if [ ! -f "$f" ]; then
-            echo "missing $f - run: port/build-data.cmd $terr $ver" >&2
+            echo "missing $f - run: port/build-data.cmd $preset   (= $terr $ver)" >&2
             exit 1
         fi
     done
@@ -95,17 +98,22 @@ soak_one()
         --selftest --tier1 --tier2 --logs "build/$preset/soak-logs"
 }
 
+# presets_for runs in a command substitution, so its usage exit must be
+# re-checked here or a bad word would silently build nothing.
 case "$what" in
     test)
-        for p in $(presets_for "${1:-all}"); do build_one "$p"; done
-        for p in $(presets_for "${1:-all}"); do test_one "$p"; done
+        list=$(presets_for "${1:-all}") || exit 1
+        for p in $list; do build_one "$p"; done
+        for p in $list; do test_one "$p"; done
         ;;
     soak)
-        for p in $(presets_for "${1:-all}"); do build_one "$p"; done
-        for p in $(presets_for "${1:-all}"); do soak_one "$p"; done
+        list=$(presets_for "${1:-all}") || exit 1
+        for p in $list; do build_one "$p"; done
+        for p in $list; do soak_one "$p"; done
         ;;
     *)
-        for p in $(presets_for "$what"); do build_one "$p" "$@"; done
+        list=$(presets_for "$what") || exit 1
+        for p in $list; do build_one "$p" "$@"; done
         ;;
 esac
 

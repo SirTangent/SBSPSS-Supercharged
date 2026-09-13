@@ -419,9 +419,10 @@ after it).  The guard is `port/build-psx.cmd` + a SHA-256 compare of
 `port/CMakePresets.json` has `eur-debug` / `eur-final` beside the USA
 `debug` / `final` (`SBSP_TERRITORY=EUR` -> `-D__TERRITORY_EUR__`, headers
 from `out/EUR/include`, data from `out/EUR/<VARIANT>/version/CD`).  Build
-the data first - `port/build-data.cmd EUR DEBUG` and `EUR FINAL` - then
-`port/build-pc.sh eur` (`test eur`, `soak eur`); `all` / `test` / `soak`
-without a territory cover all four trees.  `out/EUR` is regenerated, not
+the data first with the same word as the tree - `port/build-data.cmd
+eur-debug` / `eur-final` (the two-word `EUR DEBUG` form still works) -
+then `port/build-pc.sh eur` (`test eur`, `soak eur`); `all` / `test` /
+`soak` without a territory cover all four trees.  `out/EUR` is regenerated, not
 copied: `makefile.gfx` has no territory conditional, but the translation
 step emits the `STR__*` enum of `trans.h` (and the string ids inside
 BIGLUMP) in a different order on every run, so an exe must always pair with
