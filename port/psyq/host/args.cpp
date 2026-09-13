@@ -18,9 +18,11 @@
 	                    invincibleSponge, set at Port_RegisterGameGlobals (M8).
 	  --language <l>    text language for the boot-time
 	                    TranslationDatabase::loadLanguage (Port_Language hook
-	                    in system/main.cpp, M8 EUR): english swedish dutch
-	                    italian german, or the locale/textdbase.h enum index
-	                    0-4.  Env: SBSP_LANGUAGE.  The shipped data carries
+	                    in system/main.cpp, M8 EUR).  Either a name or the
+	                    locale/textdbase.h enum index it stands for:
+	                    english=0 swedish=1 dutch=2 italian=3 german=4
+	                    (kLanguageNames below IS that enum, in order).
+	                    Env: SBSP_LANGUAGE.  The shipped data carries
 	                    English text in every language slot (the four other
 	                    translation sources are stubs), so this proves the
 	                    load path rather than changing what is displayed.
@@ -62,7 +64,14 @@ static long	g_seed;
 static int	g_seedSet;
 static int	g_language = -1;		/* -1 = the game's default (ENGLISH) */
 
-/*	locale/textdbase.h enum order: ENGLISH SWEDISH DUTCH ITALIAN GERMAN  */
+/*	--language / SBSP_LANGUAGE value -> TranslationDatabase::loadLanguage()
+	argument.  The game's language type is the anonymous enum in
+	source/locale/textdbase.h - ENGLISH=0 SWEDISH=1 DUTCH=2 ITALIAN=3
+	GERMAN=4 (NUM_OF_LANGUAGES=5) - and this table is that enum in order,
+	so a name resolves to its index here and an index is passed through as
+	is.  The user may give either form ("german" or "4"); names are
+	case-insensitive.  Keep the table in enum order if textdbase.h ever
+	changes - it is the only place the shim spells the mapping out.  */
 static const char *const kLanguageNames[] =
 	{ "english", "swedish", "dutch", "italian", "german" };
 #define NUM_LANGUAGE_NAMES	(int)(sizeof(kLanguageNames) / sizeof(kLanguageNames[0]))
@@ -106,7 +115,8 @@ static void parseSeed(const char *s, const char *what)
 	g_seedSet = 1;
 }
 
-/*	A language name (case-insensitive) or its enum index.  */
+/*	A language name (case-insensitive) or its textdbase.h enum index -
+	see kLanguageNames.  Anything else is reported with the accepted set.  */
 static void parseLanguage(const char *s, const char *what)
 {
 	char *end;
@@ -124,7 +134,10 @@ static void parseLanguage(const char *s, const char *what)
 			return;
 		}
 	}
-	fprintf(stderr, "[args] bad %s '%s' - using english\n", what, s);
+	fprintf(stderr, "[args] bad %s '%s' - want", what, s);
+	for (int i = 0; i < NUM_LANGUAGE_NAMES; i++)
+		fprintf(stderr, "%s %s=%d", i ? "," : "", kLanguageNames[i], i);
+	fprintf(stderr, " - using english\n");
 }
 
 static int uncappedRequested(int argc, char **argv)
@@ -147,8 +160,9 @@ static void usage(void)
 		"  --seed <n>            fixed random seed        (SBSP_SEED)\n"
 		"  --invincible          player takes no damage   (SBSP_INVINCIBLE=1)\n"
 		"  --language <l>        boot text language       (SBSP_LANGUAGE)\n"
-		"                        english swedish dutch italian german, or 0-4;\n"
-		"                        the shipped data is English in every slot\n"
+		"                        a name or its locale/textdbase.h enum index:\n"
+		"                        english=0 swedish=1 dutch=2 italian=3 german=4\n"
+		"                        (the shipped data is English in every slot)\n"
 		"  --data-dir <path>     CD data directory        (SBSP_DATA_DIR)\n"
 		"  --pad-script <s>      scripted input           (SBSP_PAD_SCRIPT)\n"
 		"  --pad-file <path>     scripted input from file (SBSP_PAD_FILE)\n"
