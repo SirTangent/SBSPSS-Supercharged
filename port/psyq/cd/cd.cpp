@@ -66,19 +66,83 @@ static long		g_curLBA;
 static double	g_readDeadline;	/* CD pacing: when the in-flight read "completes" */
 static int		g_pace = -1;	/* -1 unparsed; SBSP_CD_PACE=0 disables */
 
+extern "C" int Port_ExeDir(char *dst, size_t n);		/* host/hostpath.cpp */
+extern "C" int Port_FileExists(const char *path);
+
+/*	Where the disc files are (M8 shell, issue #35).  The candidates, in
+	order - the first directory holding BIGLUMP.BIN wins:
+	  1. SBSP_DATA_DIR / --data-dir, taken VERBATIM and never fallen
+	     through: xa_test points it at a directory that does not exist
+	     precisely to release the real TRACK1.IXA handle;
+	  2. data\ beside the exe (the tester-zip layout);
+	  3. out/<T>/cd - what port/build-data.cmd stages, once per territory
+	     (the DEBUG and FINAL data are byte-identical, so the variant is
+	     not part of the path);
+	  4. out/<T>/<V>/version/CD - the PSX build tree, kept as a fallback for
+	     data built before #35.
+	Resolved on every cdBuildDir() call (Port_CdRebuildDirForTest re-scans
+	after a _putenv), so nothing is cached.  `slot` walks the candidates
+	one at a time for the CdInit failure report.  */
+static int dataCandidate(int slot, char *dst, size_t n)
+{
+	char exe[512];
+	switch (slot)
+	{
+	case 0:
+	{
+		const char *root = getenv("SBSP_DATA_DIR");
+		if (!root)
+			return 0;
+		snprintf(dst, n, "%s", root);
+		return 1;
+	}
+	case 1:
+		if (!Port_ExeDir(exe, sizeof(exe)))
+			return 0;
+		snprintf(dst, n, "%s\\data", exe);
+		return 1;
+	case 2:
+		snprintf(dst, n, "out/%s/cd", INF_Territory);
+		return 1;
+	case 3:
+		snprintf(dst, n, "out/%s/%s/version/%s",
+				 INF_Territory, INF_Version, INF_FileSystem);
+		return 1;
+	}
+	return -1;		/* no more candidates */
+}
+
+static char g_dataRoot[512];
+
+static void resolveDataRoot(void)
+{
+	char probe[600];
+	for (int slot = 0; ; slot++)
+	{
+		int r = dataCandidate(slot, g_dataRoot, sizeof(g_dataRoot));
+		if (r < 0)
+			break;
+		if (!r)
+			continue;
+		if (slot == 0)
+			return;						/* explicit: verbatim, no fallback */
+		snprintf(probe, sizeof(probe), "%s/%s", g_dataRoot, g_files[0].name);
+		if (Port_FileExists(probe))
+			return;
+	}
+	/*	nothing found: g_dataRoot holds the last candidate, and CdInit
+		reports the whole list  */
+}
+
 static void dataPath(char *dst, size_t dstSize, const char *name)
 {
-	const char *root = getenv("SBSP_DATA_DIR");
-	if (root)
-		snprintf(dst, dstSize, "%s/%s", root, name);
-	else
-		snprintf(dst, dstSize, "out/%s/%s/version/%s/%s",
-				 INF_Territory, INF_Version, INF_FileSystem, name);
+	snprintf(dst, dstSize, "%s/%s", g_dataRoot, name);
 }
 
 static void cdBuildDir(void)
 {
 	long lba = 0;
+	resolveDataRoot();
 	for (int i = 0; i < g_fileCount; i++)
 	{
 		char path[512];
@@ -158,12 +222,23 @@ extern "C" int CdInit(void)
 	if (!g_files[0].fp)
 	{
 		char path[512];
-		dataPath(path, sizeof(path), g_files[0].name);
-		fprintf(stderr, "[shim] CdInit: cannot open %s\n"
-						"       run port/build-data.cmd, or point SBSP_DATA_DIR at the directory holding it\n",
-				path);
+		fprintf(stderr, "[shim] CdInit: no %s - looked in:\n", g_files[0].name);
+		for (int slot = 0; ; slot++)
+		{
+			int r = dataCandidate(slot, path, sizeof(path));
+			if (r < 0)
+				break;
+			if (r)
+				fprintf(stderr, "       %s%s\n", path,
+						slot == 0 ? "   (SBSP_DATA_DIR: taken as is)" : "");
+			else if (slot == 0)
+				fprintf(stderr, "       (SBSP_DATA_DIR / --data-dir not set)\n");
+		}
+		fprintf(stderr, "       run port/build-data.cmd %s, or point --data-dir at the directory holding it\n",
+				INF_Territory);
 		Port_Exit(PORT_EXIT_FAULT);
 	}
+	fprintf(stderr, "[cd] data: %s\n", g_dataRoot);
 	return 1;
 }
 

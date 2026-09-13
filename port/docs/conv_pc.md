@@ -418,9 +418,10 @@ after it).  The guard is `port/build-psx.cmd` + a SHA-256 compare of
 
 `port/CMakePresets.json` has `eur-debug` / `eur-final` beside the USA
 `debug` / `final` (`SBSP_TERRITORY=EUR` -> `-D__TERRITORY_EUR__`, headers
-from `out/EUR/include`, data from `out/EUR/<VARIANT>/version/CD`).  Build
-the data first with the same word as the tree - `port/build-data.cmd
-eur-debug` / `eur-final` (the two-word `EUR DEBUG` form still works) -
+from `out/EUR/include`, data from `out/EUR/cd` - one data build serves
+both variants since PR 3, see "Host shell" below).  Build the data first -
+`port/build-data.cmd eur` (the preset words and the two-word `EUR DEBUG`
+form still work) -
 then `port/build-pc.sh eur` (`test eur`, `soak eur`); `all` / `test` /
 `soak` without a territory cover all four trees.  `out/EUR` is regenerated, not
 copied: `makefile.gfx` has no territory conditional, but the translation

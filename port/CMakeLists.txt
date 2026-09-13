@@ -22,19 +22,20 @@ enable_testing()
 find_package(Python3 COMPONENTS Interpreter)
 
 # The generated headers gate everything (BigLump.h / Sprites.h / trans.h / ...).
-# Both are per territory AND per variant: out/<T>/include is written by any
-# variant's data build, but BIGLUMP.BIN lands under out/<T>/<V>/version/CD,
-# which is where the exe looks at run time (cd.cpp dataPath) unless
-# SBSP_DATA_DIR redirects it - hence a warning, not an error, for the data.
+# Both are per territory only (issue #35): out/<T>/include is written by the
+# data build, and the CD files the exe opens at run time are staged once
+# under out/<T>/cd for DEBUG and FINAL alike (cd.cpp resolveDataRoot, which
+# also looks beside the exe and honours SBSP_DATA_DIR) - hence a warning,
+# not an error, for the data.
 if(NOT EXISTS "${SBSP_ROOT}/out/${SBSP_TERRITORY}/include/BigLump.h")
     message(FATAL_ERROR
         "Generated headers missing: ${SBSP_ROOT}/out/${SBSP_TERRITORY}/include/BigLump.h\n"
-        "Run port/build-data.cmd ${SBSP_TERRITORY} ${SBSP_VARIANT} (M0 data pipeline) first.")
+        "Run port/build-data.cmd ${SBSP_TERRITORY} (M0 data pipeline) first.")
 endif()
-if(NOT EXISTS "${SBSP_ROOT}/out/${SBSP_TERRITORY}/${SBSP_VARIANT}/version/CD/BIGLUMP.BIN")
+if(NOT EXISTS "${SBSP_ROOT}/out/${SBSP_TERRITORY}/cd/BIGLUMP.BIN")
     message(WARNING
-        "Game data missing: ${SBSP_ROOT}/out/${SBSP_TERRITORY}/${SBSP_VARIANT}/version/CD/BIGLUMP.BIN\n"
-        "The exe will build but not boot - run port/build-data.cmd ${SBSP_TERRITORY} ${SBSP_VARIANT} (or set SBSP_DATA_DIR).")
+        "Game data missing: ${SBSP_ROOT}/out/${SBSP_TERRITORY}/cd/BIGLUMP.BIN\n"
+        "The exe will build but not boot - run port/build-data.cmd ${SBSP_TERRITORY} (or set SBSP_DATA_DIR).")
 endif()
 
 include(cmake/game_sources.cmake)
