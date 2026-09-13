@@ -191,7 +191,11 @@ void	InitSystem()	// reordered to reduce black screen (hope all is well
 
 	CFileIO::Init();
 	TranslationDatabase::initialise(false);
+#if	!defined(PSX_MIPS_ASM)
+	TranslationDatabase::loadLanguage(Port_Language(ENGLISH));	// PC: --language / SBSP_LANGUAGE (conv_pc.md #30)
+#else
 	TranslationDatabase::loadLanguage(ENGLISH);
+#endif
 	PrimInit();
 	TPInit();
 	VidInit();

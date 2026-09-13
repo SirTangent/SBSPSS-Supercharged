@@ -386,6 +386,91 @@ after it).  The guard is `port/build-psx.cmd` + a SHA-256 compare of
     the other caller and gets the same protection.  `#line` re-synced
     (ASSERTs follow in the same file).
 
+30. **`source/system/main.cpp` (`--language` / `SBSP_LANGUAGE`)** -
+    `InitSystem()`'s `TranslationDatabase::loadLanguage(ENGLISH)` gains a
+    `!PSX_MIPS_ASM` arm that loads `Port_Language(ENGLISH)` instead
+    (`port/psyq/host/args.cpp`: a name `english swedish dutch italian
+    german` or the `locale/textdbase.h` enum index 0-4; the argument wins
+    over the environment; a bad value warns and keeps ENGLISH).  Prototype
+    in the PC-only block of `asmport.h`.  No `#line` arm: the only
+    `__LINE__` user below it in this file is the `USE_SCREEN_UTILS` ASSERT,
+    which the CD build compiles out (entry #15) - and the SHA-256 guard
+    agrees.  Three truths worth knowing before reaching for the flag:
+    - boot is the only `loadLanguage` the game ever reaches.  The save
+      restore (`memcard/saveload.cpp`) re-applies the slot's `m_language`
+      only under `if(!TranslationDatabase::isLoaded())`, which is never
+      true after boot - so no "re-apply after `DoAutoLoadPC`" exists or is
+      needed;
+    - the shipped data is English in every slot: `data/translations/`
+      `swe/dut/ita/ger.dat` are header-only stubs and the build fills
+      every language from `text.dat`'s `eng=` lines, so the five built
+      `.dat` files are byte-identical.  The flag proves the load path
+      (`[args] language: german (4)`, a clean boot through the GERMAN
+      `FileEquate`), not a visible translation;
+    - speech has no language dimension: one `TRACK1.IXA` serves both
+      territories and `CXAStream::SetLanguage` (`sound/cdxa.h`) has no
+      caller - it stays uncalled.
+    The `language=` key of the M8 PR-3 `sbsp.ini` must feed
+    `SBSP_LANGUAGE` (precedence: argument > environment > ini); nothing
+    else changes here.
+
+### EUR build (M8 PR 2)
+
+`port/CMakePresets.json` has `eur-debug` / `eur-final` beside the USA
+`debug` / `final` (`SBSP_TERRITORY=EUR` -> `-D__TERRITORY_EUR__`, headers
+from `out/EUR/include`, data from `out/EUR/<VARIANT>/version/CD`).  Build
+the data first - `port/build-data.cmd EUR DEBUG` and `EUR FINAL` - then
+`port/build-pc.sh eur` (`test eur`, `soak eur`); `all` / `test` / `soak`
+without a territory cover all four trees.  `out/EUR` is regenerated, not
+copied: `makefile.gfx` has no territory conditional, but the translation
+step emits the `STR__*` enum of `trans.h` (and the string ids inside
+BIGLUMP) in a different order on every run, so an exe must always pair with
+the include directory it was compiled against - which the presets
+guarantee.  (`build-data.sh` also now defaults `COMSPEC`: `MkActor.exe`
+packs through `system("lznp ...")`, and an MSYS2 shell started without a
+console lacks the variable, failing every actor with a bare "Could not
+open temp Pak file Actor.Pak".)
+
+What the territory changes on PC - everything else is the same code:
+
+- **50 Hz.**  `vid.cpp`'s `SetVideoMode(MODE_PAL)` retimes the pump
+  (`Port_SetVBlankHz(50)`); the XA/STR sector clocks (exactly 3 sectors
+  per vblank), RCnt2 and the audio dump all divide by the live rate.
+  `GetVideoMode()` answers from that rate (`Port_VBlankHz`) instead of a
+  hardcoded NTSC, `[pace]` prints `hz=` over a 250-vblank window, and
+  `getOneSecondInFrames()` is 50.  Scene-relative pad-file offsets count
+  frames, so the USA routes run unchanged; `run_tier.py --territory EUR`
+  (what the EUR tree's ctest passes) selects the EUR-only routes and the
+  `# eur ...` header lines.
+- **XM_PAL.**  `sound/xmplay.cpp` initialises the sequencer at 50 ticks/s
+  from the territory macro, independently of `SetVideoMode`, so
+  `XM_OnceOffInit` cross-checks the two and prints `[xm] WARNING` (a
+  forbidden tier tag) on a mismatch; `xm_test` proves both directions.
+- **2D tile margin.**  `level/layertile.cpp` has no PC arm, so the EUR
+  build takes retail EUR's `SCREEN_TILE_ADJ_H=2` (23 rows, +32 TSPRTs per
+  2D layer); the 3D layer's margins are entry #18's PC arm in both
+  territories.  (Follow-up, not this PR: the USA window shows the same
+  full 256 lines a PAL set did, so `ADJ_H=1` may leave a one-line gap at
+  some scroll phases.)
+- **PLAY TRAILER.**  The EUR main menu's third item (`frontend/maintitl.cpp`,
+  `fmvad.cpp`) plays `DEMO.STR` (`FMV_DEMO`, `FILEPOS_DEMO_STR` - the
+  six-entry `FILEPOS_MAX`); the virtual disc and `build-data.sh` already
+  carried the file for both territories.  `port/tests/routes/play_trailer.pad`
+  (`# territory EUR`, part of `--fast`) drives it and requires
+  `# min-frames` distinct display CRCs.
+- **Memory-card name.**  Saves are `BESLES-03704*` (`memcard/memcard.h`)
+  instead of `BASLUS-01352*`, in the same `card0.mcd`; `memcard.cpp`'s
+  card scan matches the first 12 characters, so each territory sees only
+  its own saves and both sets coexist in one image.
+
+Documented no-ops on PC: `ScreenYOfs=16` (`vid.cpp`) and the FMV
+`TerrOfs` (`fmv/fmv.cpp`) only move `DISPENV.screen.y` - the CRT
+placement, which the shim records (`gpu_core.h screenY`) and never uses.
+The framebuffer is 512x256 in both territories (`vid.cpp` asserts it) and
+the display CRC / BMP dumper read the DISPENV rect only, so a `[frame]`
+CRC cannot see the PAL letterbox shift; that is why the trailer route's
+oracle is "many distinct frames", not a mid-movie CRC.
+
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 
 - String-literal → `char*` conversions (pervasive; `-Wno-write-strings`).
