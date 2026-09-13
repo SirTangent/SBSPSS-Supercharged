@@ -37,11 +37,12 @@ usage()
 # the preset list a territory word (or `all`) stands for
 presets_for()
 {
-    case "$1" in
+    w=$(echo "$1" | tr '[:upper:]' '[:lower:]')     # any case, like build-data.sh
+    case "$w" in
         usa)  echo "debug final" ;;
         eur)  echo "eur-debug eur-final" ;;
         all|"") echo "debug final eur-debug eur-final" ;;
-        debug|final|eur-debug|eur-final) echo "$1" ;;
+        debug|final|eur-debug|eur-final) echo "$w" ;;
         usa-debug) echo "debug" ;;      # the build-data.sh spelling, same tree
         usa-final) echo "final" ;;
         *) usage ;;
