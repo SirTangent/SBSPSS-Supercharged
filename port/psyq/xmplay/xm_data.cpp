@@ -18,6 +18,7 @@
 
 #include "spu/spu_core.h"
 #include "xmplay/xm_state.h"
+#include "host/pump.h"		/* Port_VBlankHz: the tick-clock cross-check */
 
 XmModule *g_xmHeaderSlot[XM_MAX_HEADER_SLOTS];
 int g_xmHeaderCount;
@@ -55,9 +56,23 @@ extern "C" {
 
 /* ---- global switches ---------------------------------------------------- */
 
+/*	The sequencer ticks off g_xmTickHz (xm_seq.cpp XM_Update, once per
+	emulated vblank) but the game picks XM_PAL/XM_NTSC from its territory
+	macro (source/sound/xmplay.cpp), while the pump's rate comes from
+	SetVideoMode (vid.cpp) - two independent territory decisions that must
+	agree, or every song plays 20% off tempo with nothing else amiss.  The
+	game calls XM_OnceOffInit after VidInit, so the pump rate is final here.  */
+int XM_TickClockMismatch(void)
+{
+	return g_xmTickHz != Port_VBlankHz();
+}
+
 void XM_OnceOffInit(int PAL)
 {
 	g_xmTickHz = (PAL == XM_PAL) ? 50 : 60;
+	if (XM_TickClockMismatch())
+		fprintf(stderr, "[xm] WARNING: tick clock %dHz (XM_OnceOffInit %s) but the vblank clock is %dHz (SetVideoMode) - territory/video-mode mismatch\n",
+				g_xmTickHz, PAL == XM_PAL ? "XM_PAL" : "XM_NTSC", Port_VBlankHz());
 	/*	give the SPU RAM back before dropping the slots - clearing inUse
 		alone would orphan every allocation for the life of the process  */
 	for (int i = 0; i < XM_MAX_VABS; i++)

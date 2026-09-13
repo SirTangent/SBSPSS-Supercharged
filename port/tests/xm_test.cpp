@@ -16,6 +16,7 @@
 
 #include "spu/spu_core.h"
 #include "xmplay/xm_state.h"
+#include "host/pump.h"
 
 static int g_failures;
 
@@ -180,8 +181,19 @@ int main()
 		return 0;
 	}
 
+	/* --- tick clock vs vblank clock (M8 EUR) ------------------------------- */
+	/*	The one "[xm] WARNING" line this prints is EXPECTED: unit-test output
+		is not tag-scanned (only the playthrough tiers forbid [xm]).  */
+	Port_SetVBlankHz(50);
+	XM_OnceOffInit(XM_NTSC);
+	check(XM_TickClockMismatch() == 1, "NTSC tick clock on a 50Hz pump is flagged");
+	XM_OnceOffInit(XM_PAL);
+	check(XM_TickClockMismatch() == 0, "PAL tick clock on a 50Hz pump agrees");
+	Port_SetVBlankHz(60);
+
 	/* --- slot registries --------------------------------------------------- */
 	XM_OnceOffInit(XM_NTSC);
+	check(XM_TickClockMismatch() == 0, "NTSC tick clock on a 60Hz pump agrees");
 	XM_SetStereo();
 	check(XM_GetSongSize() > 0, "XM_GetSongSize is a real byte count");
 	check(XM_GetFileHeaderSize() > 0, "XM_GetFileHeaderSize is a real count");
