@@ -160,6 +160,11 @@ int		CAnimTex::GetSpeed()
 CAnimTex	*ThisTex;
 
 	ThisTex=AnimTexList;
+#if !defined(PSX_MIPS_ASM)
+	if(!ThisTex) return(0);		// PC: level without animated textures (conv_pc.md #29)
+#else
+#line 162	// keep the PS1 build's __LINE__ (ASSERTs below) byte-identical
+#endif
 
 	return(ThisTex->Speed);
 }
@@ -170,6 +175,11 @@ void	CAnimTex::SetSpeed(int Speed)
 CAnimTex	*ThisTex;
 
 	ThisTex=AnimTexList;
+#if !defined(PSX_MIPS_ASM)
+	if(!ThisTex) return;		// PC: level without animated textures (conv_pc.md #29)
+#else
+#line 172	// keep the PS1 build's __LINE__ (ASSERTs below) byte-identical
+#endif
 
 	ThisTex->Speed=Speed;
 }

@@ -19,6 +19,28 @@
 	mask is the active-HIGH 16-bit
 	(Button1<<8)|Button2 hardware word (LIBETC.H order), e.g. START=0800,
 	CROSS=0040, SELECT=0100, DOWN=4000.
+
+	SBSP_PAD_FILE=<path> (M8) is the same idea from a file, one entry per
+	line, unbounded, with `#` comments and a scene-relative form that
+	survives load-time drift:
+	    1500:0800                 absolute vblank
+	    Map#2+30:2000             30 vblanks after the 2nd open of "Map"
+	    FMA:INTRO#1+10:0800       (FMA scripts use the [scene] FMA:<name>)
+	    # epoch 3000 ram=123456 crc=89ABCDEF
+	A scene open releases every button: an entry is in force only if it
+	came due at or after the most recent scene open (for a scene-relative
+	entry that also means its anchor occurrence is the current scene).
+	That is what a route author means by "during the 2nd Map", it lets a
+	boot-time button pulse train anchored to FrontEnd#1 stop by itself when
+	the first level opens, and it keeps an absolute press recorded before
+	the first scene from outliving its scene-relative release.  Within the
+	entries in force, the latest one that has come due wins.
+
+	The `# epoch` markers come from SBSP_RECORD_PAD=<path>, which writes
+	the applied mask in the scene-relative form plus one marker every 300
+	vblanks; replaying such a file re-checks them and reports "[replay]
+	desync".  A malformed line, a desync, or a scene reference the run
+	never reached (reported at exit) makes the process exit 13.
 */
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL.h>
@@ -26,6 +48,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
+
+#include "host/diag.h"
+#include "gpu/gpu_core.h"
 
 extern unsigned char *Port_PadBuffer[2];	/* pads_shim.cpp */
 extern unsigned char *Port_PadMotor[2];		/* pads_shim.cpp - PadSetAct buffer */
@@ -57,44 +83,232 @@ static int				g_smallLevel;
 #define BTN_SQUARE	0x0080
 
 /*****************************************************************************/
-/*	SBSP_PAD_SCRIPT parsing  */
+/*	Scripted input: SBSP_PAD_SCRIPT (env) + SBSP_PAD_FILE (file) entries.  */
 
-struct PadScriptEntry
+struct PadEntry
+{
+	unsigned long	vblank;			/* absolute; valid once `resolved` */
+	unsigned		mask;
+	int				resolved;
+	unsigned long	anchor;			/* open vblank of the anchor occurrence */
+	char			scene[48];		/* scene-relative entries only */
+	int				nth;
+	unsigned long	offset;
+	int				line;			/* pad-file line, 0 = SBSP_PAD_SCRIPT */
+};
+
+struct EpochCheck
 {
 	unsigned long	vblank;
-	unsigned		mask;
+	unsigned long	ram;
+	uint32_t		crc;
+	int				line;
 };
-static PadScriptEntry	g_script[64];
-static int				g_scriptCount = -1;		/* -1 = not parsed yet */
+
+/*	malloc/realloc, never a C++ container: see the note in host/diag.cpp
+	(the game replaces the global operator delete).  */
+static PadEntry		*g_entries;
+static int			g_entryCount, g_entryCap;
+static EpochCheck	*g_epochs;
+static int			g_epochCount, g_epochCap;
+static int			g_scriptParsed;
+static int			g_desyncs;
+
+static void addEntry(const PadEntry &e)
+{
+	if (g_entryCount == g_entryCap)
+	{
+		g_entryCap = g_entryCap ? g_entryCap * 2 : 64;
+		g_entries  = (PadEntry *)realloc(g_entries, g_entryCap * sizeof(PadEntry));
+	}
+	g_entries[g_entryCount++] = e;
+}
+
+static void addEpoch(const EpochCheck &ep)
+{
+	if (g_epochCount == g_epochCap)
+	{
+		g_epochCap = g_epochCap ? g_epochCap * 2 : 16;
+		g_epochs   = (EpochCheck *)realloc(g_epochs, g_epochCap * sizeof(EpochCheck));
+	}
+	g_epochs[g_epochCount++] = ep;
+}
 
 static void scriptParse(void)
 {
-	if (g_scriptCount >= 0)
-		return;
-	g_scriptCount = 0;
 	const char *s = getenv("SBSP_PAD_SCRIPT");
+	int n = 0;
 	if (!s)
 		return;
-	while (*s && g_scriptCount < 64)
+	while (*s)
 	{
 		char *end;
 		unsigned long vb = strtoul(s, &end, 10);
 		if (end == s || *end != ':')
 			break;
 		unsigned mask = (unsigned)strtoul(end + 1, &end, 16);
-		g_script[g_scriptCount].vblank = vb;
-		g_script[g_scriptCount].mask   = mask & 0xFFFF;
-		g_scriptCount++;
+		PadEntry e = {};
+		e.vblank   = vb;
+		e.mask     = mask & 0xFFFF;
+		e.resolved = 1;
+		addEntry(e);
+		n++;
 		if (*end != ',')
 			break;
 		s = end + 1;
 	}
-	if (g_scriptCount)
-		fprintf(stderr, "[input] SBSP_PAD_SCRIPT: %d entries\n", g_scriptCount);
+	if (n)
+		fprintf(stderr, "[input] SBSP_PAD_SCRIPT: %d entries\n", n);
+}
+
+static void padFileFail(const char *path, int line, const char *why)
+{
+	fprintf(stderr, "[replay] pad-file %s line %d: %s - aborting\n", path, line, why);
+	Port_Exit(PORT_EXIT_ORACLE);
+}
+
+/*	One pad-file line, comments already stripped, whitespace-trimmed.  */
+static int parsePadEntry(const char *tok, PadEntry *e, const char **why)
+{
+	const char *hash  = strchr(tok, '#');
+	const char *colon = strrchr(tok, ':');
+	char *end;
+
+	if (!colon)
+	{
+		*why = "expected ':' before the hex mask";
+		return 0;
+	}
+	unsigned mask = (unsigned)strtoul(colon + 1, &end, 16);
+	if (end == colon + 1 || *end)
+	{
+		*why = "bad hex mask";
+		return 0;
+	}
+	e->mask = mask & 0xFFFF;
+
+	if (!hash)
+	{
+		e->vblank = strtoul(tok, &end, 10);
+		if (end == tok || end != colon)
+		{
+			*why = "bad vblank number";
+			return 0;
+		}
+		e->resolved = 1;
+		return 1;
+	}
+
+	size_t n = (size_t)(hash - tok);
+	if (n == 0 || n >= sizeof(e->scene))
+	{
+		*why = "bad scene name";
+		return 0;
+	}
+	memcpy(e->scene, tok, n);
+	e->scene[n] = 0;
+	e->nth = (int)strtol(hash + 1, &end, 10);
+	if (end == hash + 1 || e->nth < 1 || *end != '+')
+	{
+		*why = "expected Scene#<n>+<offset>";
+		return 0;
+	}
+	e->offset = strtoul(end + 1, &end, 10);
+	if (end != colon)
+	{
+		*why = "bad offset";
+		return 0;
+	}
+	e->resolved = 0;
+	return 1;
+}
+
+static void padFileParse(void)
+{
+	const char *path = getenv("SBSP_PAD_FILE");
+	if (!path || !*path)
+		return;
+	FILE *f = fopen(path, "r");
+	if (!f)
+		padFileFail(path, 0, "cannot open");
+
+	char buf[512];
+	int  line = 0, entries = 0;
+	while (fgets(buf, sizeof(buf), f))
+	{
+		line++;
+		char *s = buf;
+		while (*s == ' ' || *s == '\t')
+			s++;
+
+		/*	`# epoch <vblank> ram=<n> crc=<hex>` is data; every other
+			comment (a leading `#`, or ` #` after an entry) is dropped.  */
+		if (*s == '#')
+		{
+			EpochCheck ep = {};
+			if (sscanf(s, "# epoch %lu ram=%lu crc=%x", &ep.vblank, &ep.ram, &ep.crc) == 3)
+			{
+				ep.line = line;
+				addEpoch(ep);
+			}
+			continue;
+		}
+		for (char *c = s + 1; *c; c++)		/* first '#' preceded by a blank */
+			if (*c == '#' && (c[-1] == ' ' || c[-1] == '\t'))
+			{
+				*c = 0;
+				break;
+			}
+		char *e = s + strlen(s);
+		while (e > s && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\r' || e[-1] == '\n'))
+			*--e = 0;
+		if (!*s)
+			continue;
+
+		PadEntry	ent = {};
+		const char	*why = "";
+		if (!parsePadEntry(s, &ent, &why))
+		{
+			fclose(f);
+			padFileFail(path, line, why);
+		}
+		ent.line = line;
+		addEntry(ent);
+		entries++;
+	}
+	fclose(f);
+	fprintf(stderr, "[input] SBSP_PAD_FILE %s: %d entries, %d epoch checks\n",
+			path, entries, g_epochCount);
+}
+
+static void scriptsParse(void)
+{
+	if (g_scriptParsed)
+		return;
+	g_scriptParsed = 1;
+	scriptParse();
+	padFileParse();
+}
+
+/*	Scene-relative entries become absolute the vblank their scene open
+	happens; until then they are simply not due.  */
+static void resolveEntries(void)
+{
+	for (int i = 0; i < g_entryCount; i++)
+	{
+		PadEntry		&e = g_entries[i];
+		unsigned long	vb;
+		if (!e.resolved && Port_SceneOpenVblank(e.scene, e.nth, &vb))
+		{
+			e.vblank   = vb + e.offset;
+			e.anchor   = vb;
+			e.resolved = 1;
+		}
+	}
 }
 
 /*	The entry in force is the LATEST one that has come due - selected by
-	vblank, never by position in the string.  (Keeping the last array-order
+	vblank, never by position in the list.  (Keeping the last list-order
 	match instead made "600:0000,300:0800" hold START forever: at vblank 700
 	both are due and the later-listed, earlier-timed entry won.  Scripts are
 	normally written in ascending order, but nothing enforces that and a
@@ -104,19 +318,120 @@ static unsigned scriptMask(unsigned long vblank)
 	unsigned		mask = 0;
 	int				found = 0;
 	unsigned long	best = 0;
+	unsigned long	current = Port_LastSceneOpenVblank();
 
-	for (int i = 0; i < g_scriptCount; i++)
+	for (int i = 0; i < g_entryCount; i++)
 	{
-		if (vblank < g_script[i].vblank)
+		const PadEntry &e = g_entries[i];
+		if (!e.resolved || vblank < e.vblank)
 			continue;
-		if (!found || g_script[i].vblank >= best)
+		if (e.vblank < current || (e.scene[0] && e.anchor != current))
+			continue;					/* released by a later scene open */
+		if (!found || e.vblank >= best)
 		{
-			best  = g_script[i].vblank;
-			mask  = g_script[i].mask;
+			best  = e.vblank;
+			mask  = e.mask;
 			found = 1;
 		}
 	}
 	return mask;
+}
+
+static void epochCheck(unsigned long vblank)
+{
+	for (int i = 0; i < g_epochCount; i++)
+	{
+		const EpochCheck &ep = g_epochs[i];
+		if (ep.vblank != vblank)
+			continue;
+		const PortGameGlobals *g = Port_GameGlobals();
+		unsigned long ram = g->ramUsed ? *g->ramUsed : 0;
+		uint32_t      crc = GPU_DisplayCRC32(NULL);
+		if (ram != ep.ram || crc != ep.crc)
+		{
+			g_desyncs++;
+			fprintf(stderr, "[replay] desync at vblank %lu (line %d): ram %lu vs %lu, crc %08X vs %08X\n",
+					vblank, ep.line, ram, ep.ram, crc, ep.crc);
+		}
+	}
+}
+
+/*	Called from Port_Exit: unreached scene references and desyncs turn a
+	clean exit into 13 - a route that quietly never pressed half its
+	buttons must not pass.  */
+extern "C" int Port_InputAtExit(void)
+{
+	int bad = g_desyncs;
+	for (int i = 0; i < g_entryCount; i++)
+	{
+		const PadEntry &e = g_entries[i];
+		if (!e.resolved)
+		{
+			fprintf(stderr, "[replay] unsatisfied line %d: %s#%d never opened\n",
+					e.line, e.scene, e.nth);
+			bad++;
+		}
+	}
+	return bad;
+}
+
+/*****************************************************************************/
+/*	SBSP_RECORD_PAD=<path>: the applied mask, on change, in the scene-
+	relative grammar above, plus `# scene` markers at each open and an
+	`# epoch` line every 300 vblanks.  Flushed per line so a crash still
+	leaves a usable file.  */
+static FILE			*g_rec;
+static int			g_recTried;
+static unsigned		g_recLastMask;
+static char			g_recScene[48];
+static int			g_recNth;
+
+static void recordFrame(unsigned long vblank, unsigned mask)
+{
+	if (!g_recTried)
+	{
+		g_recTried = 1;
+		const char *path = getenv("SBSP_RECORD_PAD");
+		if (path && *path)
+		{
+			g_rec = fopen(path, "w");
+			if (g_rec)
+				fprintf(g_rec, "# recorded by sbsp --record-pad (mask: START=0800 SELECT=0100 "
+							   "UP=1000 RIGHT=2000 DOWN=4000 LEFT=8000 CROSS=0040 "
+							   "CIRCLE=0020 SQUARE=0080 TRIANGLE=0010 L1=0004 R1=0008 L2=0001 R2=0002)\n");
+			else
+				fprintf(stderr, "[input] SBSP_RECORD_PAD: cannot write %s\n", path);
+		}
+	}
+	if (!g_rec)
+		return;
+
+	const char		*scene = Port_CurrentScene();
+	int				nth    = Port_SceneOpenCount(scene);
+	unsigned long	open   = 0;
+	int				inScene = nth > 0 && Port_SceneOpenVblank(scene, nth, &open);
+
+	if (inScene && (nth != g_recNth || strcmp(scene, g_recScene) != 0))
+	{
+		snprintf(g_recScene, sizeof(g_recScene), "%s", scene);
+		g_recNth = nth;
+		fprintf(g_rec, "# scene %s#%d vblank=%lu\n", scene, nth, open);
+	}
+	if (mask != g_recLastMask)
+	{
+		g_recLastMask = mask;
+		if (inScene)
+			fprintf(g_rec, "%s#%d+%lu:%04X\n", scene, nth, vblank - open, mask);
+		else
+			fprintf(g_rec, "%lu:%04X\n", vblank, mask);
+	}
+	if (vblank % 300 == 0)
+	{
+		const PortGameGlobals *g = Port_GameGlobals();
+		fprintf(g_rec, "# epoch %lu ram=%lu crc=%08X\n", vblank,
+				g->ramUsed ? *g->ramUsed : 0ul, GPU_DisplayCRC32(NULL));
+	}
+	fflush(g_rec);
 }
 
 /*****************************************************************************/
@@ -286,8 +601,11 @@ extern "C" void Port_InputFrame(unsigned long vblank)
 	if (!buf)
 		return;
 
-	scriptParse();
+	scriptsParse();
+	resolveEntries();
 	unsigned mask = keyboardMask() | gamepadMask() | scriptMask(vblank);
+	epochCheck(vblank);
+	recordFrame(vblank, mask);
 
 	buf[0] = 0;								/* connected, data valid */
 	buf[1] = 0x73;							/* analog controller, 3 halfwords */

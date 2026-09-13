@@ -2,6 +2,8 @@
 # Configure + build the PC (Win32) port: both DEBUG and FINAL by default.
 #
 #   port/build-pc.sh [debug|final|all] [extra ninja args...]
+#   port/build-pc.sh test        build both, then ctest -L unit and -L playthrough on each
+#   port/build-pc.sh soak        build both, then the full Tier 1 + Tier 2 sweep on each
 #
 # Requires the MSYS2 mingw32 toolchain:
 #   pacman -S --needed mingw-w64-i686-gcc mingw-w64-i686-cmake mingw-w64-i686-ninja
@@ -28,10 +30,29 @@ build_one()
     cmake --build --preset "$preset" "$@"
 }
 
+test_one()
+{
+    preset="$1"
+    echo "=== ctest ($preset): unit ==="
+    ctest --test-dir "build/$preset" --output-on-failure -L unit
+    echo "=== ctest ($preset): playthrough ==="
+    ctest --test-dir "build/$preset" --output-on-failure -L playthrough
+}
+
+soak_one()
+{
+    preset="$1"
+    echo "=== soak ($preset): tier 1 + tier 2, all routes / all levels ==="
+    python3 tests/run_tier.py --exe "build/$preset/sbsp.exe" --selftest --tier1 --tier2 \
+        --logs "build/$preset/soak-logs"
+}
+
 case "$what" in
     debug|final) build_one "$what" "$@" ;;
     all)         build_one debug "$@"; build_one final "$@" ;;
-    *) echo "usage: port/build-pc.sh [debug|final|all] [ninja args]" >&2; exit 1 ;;
+    test)        build_one debug; build_one final; test_one debug; test_one final ;;
+    soak)        build_one debug; build_one final; soak_one debug; soak_one final ;;
+    *) echo "usage: port/build-pc.sh [debug|final|all|test|soak] [ninja args]" >&2; exit 1 ;;
 esac
 
 echo "PC build complete."

@@ -23,6 +23,8 @@
 #include <string.h>
 
 #include "gpu/gpu_core.h"
+#include "host/diag.h"
+#include "host/pump.h"
 
 bool VkPresent_Init(SDL_Window *window);	/* port/psyq/vk/vk_present.cpp */
 void VkPresent_Frame(void);
@@ -40,6 +42,7 @@ static unsigned long g_exitAfter;		/* 0 = off */
 static unsigned long g_dumpAt[16];
 static int			g_dumpCount;
 static const char	*g_dumpDir = ".";
+static int			g_frameCrc;			/* SBSP_FRAME_CRC=1: [frame] line per vblank */
 
 static void parseTooling(void)
 {
@@ -54,6 +57,9 @@ static void parseTooling(void)
 	const char *dir = getenv("SBSP_DUMP_DIR");
 	if (dir && *dir)
 		g_dumpDir = _strdup(dir);
+
+	const char *fc = getenv("SBSP_FRAME_CRC");
+	g_frameCrc = fc && *fc && *fc != '0';
 
 	const char *d = getenv("SBSP_DUMP_FRAMES");
 	while (d && *d && g_dumpCount < 16)
@@ -169,12 +175,8 @@ extern "C" void Host_VBlank(unsigned long vblankNo)
 		{
 			if (ev.type == SDL_EVENT_QUIT)
 			{
-				/*	_exit, not exit: the game never shuts down on PS1, so its
-					static destructors were never designed to run (one traps).
-					The OS reclaims everything.  */
 				fprintf(stderr, "[host] window closed - exiting\n");
-				fflush(stderr);
-				_exit(0);
+				Port_Exit(PORT_EXIT_CLEAN);
 			}
 			if (ev.type == SDL_EVENT_GAMEPAD_ADDED ||
 				ev.type == SDL_EVENT_GAMEPAD_REMOVED)
@@ -190,6 +192,7 @@ extern "C" void Host_VBlank(unsigned long vblankNo)
 		"[input] SBSP_PAD_SCRIPT: N entries" line to say why.  The keyboard
 		and gamepad readers already handle their absence.  */
 	Port_InputFrame(vblankNo);	/* rebuild the PS1 pad packet */
+	Port_MemWatch();
 
 	for (int i = 0; i < g_dumpCount; i++)
 	{
@@ -197,14 +200,31 @@ extern "C" void Host_VBlank(unsigned long vblankNo)
 			dumpDisplayBMP(vblankNo);
 	}
 
+	if (g_frameCrc)
+	{
+		int masked;
+		uint32_t crc = GPU_DisplayCRC32(&masked);
+		fprintf(stderr, "[frame] %lu crc=%08X%s\n", vblankNo, crc, masked ? " masked" : "");
+	}
+
+	/*	Uncapped runs would otherwise be re-capped by the presenter's vsync
+		wait: present at most ~60 times a second of wall time and let the
+		emulated vblanks run ahead.  */
 	if (g_vkUp)
-		VkPresent_Frame();
+	{
+		static double lastPresent = -1.0;
+		double now = Port_NowSeconds();
+		if (!Port_Uncapped() || now - lastPresent >= 1.0 / 60.0)
+		{
+			lastPresent = now;
+			VkPresent_Frame();
+		}
+	}
 
 	if (g_exitAfter && vblankNo >= g_exitAfter)
 	{
 		fprintf(stderr, "[host] SBSP_EXIT_AFTER=%lu reached - exiting\n", g_exitAfter);
-		fflush(stderr);
-		_exit(0);	/* skip game static dtors - see the QUIT path */
+		Port_Exit(Port_InputAtExit() ? PORT_EXIT_ORACLE : PORT_EXIT_CLEAN);
 	}
 
 	inHere = 0;

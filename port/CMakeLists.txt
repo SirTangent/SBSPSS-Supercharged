@@ -15,6 +15,12 @@ set_property(CACHE SBSP_TERRITORY PROPERTY STRINGS USA EUR)
 
 get_filename_component(SBSP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 
+# ctest: label `unit` = the shim unit exes + the headless proof, label
+# `playthrough` = the M8 harness tiers (tests/run_tier.py).  Every test runs
+# from the repo root, where the game's default data path resolves.
+enable_testing()
+find_package(Python3 COMPONENTS Interpreter)
+
 # The generated headers gate everything (BigLump.h / Sprites.h / trans.h / ...).
 if(NOT EXISTS "${SBSP_ROOT}/out/${SBSP_TERRITORY}/include/BigLump.h")
     message(FATAL_ERROR
@@ -179,6 +185,8 @@ target_link_libraries(sbsp_headless PRIVATE
     -Wl,--whole-archive sbsp_game -Wl,--no-whole-archive
     psyq_shim
 )
+add_test(NAME sbsp_headless COMMAND sbsp_headless WORKING_DIRECTORY ${SBSP_ROOT})
+set_tests_properties(sbsp_headless PROPERTIES LABELS unit)
 
 # Unit tests that exercise the shim directly (no game code): C++17, statically
 # linked against psyq_shim, and compiled with the shim's own include
@@ -197,6 +205,8 @@ function(sbsp_shim_test name)
     )
     target_link_options(${name} PRIVATE -static)
     target_link_libraries(${name} PRIVATE psyq_shim)
+    add_test(NAME ${name} COMMAND ${name} WORKING_DIRECTORY ${SBSP_ROOT})
+    set_tests_properties(${name} PROPERTIES LABELS unit)
 endfunction()
 
 sbsp_shim_test(gte_trig_test)   # exact fixed-point trig fixtures (M1)
@@ -212,3 +222,16 @@ sbsp_shim_test(mdec_test)       # MDEC: dequant, IDCT, yuv, DecDCTin/out (M7)
 sbsp_shim_test(vlc3_test)       # VLC v2/v3 + an all-frames movie sweep (M7)
 sbsp_shim_test(str_test)        # STR streaming engine over a fake disc (M7)
 sbsp_shim_test(fmv_pipeline_test) # whole movie pipeline, frame CRCs (M7)
+
+# M8 playthrough harness (tests/run_tier.py): the exit-code self-test, the
+# fast Tier 1 routes and the short Tier 2 sweep, all --uncapped.  The full
+# tiers are `port/build-pc.sh soak`.
+if(Python3_Interpreter_FOUND)
+    set(SBSP_TIER ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_tier.py --exe $<TARGET_FILE:sbsp>)
+    add_test(NAME exit_codes  COMMAND ${SBSP_TIER} --selftest      WORKING_DIRECTORY ${SBSP_ROOT})
+    add_test(NAME tier1_fast  COMMAND ${SBSP_TIER} --tier1 --fast  WORKING_DIRECTORY ${SBSP_ROOT})
+    add_test(NAME tier2_short COMMAND ${SBSP_TIER} --tier2 --short WORKING_DIRECTORY ${SBSP_ROOT})
+    set_tests_properties(exit_codes tier1_fast tier2_short PROPERTIES LABELS playthrough TIMEOUT 1800)
+else()
+    message(WARNING "Python3 not found: the playthrough tests are not registered")
+endif()

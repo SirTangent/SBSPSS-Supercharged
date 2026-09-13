@@ -200,7 +200,14 @@ void	InitSystem()	// reordered to reduce black screen (hope all is well
 	installExceptionHandler();			// Where is the earliest we can do this?
 #endif
 
+#if	!defined(PSX_MIPS_ASM)
+	{
+		long	seed;		// PC: --seed / SBSP_SEED (conv_pc.md #26)
+		setRndSeed( Port_BootSeed(&seed) ? seed : VidGetTickCount() );
+	}
+#else
 	setRndSeed( VidGetTickCount() );
+#endif
 
 	SetDispMask(1);
 
@@ -315,13 +322,20 @@ int			TestFMA=-1;
 #if	!defined(PSX_MIPS_ASM)
 extern "C" int	Port_BootLevel(void);			/* port/psyq/host/args.cpp */
 extern int		s_globalLevelSelectThing;		/* level/level.h */
+extern int		MemNodeCount;					/* mem/memory.cpp */
+extern int		invincibleSponge;				/* player/player.cpp */
 #endif
 
 int 	main()
 {
+#if	!defined(PSX_MIPS_ASM)
+	// PC: the shim's watches/[summary]/--invincible read these (conv_pc.md #26)
+	Port_RegisterGameGlobals(&MainRam.RamUsed,&MemNodeCount,&invincibleSponge,
+							 &CurrPrim,&EndPrim,&PrimListStart,&PrimListEnd);
+#endif
 	CFileIO::GetAllFilePos();
 	InitSystem();
-	
+
 #if defined (__USER_paul__)||defined (__USER_art__)||defined (__USER_sbart__)
 	GameState::setNextScene( &SceneSelector );
 #elif	defined(__USER_daveo__)

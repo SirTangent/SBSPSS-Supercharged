@@ -23,6 +23,7 @@
 #include "system/lnkopt.h"
 #include "stub_log.h"
 #include "gpu/gpu_core.h"
+#include "host/diag.h"
 
 /*****************************************************************************/
 static int signext11(int v)
@@ -389,7 +390,7 @@ static void verifyArenaWindowOnce(void)
 		fprintf(stderr, "[gpu] arena straddles a 16MB window (%p..%p) - "
 						"24-bit prim tags cannot be reconstructed; aborting\n",
 				(void *)base, (void *)end);
-		abort();
+		Port_Exit(PORT_EXIT_FAULT);
 	}
 	g_arenaBase = base;
 	g_arenaEnd  = end + 1;
@@ -410,43 +411,38 @@ static void verifyArenaWindowOnce(void)
 	DrawOTag is called from PrimDisplay at the exact peak of a frame's
 	fill, which makes it the cheapest correct sampling point.
 
-	Declared WEAK because the shim's own unit tests (gpu_test and friends)
-	link psyq_shim with no game code at all: there the symbols resolve to
-	NULL and the watch simply does nothing.  */
-extern unsigned char	*CurrPrim __attribute__((weak));
-extern unsigned char	*EndPrim __attribute__((weak));
-extern unsigned char	*PrimListStart __attribute__((weak));
-extern unsigned char	*PrimListEnd __attribute__((weak));
+	The pool pointers are read through the diag registry
+	(Port_RegisterGameGlobals, called once from system/main.cpp): the shim's
+	own unit tests (gpu_test and friends) link no game code, never register,
+	and the watch simply does nothing.  */
+static size_t	g_primPeak;
+
+extern "C" unsigned long GPU_PrimPoolPeak(void)
+{
+	return (unsigned long)g_primPeak;
+}
 
 static void primPoolWatch(void)
 {
-	static size_t	peak;
 	static int		warned;
 	static int		logging = -1;
 	int				advanced = 0;
+	const PortGameGlobals *g = Port_GameGlobals();
 
-	/*	The NULL test has to be on the ADDRESSES: an unresolved weak symbol
-		resolves to address 0, so reading the pointers themselves would
-		fault before any value check could run.  */
-	unsigned char	**currp  = &CurrPrim;
-	unsigned char	**endp   = &EndPrim;
-	unsigned char	**startp = &PrimListStart;
-	unsigned char	**listendp = &PrimListEnd;
-
-	if (!currp || !endp || !startp || !listendp)
-		return;						/* no game code linked (shim unit tests) */
-	if (!*startp || !*listendp || !*currp || !*endp)
+	if (!g->currPrim)
+		return;						/* no game code registered (shim unit tests) */
+	if (!*g->primListStart || !*g->primListEnd || !*g->currPrim || !*g->endPrim)
 		return;						/* PrimInit has not run yet */
 
 	/*	Both buffers are one allocation, so the per-buffer budget is half
 		the span - no need to duplicate PRIMPOOL_SIZE here.  `used` is
 		signed on purpose: past the end it reads above the pool size.  */
-	ptrdiff_t	pool = (*listendp - *startp) / 2;
-	ptrdiff_t	used = pool - (*endp - *currp);
+	ptrdiff_t	pool = (*g->primListEnd - *g->primListStart) / 2;
+	ptrdiff_t	used = pool - (*g->endPrim - *g->currPrim);
 
-	if (used > (ptrdiff_t)peak)
+	if (used > (ptrdiff_t)g_primPeak)
 	{
-		peak = (size_t)used;
+		g_primPeak = (size_t)used;
 		advanced = 1;
 	}
 	if (logging < 0)
@@ -501,13 +497,13 @@ extern "C" void DrawOTag(u_long *p)
 							"was not allocated from the game heap\n",
 					(unsigned long)tag, (void *)tagp, (void *)addr,
 					(void *)g_arenaBase, (void *)g_arenaEnd);
-			abort();
+			Port_Exit(PORT_EXIT_FAULT);
 		}
 		tagp = (uint32_t *)addr;
 		if (--guard == 0)
 		{
 			fprintf(stderr, "[gpu] DrawOTag: runaway tag chain - corrupt OT?\n");
-			abort();
+			Port_Exit(PORT_EXIT_FAULT);
 		}
 	}
 }

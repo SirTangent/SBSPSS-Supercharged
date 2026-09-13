@@ -50,6 +50,11 @@ extern GpuState g_gpu;
 /* gp0.cpp: execute `count` GP0 words at `words` against g_gpu/g_vram */
 void GPU_ExecWords(const uint32_t *words, int count);
 
+/*	vram.cpp: CRC-32 of the raw VRAM halfwords the display rect scans out
+	(same rect logic as GPU_ReadDisplayPixelRGB).  *masked = SetDispMask(0)
+	is in force, i.e. the viewer sees black whatever the CRC says.  */
+extern "C" uint32_t GPU_DisplayCRC32(int *masked);
+
 /*	gp0.cpp: decode an E1 draw-mode bit pattern into g_gpu (texture page base,
 	semi-transparency mode, depth, dither).  Shared with PutDrawEnv, which
 	assembles the same layout from DRAWENV.tpage/dtd.  */

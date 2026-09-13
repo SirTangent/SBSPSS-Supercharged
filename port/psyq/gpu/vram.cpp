@@ -131,6 +131,42 @@ extern "C" void GPU_ReadDisplayPixelRGB(int x, int y, unsigned char rgb[3])
 	rgb[2] = (unsigned char)(((px >> 10) & 0x1F) << 3);
 }
 
+extern "C" uint32_t GPU_DisplayCRC32(int *masked)
+{
+	static uint32_t	table[256];
+	static int		tableInit;
+	if (!tableInit)
+	{
+		for (uint32_t n = 0; n < 256; n++)
+		{
+			uint32_t c = n;
+			for (int k = 0; k < 8; k++)
+				c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1)));
+			table[n] = c;
+		}
+		tableInit = 1;
+	}
+
+	int w  = g_gpu.dispW ? g_gpu.dispW : 512;		/* pixels in both modes */
+	int h  = g_gpu.dispH ? g_gpu.dispH : 256;
+	int hw = g_gpu.dispRgb24 ? (w * 3 + 1) / 2 : w;	/* halfwords per row */
+
+	uint32_t crc = 0xFFFFFFFFu;
+	for (int y = 0; y < h; y++)
+	{
+		const uint16_t *row = g_vram[(g_gpu.dispY + y) & 0x1FF];
+		for (int x = 0; x < hw; x++)
+		{
+			uint16_t px = row[(g_gpu.dispX + x) & 0x3FF];
+			crc = table[(crc ^ (px & 0xFF)) & 0xFF] ^ (crc >> 8);
+			crc = table[(crc ^ (px >> 8)) & 0xFF] ^ (crc >> 8);
+		}
+	}
+	if (masked)
+		*masked = !g_gpu.dispMask;
+	return crc ^ 0xFFFFFFFFu;
+}
+
 extern "C" DRAWENV *PutDrawEnv(DRAWENV *env)
 {
 	/*	E1: the hardware word is tpage with dtd in bit 9 (and dfe in bit 10,
