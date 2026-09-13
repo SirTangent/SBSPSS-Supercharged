@@ -4,7 +4,7 @@
 	Model.  CdlReadS starts a linear walk over TRACK1.IXA's raw 2336-byte
 	sectors from the given position, clocked by EMULATED vblanks at the
 	double-speed 150 sectors/s (2.5 sectors per 60Hz vblank via a fractional
-	accumulator) - never by the wall clock, so the M5 --dump-audio
+	accumulator, exactly 3 per 50Hz PAL vblank) - never by the wall clock, so the M5 --dump-audio
 	determinism contract extends to XA.  SBSP_CD_PACE only governs CdRead
 	data loads; real-time audio cannot be delivered "instantly".
 
@@ -242,7 +242,8 @@ void XaStream_Serve(uint32_t *madr, int sizeWords)
 /*	Once per emulated vblank, from Port_Pump (pump.cpp) - BEFORE
 	Port_AudioVBlank, so a dump-mode vblank's sectors are decoded before its
 	audio frames render (the determinism contract).  150 sectors/s against
-	the vblank rate: at 60Hz the accumulator delivers 2-3 sectors per call.  */
+	the vblank rate: at 60Hz the accumulator delivers 2-3 sectors per call,
+	at 50Hz (EUR) exactly 3.  */
 extern "C" void Port_CdVblank(int vblankHz)
 {
 	/*	The STR engine ticks FIRST and unconditionally: the hold below

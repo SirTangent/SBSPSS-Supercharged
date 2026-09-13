@@ -1,5 +1,6 @@
 /*	libetc stubs (VSync/VSyncCallback live in pump.cpp).  */
 #include "stub_log.h"
+#include "pump.h"
 
 extern "C" {
 
@@ -8,10 +9,13 @@ int  CheckCallback(void)			{ return 0; }
 int  RestartCallback(void)			{ return 0; }
 int  StopCallback(void)				{ return 0; }
 
-long GetVideoMode(void)				{ return 0; }		/* MODE_NTSC */
+/*	Video mode <-> pump rate.  libetc.h: MODE_NTSC 0, MODE_PAL 1 (numeric
+	here - this TU carries no PsyQ headers).  The mode is not stored: the
+	pump's vblank rate IS the mode, so GetVideoMode reports whatever
+	SetVideoMode last set (60 -> NTSC, 50 -> PAL) and cannot disagree with it.  */
+long GetVideoMode(void)				{ return Port_VBlankHz() == 50 ? 1 : 0; }
 long SetVideoMode(long mode)
 {
-	extern void Port_SetVBlankHz(int hz);
 	Port_SetVBlankHz(mode == 1 ? 50 : 60);
 	return mode;
 }

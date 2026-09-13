@@ -208,13 +208,13 @@ extern "C" void Host_VBlank(unsigned long vblankNo)
 	}
 
 	/*	Uncapped runs would otherwise be re-capped by the presenter's vsync
-		wait: present at most ~60 times a second of wall time and let the
-		emulated vblanks run ahead.  */
+		wait: present at most once per vblank period of wall time (60/s NTSC,
+		50/s PAL) and let the emulated vblanks run ahead.  */
 	if (g_vkUp)
 	{
 		static double lastPresent = -1.0;
 		double now = Port_NowSeconds();
-		if (!Port_Uncapped() || now - lastPresent >= 1.0 / 60.0)
+		if (!Port_Uncapped() || now - lastPresent >= 1.0 / Port_VBlankHz())
 		{
 			lastPresent = now;
 			VkPresent_Frame();

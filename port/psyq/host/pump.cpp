@@ -96,6 +96,11 @@ extern "C" void Port_SetVBlankHz(int hz)
 	g_hz = (hz == 50) ? 50 : 60;
 }
 
+extern "C" int Port_VBlankHz(void)
+{
+	return g_hz;
+}
+
 extern "C" unsigned long Port_VBlankCount(void)
 {
 	return g_vblank;
@@ -116,10 +121,11 @@ extern "C" double Port_NowSeconds(void)
 /*	Backlog cap.  Pending vblanks drain one per pump call, so the game
 	tolerates a short lag; past this the host is simply not keeping up (or
 	was stopped dead by a debugger / laptop sleep) and the WALL CLOCK is
-	rebased onto the counter - see Port_Pump.  ~133ms at 60Hz.  */
+	rebased onto the counter - see Port_Pump.  ~133ms at 60Hz, 160ms at 50Hz.  */
 #define MAX_PENDING_VBLANKS 8
 
-/*	SBSP_PACE_LOG=1: every 300 vblanks (5s at 60Hz), print delivered vblanks
+/*	SBSP_PACE_LOG=1: every 5 seconds of emulated time (300 vblanks at 60Hz,
+	250 at 50Hz - the window follows Port_SetVBlankHz), print delivered vblanks
 	vs VSync(0) waits over the window.  In steady state the game calls
 	VSync(0) exactly once per rendered frame (VidSwapDraw), so vbl/vsync0 ~=
 	getFramesSinceLast: 1.0 is locked full-rate, ~6 was the M3 frontend
@@ -137,13 +143,14 @@ static void paceLog(void)
 		const char *e = getenv("SBSP_PACE_LOG");
 		enabled = (e && *e && *e != '0');
 	}
-	if (!enabled || (g_vblank % 300) != 0)
+	int window = 5 * g_hz;
+	if (!enabled || (g_vblank % window) != 0)
 		return;
 
 	double now = Port_NowSeconds();
 	unsigned long dv = g_vsync0Count - lastVsync0;
-	fprintf(stderr, "[pace] vblank=%lu  vsync0=%lu in window (vbl/frame %.2f)  wall %.2fs for 300 vbl\n",
-			g_vblank, dv, dv ? 300.0 / (double)dv : 0.0, now - lastWall);
+	fprintf(stderr, "[pace] hz=%d vblank=%lu  vsync0=%lu in window (vbl/frame %.2f)  wall %.2fs for %d vbl\n",
+			g_hz, g_vblank, dv, dv ? (double)window / (double)dv : 0.0, now - lastWall, window);
 	lastVsync0 = g_vsync0Count;
 	lastWall   = now;
 }
