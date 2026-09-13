@@ -16,6 +16,16 @@
 	                    (Port_BootSeed hook, M8).  Env: SBSP_SEED.
 	  --invincible      SBSP_INVINCIBLE=1: the DEBUG pause menu's
 	                    invincibleSponge, set at Port_RegisterGameGlobals (M8).
+	  --language <l>    text language for the boot-time
+	                    TranslationDatabase::loadLanguage (Port_Language hook
+	                    in system/main.cpp, M8 EUR).  Either a name or the
+	                    locale/textdbase.h enum index it stands for:
+	                    english=0 swedish=1 dutch=2 italian=3 german=4
+	                    (kLanguageNames below IS that enum, in order).
+	                    Env: SBSP_LANGUAGE.  The shipped data carries
+	                    English text in every language slot (the four other
+	                    translation sources are stubs), so this proves the
+	                    load path rather than changing what is displayed.
 
 	The rest are aliases for the SBSP_* environment variables - the argument
 	just sets the variable (overriding an inherited one), and the existing
@@ -52,6 +62,19 @@
 static int	g_bootLevel = -1;		/* -1 = normal boot (frontend) */
 static long	g_seed;
 static int	g_seedSet;
+static int	g_language = -1;		/* -1 = the game's default (ENGLISH) */
+
+/*	--language / SBSP_LANGUAGE value -> TranslationDatabase::loadLanguage()
+	argument.  The game's language type is the anonymous enum in
+	source/locale/textdbase.h - ENGLISH=0 SWEDISH=1 DUTCH=2 ITALIAN=3
+	GERMAN=4 (NUM_OF_LANGUAGES=5) - and this table is that enum in order,
+	so a name resolves to its index here and an index is passed through as
+	is.  The user may give either form ("german" or "4"); names are
+	case-insensitive.  Keep the table in enum order if textdbase.h ever
+	changes - it is the only place the shim spells the mapping out.  */
+static const char *const kLanguageNames[] =
+	{ "english", "swedish", "dutch", "italian", "german" };
+#define NUM_LANGUAGE_NAMES	(int)(sizeof(kLanguageNames) / sizeof(kLanguageNames[0]))
 
 /*	"C-L" (chapter-level) or a raw LvlTable index.  Returns 0..24, or -1 on
 	a malformed/out-of-range value.  Index math mirrors LvlTable's layout
@@ -92,6 +115,31 @@ static void parseSeed(const char *s, const char *what)
 	g_seedSet = 1;
 }
 
+/*	A language name (case-insensitive) or its textdbase.h enum index -
+	see kLanguageNames.  Anything else is reported with the accepted set.  */
+static void parseLanguage(const char *s, const char *what)
+{
+	char *end;
+	long v = strtol(s, &end, 10);
+	if (end != s && !*end && v >= 0 && v < NUM_LANGUAGE_NAMES)
+	{
+		g_language = (int)v;
+		return;
+	}
+	for (int i = 0; i < NUM_LANGUAGE_NAMES; i++)
+	{
+		if (_stricmp(s, kLanguageNames[i]) == 0)
+		{
+			g_language = i;
+			return;
+		}
+	}
+	fprintf(stderr, "[args] bad %s '%s' - want", what, s);
+	for (int i = 0; i < NUM_LANGUAGE_NAMES; i++)
+		fprintf(stderr, "%s %s=%d", i ? "," : "", kLanguageNames[i], i);
+	fprintf(stderr, " - using english\n");
+}
+
 static int uncappedRequested(int argc, char **argv)
 {
 	const char *e = getenv("SBSP_UNCAPPED");
@@ -111,6 +159,10 @@ static void usage(void)
 		"                        level 1-5; L=5 = bonus; or LvlTable index 0-24)\n"
 		"  --seed <n>            fixed random seed        (SBSP_SEED)\n"
 		"  --invincible          player takes no damage   (SBSP_INVINCIBLE=1)\n"
+		"  --language <l>        boot text language       (SBSP_LANGUAGE)\n"
+		"                        a name or its locale/textdbase.h enum index:\n"
+		"                        english=0 swedish=1 dutch=2 italian=3 german=4\n"
+		"                        (the shipped data is English in every slot)\n"
 		"  --data-dir <path>     CD data directory        (SBSP_DATA_DIR)\n"
 		"  --pad-script <s>      scripted input           (SBSP_PAD_SCRIPT)\n"
 		"  --pad-file <path>     scripted input from file (SBSP_PAD_FILE)\n"
@@ -191,6 +243,9 @@ static void parseArgs(void)
 	e = getenv("SBSP_SEED");
 	if (e && *e)
 		parseSeed(e, "SBSP_SEED");
+	e = getenv("SBSP_LANGUAGE");
+	if (e && *e)
+		parseLanguage(e, "SBSP_LANGUAGE");
 	if (uncappedRequested(__argc, __argv))
 	{
 		/*	The CD read deadline (cd.cpp) is wall-clock; under --uncapped a
@@ -244,6 +299,8 @@ static void parseArgs(void)
 		}
 		if (!matched && (v = argValue("--seed", &i, __argc, __argv, &matched)) != NULL)
 			parseSeed(v, "--seed");
+		if (!matched && (v = argValue("--language", &i, __argc, __argv, &matched)) != NULL)
+			parseLanguage(v, "--language");
 		for (int a = 0; !matched && a < (int)(sizeof(aliases) / sizeof(aliases[0])); a++)
 		{
 			if ((v = argValue(aliases[a].arg, &i, __argc, __argv, &matched)) != NULL)
@@ -261,6 +318,8 @@ static void parseArgs(void)
 	if (g_bootLevel >= 0)
 		fprintf(stderr, "[args] boot level: LvlTable[%d] (chapter %d level %d)\n",
 				g_bootLevel, g_bootLevel / 5 + 1, g_bootLevel % 5 + 1);
+	if (g_language >= 0)
+		fprintf(stderr, "[args] language: %s (%d)\n", kLanguageNames[g_language], g_language);
 }
 
 /*	Hook read by system/main.cpp's scene select (PC build only): the
@@ -277,4 +336,14 @@ extern "C" int Port_BootSeed(long *seed)
 	if (g_seedSet)
 		*seed = g_seed;
 	return g_seedSet;
+}
+
+/*	Hook read by system/main.cpp's InitSystem (M8 EUR): the language enum
+	value to hand TranslationDatabase::loadLanguage, or `deflt` (the game's
+	ENGLISH) when no --language / SBSP_LANGUAGE was given.  Boot is the only
+	loadLanguage the game ever reaches: the save restore's copy runs under
+	`if(!isLoaded())`, which is never true after this one.  */
+extern "C" int Port_Language(int deflt)
+{
+	return g_language >= 0 ? g_language : deflt;
 }

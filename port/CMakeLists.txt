@@ -22,10 +22,19 @@ enable_testing()
 find_package(Python3 COMPONENTS Interpreter)
 
 # The generated headers gate everything (BigLump.h / Sprites.h / trans.h / ...).
+# Both are per territory AND per variant: out/<T>/include is written by any
+# variant's data build, but BIGLUMP.BIN lands under out/<T>/<V>/version/CD,
+# which is where the exe looks at run time (cd.cpp dataPath) unless
+# SBSP_DATA_DIR redirects it - hence a warning, not an error, for the data.
 if(NOT EXISTS "${SBSP_ROOT}/out/${SBSP_TERRITORY}/include/BigLump.h")
     message(FATAL_ERROR
         "Generated headers missing: ${SBSP_ROOT}/out/${SBSP_TERRITORY}/include/BigLump.h\n"
-        "Run port/build-data.cmd (M0 data pipeline) first.")
+        "Run port/build-data.cmd ${SBSP_TERRITORY} ${SBSP_VARIANT} (M0 data pipeline) first.")
+endif()
+if(NOT EXISTS "${SBSP_ROOT}/out/${SBSP_TERRITORY}/${SBSP_VARIANT}/version/CD/BIGLUMP.BIN")
+    message(WARNING
+        "Game data missing: ${SBSP_ROOT}/out/${SBSP_TERRITORY}/${SBSP_VARIANT}/version/CD/BIGLUMP.BIN\n"
+        "The exe will build but not boot - run port/build-data.cmd ${SBSP_TERRITORY} ${SBSP_VARIANT} (or set SBSP_DATA_DIR).")
 endif()
 
 include(cmake/game_sources.cmake)
@@ -227,7 +236,7 @@ sbsp_shim_test(fmv_pipeline_test) # whole movie pipeline, frame CRCs (M7)
 # fast Tier 1 routes and the short Tier 2 sweep, all --uncapped.  The full
 # tiers are `port/build-pc.sh soak`.
 if(Python3_Interpreter_FOUND)
-    set(SBSP_TIER ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_tier.py --exe $<TARGET_FILE:sbsp>)
+    set(SBSP_TIER ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_tier.py --exe $<TARGET_FILE:sbsp> --territory ${SBSP_TERRITORY})
     add_test(NAME exit_codes  COMMAND ${SBSP_TIER} --selftest      WORKING_DIRECTORY ${SBSP_ROOT})
     add_test(NAME tier1_fast  COMMAND ${SBSP_TIER} --tier1 --fast  WORKING_DIRECTORY ${SBSP_ROOT})
     add_test(NAME tier2_short COMMAND ${SBSP_TIER} --tier2 --short WORKING_DIRECTORY ${SBSP_ROOT})

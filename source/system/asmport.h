@@ -60,6 +60,7 @@ void	Port_RegisterGameGlobals(u32 *ramUsed,int *memNodeCount,int *invincibleSpon
 								 unsigned char **currPrim,unsigned char **endPrim,
 								 unsigned char **primListStart,unsigned char **primListEnd);	/* system/main.cpp */
 int		Port_BootSeed(long *seed);								/* system/main.cpp (args.cpp) */
+int		Port_Language(int deflt);								/* system/main.cpp (args.cpp, M8 EUR) */
 int		Port_AutoplayFinish(void);								/* game/game.cpp (autoplay.cpp) */
 int		Port_AutoplaySpatulasAll(void);
 int		Port_AutoplayLives(void);

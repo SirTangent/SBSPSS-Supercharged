@@ -3,6 +3,7 @@
 and the exit-code self-test, over the PC build of the game.
 
     run_tier.py --exe port/build/debug/sbsp.exe --tier1 [--fast]
+    run_tier.py --exe port/build/eur-debug/sbsp.exe --territory EUR --tier1
     run_tier.py --exe ... --tier2 [--short]
     run_tier.py --exe ... --selftest
 
@@ -22,12 +23,24 @@ plain pad-file comments the game ignores and this script reads:
     # expect Map
     # max peak_ram=1500000                 [summary] field ceilings
     # timeout 600                          wall-clock seconds (default 900)
+    # min-frames 150                       distinct unmasked [frame] CRCs required
+    # territory EUR                        the route runs only for that --territory
+    # eur max peak_prim=70000              any key, applied only for that
+    # usa exit-after 12000                 --territory (later lines win)
+
+--territory USA|EUR names the exe's build (the EUR build runs at 50Hz with
+the PAL frontend, which has the PLAY TRAILER menu item); it selects the
+"# territory" routes and the territory-prefixed header lines, and adds
+that territory's extra routes to --fast.  Every other header line and
+every route body is shared: scene-relative offsets count frames, so a
+route authored on USA replays on EUR unchanged.
 
 Oracle per route: exit code 0, the exact [scene] sequence, none of the
 forbidden log lines ([assert] [crash] [watchdog] [replay] [mem] LEAK
 [mem] WARNING [gpu] WARNING, and anything tagged [spu] [xm] [xa] [mcrd]),
-and every "# max" ceiling.  A failing route prints the scene diff and the
-offending lines; the script exits 13 if anything failed.
+every "# max" ceiling and the "# min-frames" floor.  A failing route
+prints the scene diff and the offending lines; the script exits 13 if
+anything failed.
 
 Tier 2 boots every LvlTable level (--level 0..24) with --invincible and the
 shared routes/walk_right.pad, and requires exit 0, no forbidden lines and
@@ -67,12 +80,14 @@ ALLOWED = [
 DETERMINISM = ["--uncapped", "--no-cd-pace", "--no-audio", "--frame-crc"]
 
 FAST_ROUTES = ["campaign", "pause_quit"]
+FAST_ROUTES_EXTRA = {"EUR": ["play_trailer"]}   # territory-only routes worth the ctest budget
+TERRITORIES = ("USA", "EUR")
 TIER2_SHORT_LEVELS = [0, 4, 12, 19, 24]
 EXIT_ORACLE = 13
 
 
 class Route:
-    def __init__(self, path):
+    def __init__(self, path, territory="USA"):
         self.path = Path(path)
         self.name = self.path.stem
         self.env = {}
@@ -81,6 +96,8 @@ class Route:
         self.expect = []
         self.max = {}
         self.timeout = 900
+        self.min_frames = 0
+        self.territory = None          # "# territory EUR": runs only for that build
         for line in self.path.read_text(encoding="utf-8").splitlines():
             s = line.strip()
             if not s.startswith("#"):
@@ -90,6 +107,16 @@ class Route:
                 continue
             key = words[0]
             val = words[1].strip() if len(words) > 1 else ""
+            # "# eur max peak_prim=70000": the rest of the line is an ordinary
+            # header key that applies to that territory only
+            if key.upper() in TERRITORIES:
+                if key.upper() != territory:
+                    continue
+                words = val.split(None, 1)
+                if not words:
+                    continue
+                key = words[0]
+                val = words[1].strip() if len(words) > 1 else ""
             if key == "env" and "=" in val:
                 k, v = val.split("=", 1)
                 self.env[k] = v
@@ -104,6 +131,10 @@ class Route:
                 self.max[k] = int(v)
             elif key == "timeout":
                 self.timeout = int(val)
+            elif key == "min-frames":
+                self.min_frames = int(val)
+            elif key == "territory":
+                self.territory = val.upper()
 
 
 class RunResult:
@@ -122,11 +153,13 @@ class RunResult:
         self.forbidden = [l for l in lines
                           if any(p.match(l) for p in FORBIDDEN) and not any(p.match(l) for p in ALLOWED)]
 
-    def frame_crcs_after(self, scene):
-        seen = False
+    def frame_crcs(self, after_scene=None):
+        """distinct unmasked [frame] CRCs - over the whole run, or only after
+        the first open of `after_scene`"""
+        seen = after_scene is None
         crcs = set()
         for l in self.lines:
-            if l.startswith("[scene] ") and l.split()[1] == scene:
+            if l.startswith("[scene] ") and l.split()[1] == after_scene:
                 seen = True
             elif seen and l.startswith("[frame] ") and "masked" not in l:
                 crcs.add(l.split()[2])
@@ -201,8 +234,12 @@ def run_route(exe, route, seed, logdir, replay):
         if v > ceiling:
             print(f"  FAIL {route.name}: {k}={v} exceeds {ceiling}")
             ok = False
+    frames = len(res.frame_crcs())
+    if frames < route.min_frames:
+        print(f"  FAIL {route.name}: {frames} distinct unmasked frame CRC(s), {route.min_frames} required")
+        ok = False
     print(f"  {'PASS' if ok else 'FAIL'} {route.name}: {res.wall:.1f}s wall, "
-          f"{res.summary.get('vblanks', '?')} vblanks, {len(res.scenes)} scenes, "
+          f"{res.summary.get('vblanks', '?')} vblanks, {len(res.scenes)} scenes, {frames} distinct frames, "
           f"peak_ram={res.summary.get('peak_ram', '?')} peak_prim={res.summary.get('peak_prim', '?')} "
           f"peak_memnodes={res.summary.get('peak_memnodes', '?')}")
     if ok and replay:
@@ -234,8 +271,11 @@ def run_route(exe, route, seed, logdir, replay):
     return ok
 
 
-def tier1(exe, seed, fast, logdir, only, replay):
-    names = FAST_ROUTES if fast else sorted(p.stem for p in ROUTES.glob("*.pad") if p.stem != "walk_right")
+def tier1(exe, seed, fast, logdir, only, replay, territory):
+    if fast:
+        names = FAST_ROUTES + FAST_ROUTES_EXTRA.get(territory, [])
+    else:
+        names = sorted(p.stem for p in ROUTES.glob("*.pad") if p.stem != "walk_right")
     if only is not None:
         names = only
         if not names:
@@ -248,7 +288,11 @@ def tier1(exe, seed, fast, logdir, only, replay):
             print(f"  FAIL {n}: route file missing: {path}")
             ok = False
             continue
-        ok &= run_route(exe, Route(path), seed, logdir, replay)
+        route = Route(path, territory)
+        if route.territory and route.territory != territory:
+            print(f"  skip {n}: {route.territory}-only route ({territory} build)")
+            continue
+        ok &= run_route(exe, route, seed, logdir, replay)
     return ok
 
 
@@ -270,7 +314,7 @@ def tier2(exe, seed, short, logdir, only):
         print(f"== tier2 {name} (chapter {lvl // 5 + 1} level {lvl % 5 + 1}): {' '.join(args)}")
         res = run_game(exe, args, {}, 600, log)
         good = report_common(res, name)
-        crcs = res.frame_crcs_after("Game")
+        crcs = res.frame_crcs(after_scene="Game")
         if len(crcs) < 2:
             print(f"  FAIL {name}: only {len(crcs)} distinct unmasked frame CRC(s) after [scene] Game")
             good = False
@@ -313,6 +357,9 @@ def main():
     ap.add_argument("--only", nargs="*", help="route names (tier 1) and/or level indices 0-24 (tier 2)")
     ap.add_argument("--no-replay", action="store_true", help="tier 1: skip replaying each route's recording")
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--territory", choices=list(TERRITORIES), default="USA",
+                    help="the exe's territory build: selects '# territory' routes and "
+                         "'# usa'/'# eur' header lines (default USA)")
     ap.add_argument("--logs", help="directory to keep every run's log")
     a = ap.parse_args()
 
@@ -337,7 +384,7 @@ def main():
     if a.selftest:
         ok &= selftest(exe, a.seed, a.logs)
     if a.tier1:
-        ok &= tier1(exe, a.seed, a.fast, a.logs, only_routes, not a.no_replay)
+        ok &= tier1(exe, a.seed, a.fast, a.logs, only_routes, not a.no_replay, a.territory)
     if a.tier2:
         ok &= tier2(exe, a.seed, a.short, a.logs, only_levels)
     print("ALL PASSED" if ok else "FAILURES")

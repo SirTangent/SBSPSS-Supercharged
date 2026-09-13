@@ -1,0 +1,87 @@
+# Tier 1 (EUR only): main menu -> PLAY TRAILER -> DEMO.STR plays -> START
+# skips it -> back to the title.  The only route through fmvad.cpp,
+# FMV_DEMO and the six-entry FILEPOS_MAX, none of which USA compiles in.
+# Everything happens inside FrontEnd#1 (the advert is a frontend mode, not
+# a scene), so the oracle is the distinct-frame floor plus the usual tags.
+# territory EUR
+# exit-after 2000
+# min-frames 400
+# max peak_ram=1400000
+# max peak_prim=65536
+# max peak_memnodes=64
+# expect FrontEnd
+# Boot: START alone skips the Nick logo, the three FMVs and PRESS START
+# (all done by ~vblank 200 with instant loads), and is inert on the main
+# menu (buttons select on CROSS only), so the train can overshoot safely.
+# Never START|CROSS here: CROSS on the menu starts a game.
+FrontEnd#1+20:0800
+FrontEnd#1+30:0000
+FrontEnd#1+40:0800
+FrontEnd#1+50:0000
+FrontEnd#1+60:0800
+FrontEnd#1+70:0000
+FrontEnd#1+80:0800
+FrontEnd#1+90:0000
+FrontEnd#1+100:0800
+FrontEnd#1+110:0000
+FrontEnd#1+120:0800
+FrontEnd#1+130:0000
+FrontEnd#1+140:0800
+FrontEnd#1+150:0000
+FrontEnd#1+160:0800
+FrontEnd#1+170:0000
+FrontEnd#1+180:0800
+FrontEnd#1+190:0000
+FrontEnd#1+200:0800
+FrontEnd#1+210:0000
+FrontEnd#1+220:0800
+FrontEnd#1+230:0000
+FrontEnd#1+240:0800
+FrontEnd#1+250:0000
+FrontEnd#1+260:0800
+FrontEnd#1+270:0000
+FrontEnd#1+280:0800
+FrontEnd#1+290:0000
+FrontEnd#1+300:0800
+FrontEnd#1+310:0000
+FrontEnd#1+320:0800
+FrontEnd#1+330:0000
+FrontEnd#1+340:0800
+FrontEnd#1+350:0000
+FrontEnd#1+360:0800
+FrontEnd#1+370:0000
+FrontEnd#1+380:0800
+FrontEnd#1+390:0000
+FrontEnd#1+400:0800
+FrontEnd#1+410:0000
+FrontEnd#1+420:0800
+FrontEnd#1+430:0000
+FrontEnd#1+440:0800
+FrontEnd#1+450:0000
+FrontEnd#1+460:0800
+FrontEnd#1+470:0000
+FrontEnd#1+480:0800
+FrontEnd#1+490:0000
+FrontEnd#1+500:0800
+FrontEnd#1+510:0000
+FrontEnd#1+520:0800
+FrontEnd#1+530:0000
+FrontEnd#1+540:0800
+FrontEnd#1+550:0000
+FrontEnd#1+560:0800
+FrontEnd#1+570:0000
+FrontEnd#1+580:0800
+FrontEnd#1+590:0000
+# Menu: cursor starts on START GAME; DOWN, DOWN reaches PLAY TRAILER
+# (START GAME / OPTIONS / PLAY TRAILER), CROSS selects it.
+FrontEnd#1+700:4000
+FrontEnd#1+710:0000
+FrontEnd#1+750:4000
+FrontEnd#1+760:0000
+FrontEnd#1+800:0040
+FrontEnd#1+810:0000
+# The trailer runs ~2 vblanks per frame at 50Hz; ~700 vblanks in, one START
+# edge (PadGetDown in fmvPerFrameFunc - the mask must have been 0 before)
+# ends it, and the frontend fades back to the title.
+FrontEnd#1+1500:0800
+FrontEnd#1+1510:0000

@@ -8,18 +8,41 @@
 #
 # Usage (from an MSYS2 shell, or: C:\msys64\usr\bin\bash.exe -l <this script>):
 #   port/build-data.sh [TERRITORY] [VERSION]      # defaults: USA DEBUG
+#   port/build-data.sh <preset>                   # debug|final|usa-*|eur-* (as build-pc.sh)
 set -e
 
 cd "$(dirname "$0")/.."
 
-TERRITORY="${1:-USA}"
-VERSION="${2:-DEBUG}"
+#   port/build-data.sh [TERRITORY] [VERSION]   e.g. USA DEBUG, EUR FINAL (any case)
+#   port/build-data.sh <preset>                 the build-pc.sh spelling:
+#                                               debug final usa-debug usa-final eur-debug eur-final
+usage()
+{
+    echo "usage: port/build-data.sh [USA|EUR] [DEBUG|FINAL]  |  port/build-data.sh [usa-|eur-]debug|final" >&2
+    exit 1
+}
+case "$(echo "${1:-USA}" | tr '[:upper:]' '[:lower:]')" in
+    debug|usa-debug) TERRITORY=USA; VERSION=DEBUG ;;
+    final|usa-final) TERRITORY=USA; VERSION=FINAL ;;
+    eur-debug)       TERRITORY=EUR; VERSION=DEBUG ;;
+    eur-final)       TERRITORY=EUR; VERSION=FINAL ;;
+    usa|eur|jap)     TERRITORY=$(echo "$1" | tr '[:lower:]' '[:upper:]')
+                     VERSION=$(echo "${2:-DEBUG}" | tr '[:lower:]' '[:upper:]') ;;
+    *) usage ;;
+esac
+case "$VERSION" in DEBUG|FINAL) ;; *) usage ;; esac
+echo "Data build: TERRITORY=$TERRITORY VERSION=$VERSION -> out/$TERRITORY"
 
 # port/tools first: its modern lznp.exe must shadow the 16-bit tools/lznp.exe.
 # PATH and Path both overridden (globals.mak exports both spellings), and every
 # tool variable globals.mak pins to the vintage tools/cygwin binaries is
 # redirected to the MSYS2 equivalents - the 1999 cygwin ones crash on Win11.
 BUILD_PATH="/usr/bin:$PWD/port/tools:$PWD/tools:$PWD/tools/Data/bin:$PWD/tools/psyq/bin"
+# MkActor.exe compresses every pack through system("lznp ..."), and the MSVC
+# CRT's system() locates cmd.exe via COMSPEC.  An MSYS2 shell started without
+# a console (CI, an agent's subprocess) can lack it, and the only symptom is a
+# bare "Could not open temp Pak file Actor.Pak" from every actor.
+export COMSPEC="${COMSPEC:-$(cygpath -w "${SYSTEMROOT:-C:/WINDOWS}/system32/cmd.exe")}"
 make -r -f makefile.gfx \
     VERSION="$VERSION" TERRITORY="$TERRITORY" USER_NAME=CDBUILD \
     "PATH=$BUILD_PATH" "Path=$BUILD_PATH" \

@@ -148,5 +148,6 @@ extern int g_xmSongCount;
 extern XmVab g_xmVab[XM_MAX_VABS];
 extern int g_xmTickHz;			/* 60 (XM_NTSC) or 50 (XM_PAL) */
 extern int g_xmStereo;			/* XM_SetStereo/XM_SetMono */
+extern "C" int XM_TickClockMismatch(void);	/* g_xmTickHz != Port_VBlankHz() - warned by XM_OnceOffInit (M8) */
 
 #endif
