@@ -20,6 +20,11 @@ VERSION="${2:-DEBUG}"
 # tool variable globals.mak pins to the vintage tools/cygwin binaries is
 # redirected to the MSYS2 equivalents - the 1999 cygwin ones crash on Win11.
 BUILD_PATH="/usr/bin:$PWD/port/tools:$PWD/tools:$PWD/tools/Data/bin:$PWD/tools/psyq/bin"
+# MkActor.exe compresses every pack through system("lznp ..."), and the MSVC
+# CRT's system() locates cmd.exe via COMSPEC.  An MSYS2 shell started without
+# a console (CI, an agent's subprocess) can lack it, and the only symptom is a
+# bare "Could not open temp Pak file Actor.Pak" from every actor.
+export COMSPEC="${COMSPEC:-$(cygpath -w "${SYSTEMROOT:-C:/WINDOWS}/system32/cmd.exe")}"
 make -r -f makefile.gfx \
     VERSION="$VERSION" TERRITORY="$TERRITORY" USER_NAME=CDBUILD \
     "PATH=$BUILD_PATH" "Path=$BUILD_PATH" \

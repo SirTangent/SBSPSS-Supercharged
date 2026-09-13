@@ -1,5 +1,6 @@
 @echo off
-rem Build the PC (Win32) port via MSYS2 bash. Usage: port\build-pc.cmd [debug^|final^|all]
+rem Build the PC (Win32) port via MSYS2 bash.
+rem Usage: port\build-pc.cmd [debug^|final^|eur-debug^|eur-final^|usa^|eur^|all^|test [usa^|eur]^|soak [usa^|eur]]
 setlocal
 if not defined MSYS2_WIN set "MSYS2_WIN=C:\msys64"
 set "SCRIPT=%~dp0build-pc.sh"

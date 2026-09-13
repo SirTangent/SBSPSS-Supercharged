@@ -23,10 +23,26 @@
             "inherits": "base",
             "binaryDir": "${sourceDir}/build/final",
             "cacheVariables": { "SBSP_VARIANT": "FINAL" }
+        },
+        {
+            "name": "eur-debug",
+            "displayName": "EUR DEBUG (CD)",
+            "inherits": "base",
+            "binaryDir": "${sourceDir}/build/eur-debug",
+            "cacheVariables": { "SBSP_VARIANT": "DEBUG", "SBSP_TERRITORY": "EUR" }
+        },
+        {
+            "name": "eur-final",
+            "displayName": "EUR FINAL (CD)",
+            "inherits": "base",
+            "binaryDir": "${sourceDir}/build/eur-final",
+            "cacheVariables": { "SBSP_VARIANT": "FINAL", "SBSP_TERRITORY": "EUR" }
         }
     ],
     "buildPresets": [
-        { "name": "debug", "configurePreset": "debug" },
-        { "name": "final", "configurePreset": "final" }
+        { "name": "debug",     "configurePreset": "debug" },
+        { "name": "final",     "configurePreset": "final" },
+        { "name": "eur-debug", "configurePreset": "eur-debug" },
+        { "name": "eur-final", "configurePreset": "eur-final" }
     ]
 }
