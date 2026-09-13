@@ -196,7 +196,11 @@ target_link_libraries(sbsp_headless PRIVATE
     psyq_shim
 )
 add_test(NAME sbsp_headless COMMAND sbsp_headless WORKING_DIRECTORY ${SBSP_ROOT})
-set_tests_properties(sbsp_headless PROPERTIES LABELS unit)
+# a private save dir: without one the M8 shell would write its first-run
+# sbsp.ini into the developer's real %APPDATA%\SBSPSS (an interactive run's
+# default location)
+set_tests_properties(sbsp_headless PROPERTIES LABELS unit
+    ENVIRONMENT "SBSP_SAVE_DIR=${CMAKE_CURRENT_BINARY_DIR}/headless_save")
 
 # Unit tests that exercise the shim directly (no game code): C++17, statically
 # linked against psyq_shim, and compiled with the shim's own include
@@ -232,6 +236,8 @@ sbsp_shim_test(mdec_test)       # MDEC: dequant, IDCT, yuv, DecDCTin/out (M7)
 sbsp_shim_test(vlc3_test)       # VLC v2/v3 + an all-frames movie sweep (M7)
 sbsp_shim_test(str_test)        # STR streaming engine over a fake disc (M7)
 sbsp_shim_test(fmv_pipeline_test) # whole movie pipeline, frame CRCs (M7)
+sbsp_shim_test(ini_test)        # sbsp.ini loader/defaults + host paths (M8 shell)
+sbsp_shim_test(viewport_test)   # fit/integer/stretch viewport arithmetic (M8 shell)
 
 # M8 playthrough harness (tests/run_tier.py): the exit-code self-test, the
 # fast Tier 1 routes and the short Tier 2 sweep, all --uncapped.  The full

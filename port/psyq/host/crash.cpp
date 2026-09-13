@@ -58,7 +58,7 @@ static DWORD WINAPI watchdogThread(LPVOID arg)
 	{
 		Sleep(1000);
 		unsigned long now = Port_VBlankCount();
-		if (now != last)
+		if (now != last || Port_Paused())	/* paused (focus lost): not a stall */
 		{
 			last = now;
 			stalled = 0;
@@ -87,6 +87,14 @@ static int harnessRun(void)
 			return 1;
 	}
 	return 0;
+}
+
+/*	The same predicate for the rest of the shell (M8 shell): a scripted run
+	neither pauses on focus loss nor writes a default sbsp.ini.  Not cached
+	- args.cpp asks before its own _putenv pass has necessarily finished.  */
+extern "C" int Port_HarnessRun(void)
+{
+	return harnessRun();
 }
 
 extern "C" void Port_WatchdogStart(void)

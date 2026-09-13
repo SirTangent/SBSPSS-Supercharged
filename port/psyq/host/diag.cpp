@@ -287,9 +287,9 @@ extern "C" void Port_Exit(int code)
 	}
 
 	fprintf(stderr, "[summary] exit=%d vblanks=%lu scene=%s asserts=%lu "
-					"peak_ram=%lu peak_memnodes=%d/256 peak_prim=%lu\n",
+					"peak_ram=%lu peak_memnodes=%d/256 peak_prim=%lu paused=%.1f\n",
 			code, Port_VBlankCount(), g_currentScene, g_assertCount,
-			g_peakRam, g_peakNodes, GPU_PrimPoolPeak());
+			g_peakRam, g_peakNodes, GPU_PrimPoolPeak(), Host_PausedSeconds());
 	fflush(stderr);
 	_exit(code);
 }

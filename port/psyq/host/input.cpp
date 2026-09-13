@@ -468,29 +468,97 @@ static bool sdlInputUp(void)
 	return SDL_WasInit(SDL_INIT_VIDEO) != 0;
 }
 
+/*	Keyboard bindings (M8 shell): the RetroPad defaults, each rebindable
+	through SBSP_KEY_<BUTTON> (sbsp.ini key_<button>) with an SDL key name -
+	the spelling SDL_GetScancodeName produces ("Up", "Return", "Right
+	Shift", "Keypad 0", "F1").  A bad name keeps the default and says so.
+	This table is the one place the button names live.  */
+struct KeyBind
+{
+	const char	*name;		/* ini suffix, SBSP_KEY_<NAME> */
+	unsigned	mask;
+	SDL_Scancode deflt;
+	SDL_Scancode cur;
+};
+static KeyBind g_keys[] =
+{
+	{ "up",       BTN_UP,     SDL_SCANCODE_UP,     SDL_SCANCODE_UP     },
+	{ "down",     BTN_DOWN,   SDL_SCANCODE_DOWN,   SDL_SCANCODE_DOWN   },
+	{ "left",     BTN_LEFT,   SDL_SCANCODE_LEFT,   SDL_SCANCODE_LEFT   },
+	{ "right",    BTN_RIGHT,  SDL_SCANCODE_RIGHT,  SDL_SCANCODE_RIGHT  },
+	{ "cross",    BTN_CROSS,  SDL_SCANCODE_Z,      SDL_SCANCODE_Z      },
+	{ "circle",   BTN_CIRCLE, SDL_SCANCODE_X,      SDL_SCANCODE_X      },
+	{ "square",   BTN_SQUARE, SDL_SCANCODE_A,      SDL_SCANCODE_A      },
+	{ "triangle", BTN_TRI,    SDL_SCANCODE_S,      SDL_SCANCODE_S      },
+	{ "start",    BTN_START,  SDL_SCANCODE_RETURN, SDL_SCANCODE_RETURN },
+	{ "select",   BTN_SELECT, SDL_SCANCODE_RSHIFT, SDL_SCANCODE_RSHIFT },
+	{ "l1",       BTN_L1,     SDL_SCANCODE_Q,      SDL_SCANCODE_Q      },
+	{ "r1",       BTN_R1,     SDL_SCANCODE_W,      SDL_SCANCODE_W      },
+	{ "l2",       BTN_L2,     SDL_SCANCODE_E,      SDL_SCANCODE_E      },
+	{ "r2",       BTN_R2,     SDL_SCANCODE_R,      SDL_SCANCODE_R      },
+};
+#define NUM_KEYS	(int)(sizeof(g_keys) / sizeof(g_keys[0]))
+static int g_keysBound;
+
+/*	Apply SBSP_KEY_* to the table.  Returns the number of names SDL did not
+	recognise (each reported, default kept).  */
+extern "C" int Port_InputBindKeys(void)
+{
+	int bad = 0;
+	g_keysBound = 1;
+	for (int i = 0; i < NUM_KEYS; i++)
+	{
+		char env[32];
+		snprintf(env, sizeof(env), "SBSP_KEY_%s", g_keys[i].name);
+		for (char *p = env; *p; p++)
+			if (*p >= 'a' && *p <= 'z')
+				*p -= 'a' - 'A';
+		const char *want = getenv(env);
+		g_keys[i].cur = g_keys[i].deflt;
+		if (!want || !*want)
+			continue;
+		SDL_Scancode sc = SDL_GetScancodeFromName(want);
+		if (sc == SDL_SCANCODE_UNKNOWN)
+		{
+			fprintf(stderr, "[input] key_%s: unknown key name '%s' - keeping %s\n",
+					g_keys[i].name, want, SDL_GetScancodeName(g_keys[i].deflt));
+			bad++;
+			continue;
+		}
+		g_keys[i].cur = sc;
+		if (sc != g_keys[i].deflt)
+			fprintf(stderr, "[input] key_%s = %s\n", g_keys[i].name, SDL_GetScancodeName(sc));
+	}
+	return bad;
+}
+
+/*	the scancode bound to a button name, or -1 (tests)  */
+extern "C" int Port_InputKeyFor(const char *button)
+{
+	if (!g_keysBound)
+		Port_InputBindKeys();
+	for (int i = 0; i < NUM_KEYS; i++)
+		if (_stricmp(button, g_keys[i].name) == 0)
+			return (int)g_keys[i].cur;
+	return -1;
+}
+
 static unsigned keyboardMask(void)
 {
 	if (!sdlInputUp())
 		return 0;
+	if (!g_keysBound)
+		Port_InputBindKeys();
 
 	const bool *k = SDL_GetKeyboardState(NULL);
 	unsigned m = 0;
 	if (!k)
 		return 0;
-	if (k[SDL_SCANCODE_UP])		m |= BTN_UP;
-	if (k[SDL_SCANCODE_DOWN])	m |= BTN_DOWN;
-	if (k[SDL_SCANCODE_LEFT])	m |= BTN_LEFT;
-	if (k[SDL_SCANCODE_RIGHT])	m |= BTN_RIGHT;
-	if (k[SDL_SCANCODE_Z])		m |= BTN_CROSS;
-	if (k[SDL_SCANCODE_X])		m |= BTN_CIRCLE;
-	if (k[SDL_SCANCODE_A])		m |= BTN_SQUARE;
-	if (k[SDL_SCANCODE_S])		m |= BTN_TRI;
-	if (k[SDL_SCANCODE_RETURN])	m |= BTN_START;
-	if (k[SDL_SCANCODE_RSHIFT])	m |= BTN_SELECT;
-	if (k[SDL_SCANCODE_Q])		m |= BTN_L1;
-	if (k[SDL_SCANCODE_W])		m |= BTN_R1;
-	if (k[SDL_SCANCODE_E])		m |= BTN_L2;
-	if (k[SDL_SCANCODE_R])		m |= BTN_R2;
+	if (SDL_GetModState() & SDL_KMOD_ALT)
+		return 0;		/* Alt is the host-shortcut modifier (Alt+Enter): never a game key */
+	for (int i = 0; i < NUM_KEYS; i++)
+		if (k[g_keys[i].cur])
+			m |= g_keys[i].mask;
 	return m;
 }
 
@@ -517,11 +585,46 @@ static unsigned gamepadMask(void)
 	return m;
 }
 
+/*	Settings read once (M8 shell): SBSP_PAD_DEADZONE percent (sbsp.ini
+	pad_deadzone, default 15; 0 = raw) and SBSP_RUMBLE (rumble, default 1).
+	Port_InputReloadSettings re-reads them after a _putenv (tests).  */
+static int g_deadzone = -1;			/* raw axis units, -1 = unparsed */
+static int g_rumbleOn = -1;
+
+static void loadSettings(void)
+{
+	const char *e = getenv("SBSP_PAD_DEADZONE");
+	int pct = 15;
+	if (e && *e)
+	{
+		char *end;
+		long v = strtol(e, &end, 10);
+		if (end == e || *end || v < 0 || v > 100)
+			fprintf(stderr, "[input] bad pad_deadzone '%s' - want 0-100 - using 15\n", e);
+		else
+			pct = (int)v;
+	}
+	g_deadzone = 32767 * pct / 100;
+	e = getenv("SBSP_RUMBLE");
+	g_rumbleOn = !(e && *e == '0');
+}
+
+extern "C" void Port_InputReloadSettings(void)
+{
+	loadSettings();
+	Port_InputBindKeys();
+}
+
 static unsigned char stickByte(SDL_Gamepad *p, SDL_GamepadAxis axis)
 {
 	if (!p || !sdlInputUp())
 		return 0x80;			/* centred */
-	int v = (SDL_GetGamepadAxis(p, axis) >> 8) + 128;	/* -32768..32767 -> 0..255 */
+	if (g_deadzone < 0)
+		loadSettings();
+	int raw = SDL_GetGamepadAxis(p, axis);
+	if (raw > -g_deadzone && raw < g_deadzone)
+		return 0x80;			/* inside the dead zone: centred */
+	int v = (raw >> 8) + 128;	/* -32768..32767 -> 0..255 */
 	return (unsigned char)(v < 0 ? 0 : (v > 255 ? 255 : v));
 }
 
@@ -559,6 +662,10 @@ static void rumbleFrame(unsigned long vblank)
 
 	if (!g_gamepad)
 		return;
+	if (g_rumbleOn < 0)
+		loadSettings();
+	if (!g_rumbleOn)
+		return;						/* rumble=0: the motors never start */
 
 	const unsigned char *m = Port_PadMotor[0];
 	Uint16 low = 0;

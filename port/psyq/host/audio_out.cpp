@@ -68,6 +68,16 @@ void closeWavAtExit(void)
 	}
 }
 
+/*	case-insensitive substring (no strcasestr in the MS CRT)  */
+bool containsNoCase(const char *hay, const char *needle)
+{
+	size_t n = strlen(needle);
+	for (; *hay; hay++)
+		if (_strnicmp(hay, needle, n) == 0)
+			return true;
+	return false;
+}
+
 }	/* namespace */
 
 extern "C" void Host_EnsureAudio(void)
@@ -98,23 +108,93 @@ extern "C" void Host_EnsureAudio(void)
 		return;
 	}
 
+	/*	SBSP_AUDIO_BUFFER_FRAMES (sbsp.ini audio_buffer_frames, M8 shell):
+		the device period, SDL3's hint rather than a spec field; 0/unset
+		leaves the driver's choice.  Must precede the open.  */
+	const char *frames = getenv("SBSP_AUDIO_BUFFER_FRAMES");
+	if (frames && *frames && atoi(frames) > 0)
+	{
+		SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, frames);
+		fprintf(stderr, "[host] audio buffer: %d frames requested\n", atoi(frames));
+	}
+
 	if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
 	{
 		fprintf(stderr, "[host] SDL audio init failed: %s\n", SDL_GetError());
 		return;
 	}
+
+	/*	SBSP_AUDIO_DEVICE (audio_device): part of a playback device's name,
+		case-insensitive; no match = the default, with the names listed so
+		the tester can copy one.  */
+	SDL_AudioDeviceID dev = SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK;
+	const char *want = getenv("SBSP_AUDIO_DEVICE");
+	if (want && *want)
+	{
+		int n = 0;
+		SDL_AudioDeviceID *ids = SDL_GetAudioPlaybackDevices(&n);
+		int found = -1;
+		for (int i = 0; ids && i < n && found < 0; i++)
+		{
+			const char *name = SDL_GetAudioDeviceName(ids[i]);
+			if (name && containsNoCase(name, want))
+				found = i;
+		}
+		if (found >= 0)
+		{
+			dev = ids[found];
+			fprintf(stderr, "[host] audio device: %s\n", SDL_GetAudioDeviceName(dev));
+		}
+		else
+		{
+			fprintf(stderr, "[host] audio device '%s' not found - using the default; available:\n", want);
+			for (int i = 0; ids && i < n; i++)
+				fprintf(stderr, "       %s\n", SDL_GetAudioDeviceName(ids[i]));
+		}
+		SDL_free(ids);
+	}
+
 	SDL_AudioSpec spec;
 	spec.format = SDL_AUDIO_S16;
 	spec.channels = 2;
 	spec.freq = 44100;
-	g_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
-										 &spec, audioPull, 0);
+	g_stream = SDL_OpenAudioDeviceStream(dev, &spec, audioPull, 0);
 	if (!g_stream)
 	{
 		fprintf(stderr, "[host] no audio device: %s\n", SDL_GetError());
 		return;
 	}
+
+	/*	SBSP_VOLUME (volume): 0-100 on the host stream.  The game's own
+		SpuSetCommonMasterVolume keeps driving the SPU mixer underneath.  */
+	const char *vol = getenv("SBSP_VOLUME");
+	if (vol && *vol)
+	{
+		char *end;
+		long v = strtol(vol, &end, 10);
+		if (end == vol || *end || v < 0 || v > 100)
+			fprintf(stderr, "[host] bad volume '%s' - want 0-100 - using 100\n", vol);
+		else if (v != 100)
+		{
+			SDL_SetAudioStreamGain(g_stream, (float)v / 100.0f);
+			fprintf(stderr, "[host] volume: %ld%%\n", v);
+		}
+	}
 	SDL_ResumeAudioStreamDevice(g_stream);
+}
+
+/*	window.cpp, on the pause edges (focus lost / regained, M8 shell).  The
+	pump stops delivering vblanks while paused, so XM_Update stops too - but
+	the SPU would keep rendering whatever the voices were doing, a drone,
+	unless the device stops pulling.  No-op without a device.  */
+extern "C" void Host_AudioPause(int on)
+{
+	if (!g_stream)
+		return;
+	if (on)
+		SDL_PauseAudioStreamDevice(g_stream);
+	else
+		SDL_ResumeAudioStreamDevice(g_stream);
 }
 
 /*	pump.cpp, once per emulated vblank, after the vblank callback chain  */
