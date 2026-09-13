@@ -473,6 +473,100 @@ the display CRC / BMP dumper read the DISPENV rect only, so a `[frame]`
 CRC cannot see the PAL letterbox shift; that is why the trailer route's
 oracle is "many distinct frames", not a mid-movie CRC.
 
+### Host shell (M8 PR 3)
+
+No game-source change: everything below is shim-side (`port/psyq/host`,
+`port/psyq/vk`, `port/psyq/cd`), so the M8 entry numbering stays at #30
+and the PSX build is untouched by construction.
+
+**Data once per territory (issue #35).**  `makefile.gfx` has no `VERSION`
+conditional, so a DEBUG and a FINAL data build are byte-identical.
+`port/build-data.sh <usa|eur>` still runs the vintage make into a PSX tree
+(`out/<T>/<V>/version/CD`, `VERSION` defaulting to DEBUG and only settable
+by the two-word form) and then stages the six CD files once into
+`out/<T>/cd/`.  `cd.cpp`'s `resolveDataRoot` walks an ordered candidate
+list on every directory build - `SBSP_DATA_DIR` verbatim (never fallen
+through: `xa_test` points it at a directory that does not exist on
+purpose), `data\` beside the exe, `out/<T>/cd`, then the PSX tree for data
+built before #35 - and `CdInit` prints `[cd] data: <root>` or lists every
+candidate it tried.  `build-pc.sh check_data` and the CMake warning gate
+on `out/<T>/cd/BIGLUMP.BIN`.
+
+**sbsp.ini (`host/ini.cpp`).**  Lives beside `card0.mcd` - `Port_SaveDir`
+(`host/hostpath.cpp`): `SBSP_SAVE_DIR` verbatim, else `saves\` beside the
+exe if that directory exists (the zip layout), else `%APPDATA%\SBSPSS`.
+Every key is the ini spelling of an `SBSP_*` variable and loading is
+`_putenv` for each key whose variable is unset, so the precedence
+**argument > environment > ini** costs the consumers nothing (they all
+`getenv` lazily).  `args.cpp` therefore loads the ini *after* its
+argument pass and reads `SBSP_BOOT_LEVEL/SEED/LANGUAGE` after that.  The
+key set is a whitelist shared with the default writer - the harness
+switches (`SBSP_UNCAPPED`, `SBSP_EXIT_AFTER`, `SBSP_PAD_FILE`...) have no
+ini spelling, so a stray line can never turn an interactive run into a
+scripted one, and `save_dir` is refused (it says where the ini is).
+Defaults are written only at the default location and only for an
+interactive run (`Port_HarnessRun`): the harness's temp `--save-dir` and
+the unit exes leave no files behind (`sbsp_headless` gets a private
+`SBSP_SAVE_DIR` for the same reason).  Argument twins: `--ini`,
+`--window`, `--scale`, `--vsync`, `--volume`, `--set key=value`; the
+env-only `SBSP_ASSERT_CONTINUE` / `SBSP_MEM_LOG` gained `--assert-continue`
+/ `--mem-log`.  Keys: `window` (`WxH` | `fullscreen`), `scale`, `vsync`,
+`audio_device`, `audio_buffer_frames`, `volume`, `key_<button>` x14,
+`pad_deadzone`, `rumble`, `pause_on_focus_loss`, `language`, `data_dir`.
+`ini_test` pins the parser, the precedence rule and the defaults
+round-trip.
+
+**Presenter.**  `vk/viewport.cpp` (`Port_ViewportRect`, pinned by
+`viewport_test`) replaces the inline 4:3 arithmetic: `fit` is the M2
+letterbox, `integer` a whole multiple k of the display's line count at
+4:3 width (the 256-line frame at k=3 is 768x1024 - horizontally exactly 2
+pixels per source pixel; PS1 pixels are not square, so only the vertical
+factor is integral) falling back to fit below k=1, `stretch` the whole
+window.  `vsync=0` asks for MAILBOX, then IMMEDIATE, else keeps FIFO and
+says so (`[host] present mode:`); `vkGetPhysicalDeviceSurfacePresentModesKHR`
+joined the loader list.  Emulated time never waited on the display in any
+mode (timeout-0 acquire).  `window=` sets the initial size (default
+1024x768, three lines per PS1 line) or starts borderless fullscreen;
+`Alt+Enter` toggles it at run time (`SDL_SetWindowFullscreen`, no
+exclusive mode), and `keyboardMask` returns nothing while Alt is held so
+the chord cannot press START.
+
+**Pause on focus loss.**  `SDL_EVENT_WINDOW_FOCUS_LOST/GAINED` set a flag
+in `window.cpp` (never for a harness run - its window is nobody's and its
+vblank budget is the oracle).  `Port_Pump` asks `Host_PausePoll` after
+its re-entrancy guard: while paused it waits for events 100 ms at a time,
+repaints at ~10 Hz and returns without a vblank, so no callback, input
+frame, memory watch, frame CRC or exit-after fires - game time stops.  On
+the resume edge the pump assigns `g_vblankBase = g_vblank` and re-stamps
+`g_qpcBase` (not via `wallVblank()`, which is by then far ahead), so the
+game continues from the frame it stopped on with no `MAX_PENDING_VBLANKS`
+catch-up burst; the audio device is paused across the edge
+(`Host_AudioPause`, else the SPU drones on its last voice state), the
+watchdog thread resets its stall count while `Port_Paused()`, and
+`[summary]` gains `paused=<seconds>`.  The M3 invariants (one vblank per
+pump, no nesting, backlog rebased not skipped, `Port_NowSeconds` off the
+fixed origin) are untouched; CD deadlines clamp to now on the next read.
+
+**Input / audio knobs.**  The keyboard map is now one table in
+`input.cpp` (`Port_InputBindKeys` from `SBSP_KEY_<BUTTON>` via
+`SDL_GetScancodeFromName`, bad names keep the default and say so);
+`pad_deadzone` (percent, default 15) centres a stick inside it; `rumble=0`
+returns before the motors are ever armed; `audio_device` matches part of
+a playback device name (case-insensitive, the list is printed on a miss),
+`audio_buffer_frames` is the `SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES` hint
+set before the open, `volume` is `SDL_SetAudioStreamGain` on the host
+stream (the game's own `SpuSetCommonMasterVolume` keeps driving the SPU
+mixer).  `pad_test` covers the dead zone, the name parsing and rumble=0.
+
+**Tester zip.**  `port/package.py [--territory usa|eur] [--build]`
+preflights the two exes and the six data files (LFS-pointer and
+2336-multiple guards), stages `sbsp.exe` (FINAL), `sbsp-debug.exe`,
+`data\`, an empty `saves\`, `port/package/README.txt` and
+`run-test-session.cmd` under `port/build/package/` and zips them.  The
+session script snapshots the card, runs `sbsp-debug.exe --record-pad
+--assert-continue --mem-log` with stdout and stderr in separate files (the
+harness rule), and prints the exit code and `[summary]`.
+
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 
 - String-literal → `char*` conversions (pervasive; `-Wno-write-strings`).
