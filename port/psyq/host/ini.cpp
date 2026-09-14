@@ -62,7 +62,7 @@ static const IniKey kKeys[] =
 	{ "pad_deadzone",        "SBSP_PAD_DEADZONE",        "15",       "analog stick dead zone, percent of full travel (0 = raw)" },
 	{ "rumble",              "SBSP_RUMBLE",              "1",        "1 = forward the game's vibration to the gamepad, 0 = never rumble" },
 	{ "pause_on_focus_loss", "SBSP_PAUSE_ON_FOCUS_LOSS", "1",        "1 = freeze the game (and its audio) while another window has the focus" },
-	{ "language",            "SBSP_LANGUAGE",            "english",  "text language: english swedish dutch italian german (the shipped data is English in every slot)" },
+	{ "language",            "SBSP_LANGUAGE",            "english",  "text language: english swedish dutch italian german - NOTE: only English text exists in the data, the other slots load the same English strings (github issue #37)" },
 	{ "data_dir",            "SBSP_DATA_DIR",            "",         "directory holding BIGLUMP.BIN etc.; empty = look in data\\ beside the exe, then the repo's out\\<territory>\\cd" },
 };
 #define NUM_KEYS	(int)(sizeof(kKeys) / sizeof(kKeys[0]))

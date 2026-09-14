@@ -25,7 +25,8 @@
 	                    Env: SBSP_LANGUAGE.  The shipped data carries
 	                    English text in every language slot (the four other
 	                    translation sources are stubs), so this proves the
-	                    load path rather than changing what is displayed.
+	                    load path rather than changing what is displayed -
+	                    real localization is github issue #37.
 
 	The rest are aliases for the SBSP_* environment variables - the argument
 	just sets the variable (overriding an inherited one), and the existing
@@ -175,7 +176,8 @@ static void usage(void)
 		"  --language <l>        boot text language       (SBSP_LANGUAGE)\n"
 		"                        a name or its locale/textdbase.h enum index:\n"
 		"                        english=0 swedish=1 dutch=2 italian=3 german=4\n"
-		"                        (the shipped data is English in every slot)\n"
+		"                        NOTE: only English text exists in the data - every\n"
+		"                        other slot loads the same English strings (issue #37)\n"
 		"  --data-dir <path>     CD data directory        (SBSP_DATA_DIR)\n"
 		"  --pad-script <s>      scripted input           (SBSP_PAD_SCRIPT)\n"
 		"  --pad-file <path>     scripted input from file (SBSP_PAD_FILE)\n"

@@ -59,7 +59,9 @@ line each.  Edit with Notepad and restart the game.  The options:
   pad_deadzone=15            analog stick dead zone, percent
   rumble=1                   0 = never vibrate
   pause_on_focus_loss=1      0 = keep running in the background
-  language=english           text language (the shipped data is English)
+  language=english           text language - NOTE: only English text exists in
+                             the game data, so the other choices (swedish,
+                             dutch, italian, german) show English too
   data_dir=                  where the data is; empty = the data\ folder here
 
 The same options work on the command line, e.g.

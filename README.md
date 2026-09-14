@@ -145,7 +145,9 @@ your slots are populated without visiting Options. Next to it lives
 or `fullscreen`, `scale=fit|integer|stretch`, `vsync`, audio device /
 buffer / volume, the keyboard bindings, gamepad dead zone and rumble,
 pause-on-focus-loss, language and data directory. Precedence is
-command-line argument > `SBSP_*` environment variable > ini.
+command-line argument > `SBSP_*` environment variable > ini. (Only English
+text exists in the game data, so `language=` loads the same strings whatever
+it says - real localization is issue #37.)
 
 **Tester zip.** `python port\package.py [--territory usa|eur]` bundles the
 FINAL and DEBUG executables, the data, a `saves\` folder, a README and
