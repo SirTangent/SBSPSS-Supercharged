@@ -559,6 +559,8 @@ stream (the game's own `SpuSetCommonMasterVolume` keeps driving the SPU
 mixer).  `pad_test` covers the dead zone, the name parsing and rumble=0.
 
 **Tester zip.**  `port/package.py [--territory usa|eur] [--build]`
+(`port/package.cmd` runs it with MSYS2's python3, sidestepping the
+Microsoft Store `python` alias stub some machines have on the PATH)
 preflights the two exes and the six data files (LFS-pointer and
 2336-multiple guards), stages `sbsp.exe` (FINAL), `sbsp-debug.exe`,
 `data\`, an empty `saves\`, `port/package/README.txt` and

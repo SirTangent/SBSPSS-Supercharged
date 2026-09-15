@@ -149,7 +149,7 @@ command-line argument > `SBSP_*` environment variable > ini. (Only English
 text exists in the game data, so `language=` loads the same strings whatever
 it says - real localization is issue #37.)
 
-**Tester zip.** `python port\package.py [--territory usa|eur]` bundles the
+**Tester zip.** `port\package.cmd [--territory usa|eur]` (or `python port\package.py`) bundles the
 FINAL and DEBUG executables, the data, a `saves\` folder, a README and
 `run-test-session.cmd` (a recorded, logged play session) into
 `port\build\sbsp-<territory>-<date>.zip`.
