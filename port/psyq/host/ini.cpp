@@ -2,9 +2,8 @@
 
 	The file lives beside sbsp.exe - where a tester will look for it, and
 	what makes an unpacked folder self-contained - and is written there
-	with commented defaults on the first run (args.cpp loadIni; an older
-	one beside card0.mcd is still read, and a read-only install directory
-	falls back to the save directory).  Every key is the ini spelling of an
+	with commented defaults on the first run (args.cpp loadIni; --ini /
+	SBSP_INI names a different one).  Every key is the ini spelling of an
 	SBSP_* environment variable, and loading it is nothing more than
 	_putenv for each key whose variable is not already set - so the
 	precedence is

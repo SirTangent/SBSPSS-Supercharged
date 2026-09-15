@@ -494,9 +494,9 @@ on `out/<T>/cd/BIGLUMP.BIN`.
 
 **sbsp.ini (`host/ini.cpp`).**  Lives beside the exe (`Port_ExeDir`), the
 one place a tester looks and the thing that makes an unpacked folder
-self-contained; `--ini` / `SBSP_INI` overrides it, an older one beside
-`card0.mcd` is still read when the exe has none (with a note saying which
-won), and a read-only install directory falls back to the save directory.
+self-contained; `--ini` / `SBSP_INI` names a different one, and there is
+no search path beyond those two - nothing shipped with the file anywhere
+else, so there is nothing to be compatible with.
 The save directory is a separate question (`Port_SaveDir`,
 `host/hostpath.cpp`): `SBSP_SAVE_DIR` verbatim, else `saves\` beside the
 exe if that directory exists (the zip layout), else `%APPDATA%\SBSPSS`.

@@ -244,9 +244,7 @@ static const char *argValue(const char *name, int *i, int argc, char **argv,
 /*	host/hostpath.cpp, host/ini.cpp, host/crash.cpp - declared here rather
 	than through a header because this TU carries no include set (see
 	port/CMakeLists.txt psyq_args).  */
-extern "C" int Port_SaveDir(char *dst, size_t n);
 extern "C" int Port_ExeDir(char *dst, size_t n);
-extern "C" int Port_FileExists(const char *path);
 extern "C" int Port_IniLoad(const char *path);
 extern "C" int Port_IniWriteDefaults(const char *path);
 extern "C" int Port_IniSet(const char *key, const char *value, const char *what);
@@ -258,14 +256,12 @@ extern "C" int Port_HarnessRun(void);
 	inherited environment alike; the three parsed-into-globals options
 	(--level/--seed/--language) read their variables after this returns.
 	Location: --ini / SBSP_INI, else <exe dir>\sbsp.ini - where a tester
-	will look, and what makes an unpacked folder self-contained.  An older
-	one beside card0.mcd is still read when there is none there.  Defaults
-	are written only for an interactive run (a scripted one must leave no
-	files behind), and in the save directory instead when the exe's own is
-	not writable.  */
+	will look, and what makes an unpacked folder self-contained.  Defaults
+	are written there on the first run, but only for an interactive one: a
+	scripted run must leave no files behind.  */
 static void loadIni(void)
 {
-	char exeDir[512], saveDir[512], path[600], legacy[600];
+	char exeDir[512], path[600];
 
 	const char *explicitPath = getenv("SBSP_INI");
 	if (explicitPath && *explicitPath)
@@ -275,39 +271,19 @@ static void loadIni(void)
 		return;
 	}
 
-	int haveExe = Port_ExeDir(exeDir, sizeof(exeDir));
-	if (haveExe)
-		snprintf(path, sizeof(path), "%s\\sbsp.ini", exeDir);
+	if (!Port_ExeDir(exeDir, sizeof(exeDir)))
+		return;					/* no path to ourselves: built-in defaults */
+	snprintf(path, sizeof(path), "%s\\sbsp.ini", exeDir);
 
-	/*	Beside card0.mcd is where this file first lived; it is still READ
-		when there is none beside the exe, so an edited one is never
-		silently ignored - but a new one is always written next to the exe,
-		where a settings file belongs and where the tester will look.  */
-	Port_SaveDir(saveDir, sizeof(saveDir));
-	snprintf(legacy, sizeof(legacy), "%s\\sbsp.ini", saveDir);
-
-	if (haveExe && Port_IniLoad(path) >= 0)
-	{
-		if (Port_FileExists(legacy))
-			fprintf(stderr, "[ini] note: %s also exists and was NOT read - "
-							"the one beside the exe wins; delete the other\n", legacy);
+	if (Port_IniLoad(path) >= 0)
 		return;
-	}
-	if (Port_IniLoad(legacy) >= 0)
-		return;
-
-	/*	None yet.  A scripted run leaves no files behind.  */
 	if (Port_HarnessRun())
-		return;
-	if (haveExe && Port_IniWriteDefaults(path))
-	{
+		return;					/* a scripted run leaves no files behind */
+	if (Port_IniWriteDefaults(path))
 		Port_IniLoad(path);
-		return;
-	}
-	/*	the exe directory is not writable (an install under Program Files):
-		fall back to the save directory, which always is  */
-	if (Port_IniWriteDefaults(legacy))
-		Port_IniLoad(legacy);
+	else
+		fprintf(stderr, "[ini] settings will not persist - point --ini / SBSP_INI "
+						"at a writable file\n");
 }
 
 /*	Priority 101 (0-100 are reserved): runs before every normal-priority
