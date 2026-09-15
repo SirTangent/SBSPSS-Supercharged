@@ -16,3 +16,7 @@ source/system/DEBUG/
 source/system/FINAL/
 statcov.txt
 stats.txt
+# M8 shell: tester zips, pad recordings kept by a failed route, test sessions
+*.zip
+*.rec.pad
+sessions/

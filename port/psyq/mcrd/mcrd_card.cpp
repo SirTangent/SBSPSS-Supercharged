@@ -27,7 +27,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <direct.h>
 #include <sys/types.h>
 #include <kernel.h>				/* DIRENTRY */
 
@@ -63,39 +62,15 @@ static int stateFirst(unsigned s)	{ return s == 0x51; }
 /*****************************************************************************/
 /*	host file  */
 
+extern "C" int Port_SaveDir(char *dst, size_t n);	/* host/hostpath.cpp */
+
+/*	SBSP_SAVE_DIR verbatim, else saves\ beside the exe, else
+	%APPDATA%\SBSPSS - created if needed.  Resolved on every open: the
+	tests re-point the variable between opens.  */
 static void resolvePath(void)
 {
 	char dir[448];
-	const char *env = getenv("SBSP_SAVE_DIR");
-	if (env)
-		snprintf(dir, sizeof(dir), "%s", env);
-	else
-	{
-		const char *appdata = getenv("APPDATA");
-		snprintf(dir, sizeof(dir), "%s\\SBSPSS", appdata ? appdata : ".");
-	}
-
-	/*	create the directory chain (the first mkdir in the port)  */
-	char part[448];
-	size_t n = 0;
-	for (const char *p = dir; ; p++)
-	{
-		if (*p && *p != '\\' && *p != '/')
-		{
-			if (n < sizeof(part) - 1)
-				part[n++] = *p;
-			continue;
-		}
-		part[n] = 0;
-		/*	skip drive roots ("C:") and empty segments  */
-		if (n && !(n == 2 && part[1] == ':'))
-			_mkdir(part);
-		if (!*p)
-			break;
-		if (n < sizeof(part) - 1)
-			part[n++] = '\\';
-	}
-
+	Port_SaveDir(dir, sizeof(dir));
 	snprintf(g_cardPath, sizeof(g_cardPath), "%s\\card0.mcd", dir);
 }
 

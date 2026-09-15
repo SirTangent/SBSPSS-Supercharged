@@ -178,6 +178,28 @@ extern "C" void Port_Pump(void)
 	if (inPump)
 		return;
 
+	/*	Paused (focus lost, M8 shell): the window is polled and NOTHING
+		else happens - no vblank, no callback, no input frame - so game time
+		simply stops.  On the resume edge the wall clock is rebased onto the
+		counter directly (never through wallVblank(), which is now far
+		ahead), so the game continues from the frame it stopped on instead
+		of bursting MAX_PENDING_VBLANKS catch-up vblanks.  The invariants
+		above are untouched: still at most one vblank per call, still no
+		nesting.  Uncapped (harness) runs never pause.  */
+	static int	wasPaused;
+	if (Host_PausePoll())
+	{
+		wasPaused = 1;
+		return;
+	}
+	if (wasPaused)
+	{
+		wasPaused = 0;
+		clockInit();
+		g_vblankBase = g_vblank;
+		QueryPerformanceCounter(&g_qpcBase);
+	}
+
 	unsigned long target = wallVblank();
 
 	/*	Backlog control.  The old code fast-forwarded g_vblank to

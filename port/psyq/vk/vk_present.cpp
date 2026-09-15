@@ -3,8 +3,8 @@
 	Pipeline: whole VRAM (1024x512 R16_UINT) uploaded each emulated vblank
 	through a persistently-mapped staging buffer, then a fullscreen-triangle
 	pass whose fragment shader unpacks the PS1 15-bit format and crops to
-	the DISPENV rect (push constants).  Presentation is FIFO; game speed
-	stays on the pump's QPC vblank clock, so a 144Hz monitor does not speed
+	the DISPENV rect (push constants).  Presentation is FIFO (or MAILBOX /
+	IMMEDIATE with vsync off - M8 shell); game speed stays on the pump's QPC vblank clock, so a 144Hz monitor does not speed
 	the game up.
 
 	Vulkan is reached through SDL (SDL_Vulkan_LoadLibrary + the returned
@@ -24,12 +24,16 @@
 #include <vulkan/vulkan.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "gpu/gpu_core.h"
 
 #include "vk/shaders/present.vert.spv.h"
 #include "vk/shaders/present.frag.spv.h"
+
+extern "C" void Port_ViewportRect(int mode, int winW, int winH, int dispH, int out[4]);	/* vk/viewport.cpp */
+extern "C" int  Port_ScaleMode(void);
 
 /*****************************************************************************/
 /*	Hand-rolled loader for exactly the functions we use.  */
@@ -41,6 +45,7 @@
 	F(vkGetPhysicalDeviceSurfaceSupportKHR)									\
 	F(vkGetPhysicalDeviceSurfaceCapabilitiesKHR)							\
 	F(vkGetPhysicalDeviceSurfaceFormatsKHR)									\
+	F(vkGetPhysicalDeviceSurfacePresentModesKHR)							\
 	F(vkGetPhysicalDeviceMemoryProperties)									\
 	F(vkCreateDevice)														\
 	F(vkGetDeviceProcAddr)
@@ -243,6 +248,49 @@ static bool refreshRenderSemaphores(void)
 	return true;
 }
 
+/*	SBSP_VSYNC (sbsp.ini `vsync`, --vsync; M8 shell).  FIFO is the only mode
+	every driver must offer and is vsync by definition.  With vsync off the
+	preference is MAILBOX (the newest frame replaces a queued one, no tear)
+	then IMMEDIATE (tears, never waits); a driver offering neither keeps
+	FIFO and says so.  The choice never blocks emulated time either way -
+	acquire is timeout-0 and a busy frame is skipped (see VkPresent_Frame).  */
+static VkPresentModeKHR choosePresentMode(void)
+{
+	static int vsync = -1;
+	if (vsync < 0)
+	{
+		const char *e = getenv("SBSP_VSYNC");
+		vsync = !(e && *e && (*e == '0' || _stricmp(e, "off") == 0 || _stricmp(e, "no") == 0 ||
+							  _stricmp(e, "false") == 0));
+	}
+	VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;
+	const char *name = "FIFO (vsync)";
+	if (!vsync)
+	{
+		VkPresentModeKHR modes[16];
+		uint32_t n = 16;
+		if (p_vkGetPhysicalDeviceSurfacePresentModesKHR(s_phys, s_surface, &n, modes) >= 0)
+		{
+			bool mailbox = false, immediate = false;
+			for (uint32_t i = 0; i < n; i++)
+			{
+				if (modes[i] == VK_PRESENT_MODE_MAILBOX_KHR)   mailbox   = true;
+				if (modes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR) immediate = true;
+			}
+			if (mailbox)        { mode = VK_PRESENT_MODE_MAILBOX_KHR;   name = "MAILBOX (vsync off)"; }
+			else if (immediate) { mode = VK_PRESENT_MODE_IMMEDIATE_KHR; name = "IMMEDIATE (vsync off)"; }
+			else                name = "FIFO (vsync off requested, but the driver offers no other mode)";
+		}
+	}
+	static bool reported;
+	if (!reported)
+	{
+		reported = true;
+		fprintf(stderr, "[host] present mode: %s\n", name);
+	}
+	return mode;
+}
+
 static bool buildSwapchain(void)
 {
 	VkSurfaceCapabilitiesKHR caps;
@@ -276,7 +324,7 @@ static bool buildSwapchain(void)
 	sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
 	sci.preTransform     = caps.currentTransform;
 	sci.compositeAlpha   = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-	sci.presentMode      = VK_PRESENT_MODE_FIFO_KHR;
+	sci.presentMode      = choosePresentMode();
 	sci.clipped          = VK_TRUE;
 	sci.oldSwapchain     = s_swapchain;
 
@@ -904,21 +952,19 @@ void VkPresent_Frame(void)
 	p_vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
 							  s_pipeLayout, 0, 1, &s_dset, 0, NULL);
 
-	/*	letterbox to 4:3 - the PS1's high-res 512-wide mode still scans out
-		on a 4:3 CRT (non-square pixels are authentic)  */
+	/*	4:3 letterbox (fit), whole-frame multiples (integer) or the full
+		window (stretch) - vk/viewport.cpp, SBSP_SCALE.  The PS1's high-res
+		512-wide mode still scans out on a 4:3 CRT: non-square pixels are
+		authentic, so 4:3 is the shape in every mode but stretch.  */
 	{
-		float winW = (float)s_swapExtent.width, winH = (float)s_swapExtent.height;
-		float outW = winW, outH = winW * 3.0f / 4.0f;
-		if (outH > winH)
-		{
-			outH = winH;
-			outW = winH * 4.0f / 3.0f;
-		}
+		int rect[4];
+		Port_ViewportRect(Port_ScaleMode(), (int)s_swapExtent.width, (int)s_swapExtent.height,
+						  g_gpu.dispH ? g_gpu.dispH : 256, rect);
 		VkViewport vpp;
-		vpp.x        = (winW - outW) * 0.5f;
-		vpp.y        = (winH - outH) * 0.5f;
-		vpp.width    = outW;
-		vpp.height   = outH;
+		vpp.x        = (float)rect[0];
+		vpp.y        = (float)rect[1];
+		vpp.width    = (float)rect[2];
+		vpp.height   = (float)rect[3];
 		vpp.minDepth = 0.0f;
 		vpp.maxDepth = 1.0f;
 		p_vkCmdSetViewport(cmd, 0, 1, &vpp);

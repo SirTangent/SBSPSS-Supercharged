@@ -8,9 +8,9 @@
 # Presets (port/CMakePresets.json): debug, final (USA; usa-debug / usa-final
 # are accepted aliases) and eur-debug, eur-final (EUR, PAL 50Hz); `usa` /
 # `eur` name a territory's pair and `all` is every tree.  Each tree needs
-# its territory+variant data first, built with the SAME word:
-#   port/build-data.cmd final          (= USA FINAL: out/USA/include + out/USA/FINAL/version/CD)
-#   port/build-data.cmd eur-debug      (= EUR DEBUG: out/EUR/include + out/EUR/DEBUG/version/CD)
+# its territory's data first (one build serves DEBUG and FINAL, issue #35):
+#   port/build-data.cmd usa            (out/USA/include + out/USA/cd)
+#   port/build-data.cmd eur            (out/EUR/include + out/EUR/cd)
 # - build_one checks for both and names the missing command.
 #
 # Requires the MSYS2 mingw32 toolchain:
@@ -50,8 +50,8 @@ presets_for()
 }
 
 # The data a preset's exe compiles against and boots from.  CMake only gates
-# on the generated headers (per territory); the BIGLUMP under the variant dir
-# is what cd.cpp opens at run time, so check both here and say what to run.
+# on the generated headers; out/<T>/cd is what cd.cpp opens at run time (the
+# same files for DEBUG and FINAL), so check both here and say what to run.
 check_data()
 {
     preset="$1"
@@ -59,10 +59,9 @@ check_data()
         eur-*) terr=EUR ;;
         *)     terr=USA ;;
     esac
-    ver=$(echo "${preset##*-}" | tr '[:lower:]' '[:upper:]')
-    for f in "../out/$terr/include/BigLump.h" "../out/$terr/$ver/version/CD/BIGLUMP.BIN"; do
+    for f in "../out/$terr/include/BigLump.h" "../out/$terr/cd/BIGLUMP.BIN"; do
         if [ ! -f "$f" ]; then
-            echo "missing $f - run: port/build-data.cmd $preset   (= $terr $ver)" >&2
+            echo "missing $f - run: port/build-data.cmd $(echo "$terr" | tr '[:upper:]' '[:lower:]')" >&2
             exit 1
         fi
     done

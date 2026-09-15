@@ -31,6 +31,8 @@ void VkPresent_Frame(void);
 
 extern "C" void Port_InputHandleEvent(const void *ev);	/* host/input.cpp */
 extern "C" void Port_InputFrame(unsigned long vblank);
+extern "C" void Host_AudioPause(int on);				/* host/audio_out.cpp */
+extern "C" int  Port_HarnessRun(void);					/* host/crash.cpp */
 
 static SDL_Window	*g_window;
 static int			g_videoUp;
@@ -44,11 +46,22 @@ static int			g_dumpCount;
 static const char	*g_dumpDir = ".";
 static int			g_frameCrc;			/* SBSP_FRAME_CRC=1: [frame] line per vblank */
 
+/*	Pause on focus loss (M8 shell).  SBSP_PAUSE_ON_FOCUS_LOSS (sbsp.ini
+	`pause_on_focus_loss`, default on) - and never for a harness run, whose
+	window nobody is looking at and whose vblank budget is the oracle.  */
+static int			g_pauseOnFocusLoss;
+static volatile int	g_paused;			/* read unlocked by the watchdog thread */
+static double		g_pauseStart;
+static double		g_pausedSeconds;
+
 static void parseTooling(void)
 {
 	if (g_toolingParsed)
 		return;
 	g_toolingParsed = 1;
+
+	const char *p = getenv("SBSP_PAUSE_ON_FOCUS_LOSS");
+	g_pauseOnFocusLoss = !(p && *p == '0') && !Port_HarnessRun();
 
 	const char *e = getenv("SBSP_EXIT_AFTER");
 	if (e)
@@ -143,9 +156,28 @@ extern "C" void Host_EnsureVideo(void)
 		return;
 	}
 
+	/*	SBSP_WINDOW (sbsp.ini `window`, --window; M8 shell): "WxH" or
+		"fullscreen" (borderless, the desktop mode).  1024x768 shows the
+		4:3 picture at exactly 3 lines per PS1 line.  */
+	int winW = 1024, winH = 768;
+	SDL_WindowFlags flags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE;
+	const char *win = getenv("SBSP_WINDOW");
+	if (win && *win)
+	{
+		int w = 0, h = 0;
+		char tail = 0;
+		if (_stricmp(win, "fullscreen") == 0)
+			flags |= SDL_WINDOW_FULLSCREEN;
+		else if (sscanf(win, "%dx%d%c", &w, &h, &tail) == 2 && w >= 64 && h >= 64 && w <= 16384 && h <= 16384)
+		{
+			winW = w;
+			winH = h;
+		}
+		else
+			fprintf(stderr, "[host] bad window '%s' - want WxH or fullscreen - using %dx%d\n", win, winW, winH);
+	}
 	g_window = SDL_CreateWindow("SpongeBob SquarePants: SuperSponge",
-								1024, 512,
-								SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+								winW, winH, flags);
 	if (!g_window)
 	{
 		fprintf(stderr, "[host] SDL_CreateWindow failed: %s\n", SDL_GetError());
@@ -156,6 +188,108 @@ extern "C" void Host_EnsureVideo(void)
 	if (!g_vkUp)
 		fprintf(stderr, "[host] Vulkan presenter unavailable - window will stay "
 						"black (frame dumps still work)\n");
+}
+
+/*****************************************************************************/
+/*	Pause / fullscreen (M8 shell)  */
+
+static void setPaused(int on)
+{
+	if (on == g_paused)
+		return;
+	g_paused = on;
+	if (on)
+	{
+		g_pauseStart = Port_NowSeconds();
+		Host_AudioPause(1);
+		fprintf(stderr, "[host] paused (focus lost)\n");
+	}
+	else
+	{
+		double d = Port_NowSeconds() - g_pauseStart;
+		g_pausedSeconds += d;
+		Host_AudioPause(0);
+		fprintf(stderr, "[host] resumed after %.1fs\n", d);
+	}
+}
+
+extern "C" int Port_Paused(void)
+{
+	return g_paused;
+}
+
+extern "C" double Host_PausedSeconds(void)
+{
+	return g_pausedSeconds;
+}
+
+static void toggleFullscreen(void)
+{
+	bool fs = (SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN) != 0;
+	if (!SDL_SetWindowFullscreen(g_window, !fs))	/* borderless: no exclusive mode is ever set */
+	{
+		fprintf(stderr, "[host] fullscreen toggle failed: %s\n", SDL_GetError());
+		return;
+	}
+	fprintf(stderr, "[host] fullscreen %s\n", fs ? "off" : "on");
+}
+
+/*	One handler for both event loops (the per-vblank poll and the paused
+	wait), so quit / hotplug / the shortcuts cannot drift apart.  */
+static void handleHostEvent(const SDL_Event *ev)
+{
+	switch (ev->type)
+	{
+	case SDL_EVENT_QUIT:
+		fprintf(stderr, "[host] window closed - exiting\n");
+		Port_Exit(PORT_EXIT_CLEAN);
+	case SDL_EVENT_GAMEPAD_ADDED:
+	case SDL_EVENT_GAMEPAD_REMOVED:
+		Port_InputHandleEvent(ev);
+		break;
+	case SDL_EVENT_KEY_DOWN:
+		if (ev->key.key == SDLK_RETURN && (ev->key.mod & SDL_KMOD_ALT) && !ev->key.repeat)
+			toggleFullscreen();
+		break;
+	case SDL_EVENT_WINDOW_FOCUS_LOST:
+		if (g_pauseOnFocusLoss)
+			setPaused(1);
+		break;
+	case SDL_EVENT_WINDOW_FOCUS_GAINED:
+		setPaused(0);
+		break;
+	default:
+		break;
+	}
+}
+
+/*	pump.cpp, at the top of every Port_Pump: while paused, wait for events
+	(100ms at a time, so the CPU is idle) and keep the window painted; do
+	NOTHING that is keyed by the vblank number - no input frame, no memory
+	watch, no dump, no frame CRC, no exit-after - those belong to a vblank
+	and none is passing.  */
+extern "C" int Host_PausePoll(void)
+{
+	if (!g_paused)
+		return 0;
+	SDL_Event ev;
+	if (SDL_WaitEventTimeout(&ev, 100))
+	{
+		handleHostEvent(&ev);
+		while (SDL_PollEvent(&ev))
+			handleHostEvent(&ev);
+	}
+	if (g_paused && g_vkUp)
+	{
+		static double lastPresent = -1.0;
+		double now = Port_NowSeconds();
+		if (now - lastPresent >= 0.1)
+		{
+			lastPresent = now;
+			VkPresent_Frame();
+		}
+	}
+	return g_paused;
 }
 
 /*****************************************************************************/
@@ -172,16 +306,7 @@ extern "C" void Host_VBlank(unsigned long vblankNo)
 	{
 		SDL_Event ev;
 		while (SDL_PollEvent(&ev))
-		{
-			if (ev.type == SDL_EVENT_QUIT)
-			{
-				fprintf(stderr, "[host] window closed - exiting\n");
-				Port_Exit(PORT_EXIT_CLEAN);
-			}
-			if (ev.type == SDL_EVENT_GAMEPAD_ADDED ||
-				ev.type == SDL_EVENT_GAMEPAD_REMOVED)
-				Port_InputHandleEvent(&ev);
-		}
+			handleHostEvent(&ev);
 	}
 
 	/*	Outside the video gate on purpose.  SBSP_PAD_SCRIPT needs no SDL at

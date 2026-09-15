@@ -22,12 +22,16 @@
 #include <SDL3/SDL.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 extern unsigned char *Port_PadBuffer[2];		/* pads_shim.cpp */
 extern unsigned char *Port_PadMotor[2];
 extern "C" void	Port_InputHandleEvent(const void *ev);
 extern "C" void	Port_InputFrame(unsigned long vblank);
+extern "C" void	Port_InputReloadSettings(void);		/* M8 shell: re-read SBSP_PAD_DEADZONE / SBSP_RUMBLE / SBSP_KEY_* */
+extern "C" int	Port_InputBindKeys(void);
+extern "C" int	Port_InputKeyFor(const char *button);
 extern "C" void	PadInitDirect(unsigned char *pad1, unsigned char *pad2);
 extern "C" int	PadSetAct(int port, unsigned char *data, int len);
 
@@ -210,6 +214,58 @@ int main(void)
 	SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_RIGHTY, 0);
 	pumpEvents();
 
+	/*	-------- dead zone (M8 shell): SBSP_PAD_DEADZONE percent of 32767,
+		default 15 (= 4915 raw), 0 = raw as above  */
+	SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_LEFTX, 3000);		/* ~9% */
+	pumpEvents();
+	Port_InputFrame(vblank++);
+	check(pad0[6] == 0x80, "9% deflection inside the default 15% dead zone -> centred");
+	SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_LEFTX, 8000);		/* ~24% */
+	pumpEvents();
+	Port_InputFrame(vblank++);
+	check(pad0[6] == (8000 >> 8) + 128, "24% deflection passes through the dead zone");
+	_putenv("SBSP_PAD_DEADZONE=0");
+	Port_InputReloadSettings();
+	SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_LEFTX, 3000);
+	pumpEvents();
+	Port_InputFrame(vblank++);
+	check(pad0[6] == (3000 >> 8) + 128, "pad_deadzone=0: raw");
+	_putenv("SBSP_PAD_DEADZONE=50");
+	Port_InputReloadSettings();
+	SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_LEFTX, 16000);		/* ~49% */
+	pumpEvents();
+	Port_InputFrame(vblank++);
+	check(pad0[6] == 0x80, "pad_deadzone=50: 49% deflection is centred");
+	SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_LEFTX, -17000);	/* ~-52% */
+	pumpEvents();
+	Port_InputFrame(vblank++);
+	check(pad0[6] == (-17000 >> 8) + 128, "pad_deadzone=50: -52% passes (symmetric)");
+	_putenv("SBSP_PAD_DEADZONE=");
+	Port_InputReloadSettings();
+	SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_LEFTX, 0);
+	pumpEvents();
+
+	/*	-------- keyboard bindings (M8 shell): SBSP_KEY_<BUTTON> name parsing
+		(the dummy video driver has no keyboard state to press, so the
+		mapping itself is what is checked)  */
+	check(Port_InputKeyFor("cross") == SDL_SCANCODE_Z, "default key_cross = Z");
+	check(Port_InputKeyFor("select") == SDL_SCANCODE_RSHIFT, "default key_select = Right Shift");
+	_putenv("SBSP_KEY_CROSS=Space");
+	_putenv("SBSP_KEY_SELECT=Right Shift");
+	_putenv("SBSP_KEY_L1=Keypad 0");
+	check(Port_InputBindKeys() == 0, "valid key names bind");
+	check(Port_InputKeyFor("cross") == SDL_SCANCODE_SPACE, "key_cross=Space");
+	check(Port_InputKeyFor("select") == SDL_SCANCODE_RSHIFT, "key_select=Right Shift (a name with a space)");
+	check(Port_InputKeyFor("l1") == SDL_SCANCODE_KP_0, "key_l1=Keypad 0");
+	_putenv("SBSP_KEY_CROSS=NoSuchKey");
+	check(Port_InputBindKeys() == 1, "one bad name reported");
+	check(Port_InputKeyFor("cross") == SDL_SCANCODE_Z, "bad name keeps the default");
+	check(Port_InputKeyFor("nope") == -1, "unknown button name");
+	_putenv("SBSP_KEY_CROSS=");
+	_putenv("SBSP_KEY_SELECT=");
+	_putenv("SBSP_KEY_L1=");
+	Port_InputBindKeys();
+
 	/*	-------- rumble: PadSetAct bytes -> SDL_RumbleGamepad  */
 	static unsigned char motor[2];		/* [0] small on/off, [1] big 0-255 */
 	PadSetAct(0, motor, 2);
@@ -279,6 +335,21 @@ int main(void)
 	for (int i = 0; i < 6; i++)
 		Port_InputFrame(vblank++);
 	check(g_rumbleCalls == before, "no rumble calls while idle at zero");
+
+	/*	-------- rumble=0 (M8 shell): the motors never start  */
+	_putenv("SBSP_RUMBLE=0");
+	Port_InputReloadSettings();
+	motor[0] = 1;
+	motor[1] = 200;
+	before = g_rumbleCalls;
+	for (int i = 0; i < 6; i++)
+		Port_InputFrame(vblank++);
+	check(g_rumbleCalls == before, "rumble=0: a vibrating game makes no rumble call");
+	motor[0] = 0;
+	motor[1] = 0;
+	_putenv("SBSP_RUMBLE=");
+	Port_InputReloadSettings();
+	Port_InputFrame(vblank++);
 
 	/*	-------- hotplug: detach -> the shim closes and the pad reads idle  */
 	SDL_DetachVirtualJoystick(id);

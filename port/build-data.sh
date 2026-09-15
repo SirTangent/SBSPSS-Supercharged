@@ -7,31 +7,40 @@
 # force-exports (those 1999 cygwin binaries crash on Windows 10/11).
 #
 # Usage (from an MSYS2 shell, or: C:\msys64\usr\bin\bash.exe -l <this script>):
-#   port/build-data.sh [TERRITORY] [VERSION]      # defaults: USA DEBUG
-#   port/build-data.sh <preset>                   # debug|final|usa-*|eur-* (as build-pc.sh)
+#   port/build-data.sh [usa|eur]                  # default usa
+#   port/build-data.sh <preset>                   # debug|final|usa-*|eur-*: the build-pc.sh
+#                                                 # words; the variant half is ignored (note below)
+#   port/build-data.sh USA|EUR DEBUG|FINAL        # also choose the PSX tree the vintage
+#                                                 # make writes into (out/<T>/<V>/version/CD)
+#
+# The PC data is per TERRITORY only (issue #35): makefile.gfx has no VERSION
+# conditional, so a DEBUG and a FINAL data build are byte-identical.  The CD
+# files the PC exe reads are staged once, into out/<T>/cd/, and both variants'
+# exes boot from there (port/psyq/cd/cd.cpp resolveDataRoot).  VERSION only
+# selects which PSX build tree the vintage make writes its own outputs into.
 set -e
 
 cd "$(dirname "$0")/.."
 
-#   port/build-data.sh [TERRITORY] [VERSION]   e.g. USA DEBUG, EUR FINAL (any case)
-#   port/build-data.sh <preset>                 the build-pc.sh spelling:
-#                                               debug final usa-debug usa-final eur-debug eur-final
 usage()
 {
-    echo "usage: port/build-data.sh [USA|EUR] [DEBUG|FINAL]  |  port/build-data.sh [usa-|eur-]debug|final" >&2
+    echo "usage: port/build-data.sh [usa|eur]  |  port/build-data.sh [usa-|eur-]debug|final  |  port/build-data.sh USA|EUR DEBUG|FINAL" >&2
     exit 1
 }
+VERSION=DEBUG
 case "$(echo "${1:-USA}" | tr '[:upper:]' '[:lower:]')" in
-    debug|usa-debug) TERRITORY=USA; VERSION=DEBUG ;;
-    final|usa-final) TERRITORY=USA; VERSION=FINAL ;;
-    eur-debug)       TERRITORY=EUR; VERSION=DEBUG ;;
-    eur-final)       TERRITORY=EUR; VERSION=FINAL ;;
+    debug|final|usa-debug|usa-final)
+                     TERRITORY=USA
+                     echo "note: '$1' -> USA (PC data is per territory; the variant word is ignored)" ;;
+    eur-debug|eur-final)
+                     TERRITORY=EUR
+                     echo "note: '$1' -> EUR (PC data is per territory; the variant word is ignored)" ;;
     usa|eur|jap)     TERRITORY=$(echo "$1" | tr '[:lower:]' '[:upper:]')
                      VERSION=$(echo "${2:-DEBUG}" | tr '[:lower:]' '[:upper:]') ;;
     *) usage ;;
 esac
 case "$VERSION" in DEBUG|FINAL) ;; *) usage ;; esac
-echo "Data build: TERRITORY=$TERRITORY VERSION=$VERSION -> out/$TERRITORY"
+echo "Data build: TERRITORY=$TERRITORY (vintage make VERSION=$VERSION) -> out/$TERRITORY"
 
 # port/tools first: its modern lznp.exe must shadow the 16-bit tools/lznp.exe.
 # PATH and Path both overridden (globals.mak exports both spellings), and every
@@ -49,34 +58,32 @@ make -r -f makefile.gfx \
     MKDIR=mkdir ECHO=echo MV=mv DATE=date SED=sed \
     RMDIR=rmdir LS=ls "ATTRIB=chmod +w"
 
-# Stage the XA speech stream next to BIGLUMP.BIN (M6) - on PSX this is
-# makefile.gaz's cddata rule copying it into the CD image. Guard against an
-# unmaterialised Git-LFS pointer file (a few hundred bytes, not ~127MB).
-IXA_SRC="data/CDData/Track1.Ixa"
-IXA_DST="out/$TERRITORY/$VERSION/version/CD/TRACK1.IXA"
-if [ ! -f "$IXA_SRC" ] || [ "$(stat -c%s "$IXA_SRC")" -lt 1048576 ]; then
-    echo "ERROR: $IXA_SRC is missing or is an unmaterialised Git-LFS pointer." >&2
-    echo "       Run: git lfs pull" >&2
-    exit 1
-fi
-if [ ! -f "$IXA_DST" ] || [ "$IXA_SRC" -nt "$IXA_DST" ]; then
-    cp "$IXA_SRC" "$IXA_DST"
-    echo "Staged $IXA_DST"
-fi
+# Stage the CD files the PC exe reads into the per-territory directory (M6
+# IXA, M7 movies, M8 #35 BIGLUMP).  BIGLUMP comes from the vintage make's
+# PSX tree above; on PSX the makefile.gaz cddata rule copies the rest into
+# the CD image.  Guard against an unmaterialised Git-LFS pointer file (a few
+# hundred bytes, not ~127MB) and truncated movies.
+CD_DIR="out/$TERRITORY/cd"
+mkdir -p "$CD_DIR"
 
-# Stage the FMV movies (M7) - raw-XA .STR files, same layout as the IXA.
-# Not LFS-tracked, but keep the same size sanity guard for uniformity.
-for movie in thq climax intro demo; do
-    STR_SRC="data/CDData/$movie.str"
-    STR_DST="out/$TERRITORY/$VERSION/version/CD/$(echo "$movie" | tr a-z A-Z).STR"
-    if [ ! -f "$STR_SRC" ] || [ "$(stat -c%s "$STR_SRC")" -lt 1048576 ]; then
-        echo "ERROR: $STR_SRC is missing or truncated." >&2
+stage()
+{
+    src="$1"; dst="$2"
+    if [ ! -f "$src" ] || [ "$(stat -c%s "$src")" -lt 1048576 ]; then
+        echo "ERROR: $src is missing, truncated, or an unmaterialised Git-LFS pointer." >&2
+        echo "       (for data/CDData/*.Ixa run: git lfs pull)" >&2
         exit 1
     fi
-    if [ ! -f "$STR_DST" ] || [ "$STR_SRC" -nt "$STR_DST" ]; then
-        cp "$STR_SRC" "$STR_DST"
-        echo "Staged $STR_DST"
+    if [ ! -f "$dst" ] || [ "$src" -nt "$dst" ]; then
+        cp "$src" "$dst"
+        echo "Staged $dst"
     fi
+}
+
+stage "out/$TERRITORY/$VERSION/version/CD/BIGLUMP.BIN" "$CD_DIR/BIGLUMP.BIN"
+stage "data/CDData/Track1.Ixa" "$CD_DIR/TRACK1.IXA"
+for movie in thq climax intro demo; do
+    stage "data/CDData/$movie.str" "$CD_DIR/$(echo "$movie" | tr a-z A-Z).STR"
 done
 
-echo "Data build complete: out/$TERRITORY"
+echo "Data build complete: out/$TERRITORY (PC data: $CD_DIR)"

@@ -128,20 +128,33 @@ A console window opens alongside the game window; it carries the shim's log
 resizable and letterboxes the PS1 output to 4:3. Close the window to quit;
 there is no way to exit from the game's UI because the PlayStation game never had one.
 
-**Data location.** By default the game looks in
-`out\<territory>\<version>\version\CD\`, matching the variant it was built
-as. The `final` executable therefore expects `out\USA\FINAL\...`, which
-section 3 does not produce by default. Either build that data too
-(`port\build-data.cmd USA FINAL`) or point the executable at the DEBUG data:
+**Data location.** The game looks for `BIGLUMP.BIN` in, in order: the
+directory named by `--data-dir` / `SBSP_DATA_DIR` (taken as is), `data\`
+beside the exe, `out\<territory>\cd\` (what `port\build-data.cmd usa` or
+`eur` stages - one data build serves the `debug` and `final` executables
+alike, since the two are byte-identical), and finally the PSX build tree
+`out\<territory>\<version>\version\CD\`. The console's `[cd] data:` line
+says which one it took.
 
-```bat
-port\build\final\sbsp.exe --data-dir out\USA\DEBUG\version\CD
-```
+**Saves and settings.** The memory card is a real 128 KB PS1 card image,
+`card0.mcd`, kept in `%APPDATA%\SBSPSS\` - or in a `saves\` folder beside
+the exe if one exists (the tester zip's portable layout), or wherever
+`--save-dir` points. Unlike the retail game, the port loads it at boot so
+your slots are populated without visiting Options. Settings live in
+`sbsp.ini` **beside the executable**, written with commented defaults on
+the first run: window size
+or `fullscreen`, `scale=fit|integer|stretch`, `vsync`, audio device /
+buffer / volume, the keyboard bindings, gamepad dead zone and rumble,
+pause-on-focus-loss, language, and the data and save directories.
+Precedence is
+command-line argument > `SBSP_*` environment variable > ini. (Only English
+text exists in the game data, so `language=` loads the same strings whatever
+it says - real localization is issue #37.)
 
-**Saves.** The memory card is a real 128 KB PS1 card image at
-`%APPDATA%\SBSPSS\card0.mcd`. Unlike the retail game, the port loads it at
-boot so your slots are populated without visiting Options. `--save-dir`
-relocates it, which is handy for keeping test saves apart from real ones.
+**Tester zip.** `port\package.cmd [--territory usa|eur]` (or `python port\package.py`) bundles the
+FINAL and DEBUG executables, the data, a `saves\` folder, a README and
+`run-test-session.cmd` (a recorded, logged play session) into
+`port\build\sbsp-<territory>-<date>.zip`.
 
 **Skipping to a level** while testing:
 
@@ -170,6 +183,12 @@ SDL recognises is used if present, with rumble; the keyboard always works.
 | Select | `Right Shift` | Back / View |
 | L1 / R1 | `Q` / `W` | Left / right shoulder |
 | L2 / R2 | `E` / `R` | Left / right trigger |
+
+`Alt+Enter` toggles borderless fullscreen, and the game pauses (audio
+included) while another window has the focus. The keyboard bindings are
+the `key_<button>=` lines of `sbsp.ini` (SDL key names such as `Space`,
+`Right Shift`, `Keypad 0`); `Alt` is reserved for host shortcuts and never
+reaches the game.
 
 What each button does in the game is configurable from the in-game Options
 menu, exactly as on the console.

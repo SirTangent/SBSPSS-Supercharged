@@ -51,6 +51,7 @@ import argparse
 import difflib
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -195,9 +196,7 @@ def run_game(exe, args, env, timeout, log_path=None):
     if log_path:
         Path(log_path).write_text(out, encoding="utf-8")
         Path(str(log_path) + ".stdout").write_text(game_out, encoding="utf-8")
-    for f in Path(save_dir).glob("*"):
-        f.unlink()
-    os.rmdir(save_dir)
+    shutil.rmtree(save_dir, ignore_errors=True)
     return RunResult(code, out.splitlines(), wall)
 
 

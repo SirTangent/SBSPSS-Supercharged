@@ -25,7 +25,8 @@
 	                    Env: SBSP_LANGUAGE.  The shipped data carries
 	                    English text in every language slot (the four other
 	                    translation sources are stubs), so this proves the
-	                    load path rather than changing what is displayed.
+	                    load path rather than changing what is displayed -
+	                    real localization is github issue #37.
 
 	The rest are aliases for the SBSP_* environment variables - the argument
 	just sets the variable (overriding an inherited one), and the existing
@@ -50,6 +51,19 @@
 	                        passes only while the game waits; implies
 	                        SBSP_CD_PACE=0; with --no-audio --seed the run is
 	                        deterministic and faster than real time)
+	  --assert-continue     SBSP_ASSERT_CONTINUE=1 (M8 shell)
+	  --mem-log             SBSP_MEM_LOG=1 (M8 shell)
+
+	Settings (M8 shell, host/ini.cpp): sbsp.ini beside the exe holds the
+	tester-facing knobs, each the ini spelling of an SBSP_* variable, and
+	is written with commented defaults on first run.  Precedence is
+	argument > environment > ini (loadIni below).  Argument twins:
+	  --ini <path>          SBSP_INI (where the file is)
+	  --window <WxH|fullscreen>  SBSP_WINDOW
+	  --scale <fit|integer|stretch>  SBSP_SCALE
+	  --vsync <0|1>         SBSP_VSYNC
+	  --volume <0-100>      SBSP_VOLUME
+	  --set key=value       any ini key (SBSP_<KEY>), e.g. --set key_cross=Space
 
 	Both "--flag value" and "--flag=value" spellings work.  Unknown
 	arguments warn and are ignored (the run continues).  --help prints
@@ -162,7 +176,8 @@ static void usage(void)
 		"  --language <l>        boot text language       (SBSP_LANGUAGE)\n"
 		"                        a name or its locale/textdbase.h enum index:\n"
 		"                        english=0 swedish=1 dutch=2 italian=3 german=4\n"
-		"                        (the shipped data is English in every slot)\n"
+		"                        NOTE: only English text exists in the data - every\n"
+		"                        other slot loads the same English strings (issue #37)\n"
 		"  --data-dir <path>     CD data directory        (SBSP_DATA_DIR)\n"
 		"  --pad-script <s>      scripted input           (SBSP_PAD_SCRIPT)\n"
 		"  --pad-file <path>     scripted input from file (SBSP_PAD_FILE)\n"
@@ -183,8 +198,20 @@ static void usage(void)
 		"  --pace-log            frame-pacing stderr log  (SBSP_PACE_LOG=1)\n"
 		"  --uncapped            vblanks not wall-paced   (SBSP_UNCAPPED=1)\n"
 		"                        (implies --no-cd-pace; + --no-audio --seed: deterministic)\n"
-		"Env only: SBSP_ASSERT_CONTINUE=1 (log asserts, keep running),\n"
-		"          SBSP_PRIM_LOG=1 / SBSP_MEM_LOG=1 (prim-pool / RamUsed high-water logs),\n"
+		"  --assert-continue     log asserts, keep going  (SBSP_ASSERT_CONTINUE=1)\n"
+		"  --mem-log             RamUsed high-water log   (SBSP_MEM_LOG=1)\n"
+		"Settings (sbsp.ini beside the exe, written with defaults on first run;\n"
+		"argument > environment > ini):\n"
+		"  --ini <path>          settings file            (SBSP_INI)\n"
+		"  --window WxH|fullscreen  window size / borderless fullscreen (SBSP_WINDOW)\n"
+		"  --scale fit|integer|stretch  viewport scaling  (SBSP_SCALE)\n"
+		"  --vsync 0|1           present with vsync       (SBSP_VSYNC)\n"
+		"  --volume 0-100        master volume            (SBSP_VOLUME)\n"
+		"  --set key=value       any ini key: audio_device audio_buffer_frames\n"
+		"                        key_<button> pad_deadzone rumble pause_on_focus_loss\n"
+		"                        language data_dir       (SBSP_<KEY>)\n"
+		"  Alt+Enter toggles fullscreen; the game pauses while another window has focus\n"
+		"Env only: SBSP_PRIM_LOG=1 (prim-pool high-water log),\n"
 		"          SBSP_WATCHDOG=<s> (exit 12 after s seconds without a vblank; 30, 0=off),\n"
 		"          SBSP_SELFTEST=assert|fault|hang@<vblank> (exercise an exit path)\n"
 		"Exit codes: 0 clean, 10 assert, 11 fault, 12 watchdog, 13 replay/oracle\n");
@@ -214,6 +241,51 @@ static const char *argValue(const char *name, int *i, int argc, char **argv,
 	return NULL;
 }
 
+/*	host/hostpath.cpp, host/ini.cpp, host/crash.cpp - declared here rather
+	than through a header because this TU carries no include set (see
+	port/CMakeLists.txt psyq_args).  */
+extern "C" int Port_ExeDir(char *dst, size_t n);
+extern "C" int Port_IniLoad(const char *path);
+extern "C" int Port_IniWriteDefaults(const char *path);
+extern "C" int Port_IniSet(const char *key, const char *value, const char *what);
+extern "C" int Port_HarnessRun(void);
+
+/*	sbsp.ini (M8 shell): the lowest tier of `argument > environment > ini`.
+	Runs AFTER the argument pass, so every --flag has already exported its
+	variable and the loader's "only if unset" rule sees arguments and the
+	inherited environment alike; the three parsed-into-globals options
+	(--level/--seed/--language) read their variables after this returns.
+	Location: --ini / SBSP_INI, else <exe dir>\sbsp.ini - where a tester
+	will look, and what makes an unpacked folder self-contained.  Defaults
+	are written there on the first run, but only for an interactive one: a
+	scripted run must leave no files behind.  */
+static void loadIni(void)
+{
+	char exeDir[512], path[600];
+
+	const char *explicitPath = getenv("SBSP_INI");
+	if (explicitPath && *explicitPath)
+	{
+		if (Port_IniLoad(explicitPath) < 0)
+			fprintf(stderr, "[ini] cannot open %s\n", explicitPath);
+		return;
+	}
+
+	if (!Port_ExeDir(exeDir, sizeof(exeDir)))
+		return;					/* no path to ourselves: built-in defaults */
+	snprintf(path, sizeof(path), "%s\\sbsp.ini", exeDir);
+
+	if (Port_IniLoad(path) >= 0)
+		return;
+	if (Port_HarnessRun())
+		return;					/* a scripted run leaves no files behind */
+	if (Port_IniWriteDefaults(path))
+		Port_IniLoad(path);
+	else
+		fprintf(stderr, "[ini] settings will not persist - point --ini / SBSP_INI "
+						"at a writable file\n");
+}
+
 /*	Priority 101 (0-100 are reserved): runs before every normal-priority
 	static constructor in the program, so the env aliases are in place
 	before any consumer - including cd.cpp's CdBoot - reads them.  */
@@ -231,21 +303,24 @@ static void parseArgs(void)
 		{ "--save-dir",    "SBSP_SAVE_DIR"    },
 		{ "--pad-file",    "SBSP_PAD_FILE"    },
 		{ "--record-pad",  "SBSP_RECORD_PAD"  },
+		{ "--ini",         "SBSP_INI"         },	/* M8 shell: the settings file */
+		{ "--window",      "SBSP_WINDOW"      },
+		{ "--scale",       "SBSP_SCALE"       },
+		{ "--vsync",       "SBSP_VSYNC"       },
+		{ "--volume",      "SBSP_VOLUME"      },
 	};
-
-	const char *e = getenv("SBSP_BOOT_LEVEL");
-	if (e && *e)
+	static const struct { const char *arg; const char *setting; } switches[] =
 	{
-		g_bootLevel = parseLevel(e);
-		if (g_bootLevel < 0)
-			fprintf(stderr, "[args] bad SBSP_BOOT_LEVEL '%s' - booting normally\n", e);
-	}
-	e = getenv("SBSP_SEED");
-	if (e && *e)
-		parseSeed(e, "SBSP_SEED");
-	e = getenv("SBSP_LANGUAGE");
-	if (e && *e)
-		parseLanguage(e, "SBSP_LANGUAGE");
+		{ "--no-cd-pace",      "SBSP_CD_PACE=0"         },
+		{ "--pace-log",        "SBSP_PACE_LOG=1"        },
+		{ "--no-audio",        "SBSP_NO_AUDIO=1"        },
+		{ "--invincible",      "SBSP_INVINCIBLE=1"      },
+		{ "--frame-crc",       "SBSP_FRAME_CRC=1"       },
+		{ "--assert-continue", "SBSP_ASSERT_CONTINUE=1" },	/* M8 shell: argv twins of */
+		{ "--mem-log",         "SBSP_MEM_LOG=1"         },	/* the env-only harness knobs */
+	};
+	int levelFromArg = 0, languageFromArg = 0;
+
 	if (uncappedRequested(__argc, __argv))
 	{
 		/*	The CD read deadline (cd.cpp) is wall-clock; under --uncapped a
@@ -263,44 +338,48 @@ static void parseArgs(void)
 			usage();
 			exit(0);
 		}
-		if (strcmp(__argv[i], "--no-cd-pace") == 0)
-		{
-			_putenv("SBSP_CD_PACE=0");
-			continue;
-		}
-		if (strcmp(__argv[i], "--pace-log") == 0)
-		{
-			_putenv("SBSP_PACE_LOG=1");
-			continue;
-		}
-		if (strcmp(__argv[i], "--no-audio") == 0)
-		{
-			_putenv("SBSP_NO_AUDIO=1");
-			continue;
-		}
-		if (strcmp(__argv[i], "--invincible") == 0)
-		{
-			_putenv("SBSP_INVINCIBLE=1");
-			continue;
-		}
-		if (strcmp(__argv[i], "--frame-crc") == 0)
-		{
-			_putenv("SBSP_FRAME_CRC=1");
-			continue;
-		}
 		if (strcmp(__argv[i], "--uncapped") == 0)
 			continue;		/* handled up front - see uncappedRequested */
 		int matched = 0;
+		for (int s = 0; s < (int)(sizeof(switches) / sizeof(switches[0])); s++)
+		{
+			if (strcmp(__argv[i], switches[s].arg) == 0)
+			{
+				_putenv(switches[s].setting);
+				matched = 1;
+				break;
+			}
+		}
+		if (matched)
+			continue;
 		if ((v = argValue("--level", &i, __argc, __argv, &matched)) != NULL)
 		{
 			g_bootLevel = parseLevel(v);
+			levelFromArg = 1;
 			if (g_bootLevel < 0)
 				fprintf(stderr, "[args] bad --level '%s' - booting normally\n", v);
 		}
 		if (!matched && (v = argValue("--seed", &i, __argc, __argv, &matched)) != NULL)
 			parseSeed(v, "--seed");
 		if (!matched && (v = argValue("--language", &i, __argc, __argv, &matched)) != NULL)
+		{
 			parseLanguage(v, "--language");
+			languageFromArg = 1;
+		}
+		if (!matched && (v = argValue("--set", &i, __argc, __argv, &matched)) != NULL)
+		{
+			/*	--set key=value: any sbsp.ini key from the command line  */
+			char kv[1024];
+			snprintf(kv, sizeof(kv), "%s", v);
+			char *eq = strchr(kv, '=');
+			if (!eq || eq == kv)
+				fprintf(stderr, "[args] --set wants key=value, got '%s' - ignored\n", v);
+			else
+			{
+				*eq = 0;
+				Port_IniSet(kv, eq + 1, "--set");
+			}
+		}
 		for (int a = 0; !matched && a < (int)(sizeof(aliases) / sizeof(aliases[0])); a++)
 		{
 			if ((v = argValue(aliases[a].arg, &i, __argc, __argv, &matched)) != NULL)
@@ -315,10 +394,28 @@ static void parseArgs(void)
 					__argv[i]);
 	}
 
+	loadIni();
+
+	/*	The environment (now including what the ini exported) for the three
+		options that are parsed into globals, unless an argument decided.  */
+	const char *e = getenv("SBSP_BOOT_LEVEL");
+	if (!levelFromArg && e && *e)
+	{
+		g_bootLevel = parseLevel(e);
+		if (g_bootLevel < 0)
+			fprintf(stderr, "[args] bad SBSP_BOOT_LEVEL '%s' - booting normally\n", e);
+	}
+	e = getenv("SBSP_SEED");
+	if (!g_seedSet && e && *e)
+		parseSeed(e, "SBSP_SEED");
+	e = getenv("SBSP_LANGUAGE");
+	if (!languageFromArg && e && *e)
+		parseLanguage(e, "SBSP_LANGUAGE");
+
 	if (g_bootLevel >= 0)
 		fprintf(stderr, "[args] boot level: LvlTable[%d] (chapter %d level %d)\n",
 				g_bootLevel, g_bootLevel / 5 + 1, g_bootLevel % 5 + 1);
-	if (g_language >= 0)
+	if (g_language > 0)		/* the ini's default is english, the game's own default: say nothing */
 		fprintf(stderr, "[args] language: %s (%d)\n", kLanguageNames[g_language], g_language);
 }
 
