@@ -492,8 +492,13 @@ built before #35 - and `CdInit` prints `[cd] data: <root>` or lists every
 candidate it tried.  `build-pc.sh check_data` and the CMake warning gate
 on `out/<T>/cd/BIGLUMP.BIN`.
 
-**sbsp.ini (`host/ini.cpp`).**  Lives beside `card0.mcd` - `Port_SaveDir`
-(`host/hostpath.cpp`): `SBSP_SAVE_DIR` verbatim, else `saves\` beside the
+**sbsp.ini (`host/ini.cpp`).**  Lives beside the exe (`Port_ExeDir`), the
+one place a tester looks and the thing that makes an unpacked folder
+self-contained; `--ini` / `SBSP_INI` overrides it, an older one beside
+`card0.mcd` is still read when the exe has none (with a note saying which
+won), and a read-only install directory falls back to the save directory.
+The save directory is a separate question (`Port_SaveDir`,
+`host/hostpath.cpp`): `SBSP_SAVE_DIR` verbatim, else `saves\` beside the
 exe if that directory exists (the zip layout), else `%APPDATA%\SBSPSS`.
 Every key is the ini spelling of an `SBSP_*` variable and loading is
 `_putenv` for each key whose variable is unset, so the precedence
@@ -503,16 +508,17 @@ argument pass and reads `SBSP_BOOT_LEVEL/SEED/LANGUAGE` after that.  The
 key set is a whitelist shared with the default writer - the harness
 switches (`SBSP_UNCAPPED`, `SBSP_EXIT_AFTER`, `SBSP_PAD_FILE`...) have no
 ini spelling, so a stray line can never turn an interactive run into a
-scripted one, and `save_dir` is refused (it says where the ini is).
-Defaults are written only at the default location and only for an
-interactive run (`Port_HarnessRun`): the harness's temp `--save-dir` and
-the unit exes leave no files behind (`sbsp_headless` gets a private
-`SBSP_SAVE_DIR` for the same reason).  Argument twins: `--ini`,
+scripted one.  Defaults are written only for an interactive run
+(`Port_HarnessRun`), so the harness leaves no files behind; its temp
+`--save-dir` keeps the card out of the developer's own
+(`sbsp_headless` gets a private `SBSP_SAVE_DIR` for that).  Argument twins: `--ini`,
 `--window`, `--scale`, `--vsync`, `--volume`, `--set key=value`; the
 env-only `SBSP_ASSERT_CONTINUE` / `SBSP_MEM_LOG` gained `--assert-continue`
 / `--mem-log`.  Keys: `window` (`WxH` | `fullscreen`), `scale`, `vsync`,
 `audio_device`, `audio_buffer_frames`, `volume`, `key_<button>` x14,
-`pad_deadzone`, `rumble`, `pause_on_focus_loss`, `language`, `data_dir`.
+`pad_deadzone`, `rumble`, `pause_on_focus_loss`, `language`, `data_dir`,
+`save_dir` (no longer circular now that the file is not in the save
+directory).
 `ini_test` pins the parser, the precedence rule and the defaults
 round-trip.
 

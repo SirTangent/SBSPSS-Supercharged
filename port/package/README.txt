@@ -10,7 +10,8 @@ installed; keep everything together and it runs from anywhere.
                          wrong.  Test sessions use this one.
   run-test-session.cmd   runs one recorded test session (see "Test sessions")
   data\                  the game's data (about 170 MB)
-  saves\                 your memory card (card0.mcd) and settings (sbsp.ini)
+  sbsp.ini               your settings - created on the first run
+  saves\                 your memory card (card0.mcd)
   sessions\              created by run-test-session.cmd
 
 Requirements: Windows 10 or 11 (64-bit is fine; the exe is 32-bit), a GPU
@@ -23,7 +24,7 @@ Playing
 Double-click sbsp.exe.  A console window opens next to the game window; it
 carries the game's log and can be ignored.  Close the game window to quit.
 
-Keyboard (defaults; change them in saves\sbsp.ini):
+Keyboard (defaults; change them in sbsp.ini):
 
   PlayStation      Key                PlayStation      Key
   D-pad            Arrow keys         L1 / R1          Q / W
@@ -41,10 +42,11 @@ The game pauses by itself while another window has the focus and carries on
 when you come back.
 
 
-Settings: saves\sbsp.ini
-------------------------
-Written on the first run with every option and its default, one comment
-line each.  Edit with Notepad and restart the game.  The options:
+Settings: sbsp.ini
+------------------
+Written beside sbsp.exe on the first run, with every option and its
+default and one comment line each.  Edit with Notepad and restart the
+game.  The options:
 
   window=1024x768            window size, or window=fullscreen
   scale=fit                  fit (4:3 with black bars), integer (whole
@@ -63,6 +65,7 @@ line each.  Edit with Notepad and restart the game.  The options:
                              the game data, so the other choices (swedish,
                              dutch, italian, german) show English too
   data_dir=                  where the data is; empty = the data\ folder here
+  save_dir=                  where card0.mcd goes; empty = the saves\ folder here
 
 The same options work on the command line, e.g.
   sbsp.exe --window fullscreen --scale integer --volume 50 --set rumble=0
@@ -99,7 +102,7 @@ GPU driver.  Very old GPUs without Vulkan cannot run this build.
 "CdInit: no BIGLUMP.BIN": the data\ folder is not beside the exe - unpack
 the whole zip, not just the exe.
 
-Sound crackles: set audio_buffer_frames=1024 (or 2048) in saves\sbsp.ini.
+Sound crackles: set audio_buffer_frames=1024 (or 2048) in sbsp.ini.
 
 The game runs slow: it is a software-rendered PlayStation; a laptop on
 battery-saver may not keep 60 frames per second.  Try scale=fit in a

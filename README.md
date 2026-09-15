@@ -140,11 +140,13 @@ says which one it took.
 `card0.mcd`, kept in `%APPDATA%\SBSPSS\` - or in a `saves\` folder beside
 the exe if one exists (the tester zip's portable layout), or wherever
 `--save-dir` points. Unlike the retail game, the port loads it at boot so
-your slots are populated without visiting Options. Next to it lives
-`sbsp.ini`, written with commented defaults on the first run: window size
+your slots are populated without visiting Options. Settings live in
+`sbsp.ini` **beside the executable**, written with commented defaults on
+the first run: window size
 or `fullscreen`, `scale=fit|integer|stretch`, `vsync`, audio device /
 buffer / volume, the keyboard bindings, gamepad dead zone and rumble,
-pause-on-focus-loss, language and data directory. Precedence is
+pause-on-focus-loss, language, and the data and save directories.
+Precedence is
 command-line argument > `SBSP_*` environment variable > ini. (Only English
 text exists in the game data, so `language=` loads the same strings whatever
 it says - real localization is issue #37.)

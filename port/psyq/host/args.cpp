@@ -54,7 +54,7 @@
 	  --assert-continue     SBSP_ASSERT_CONTINUE=1 (M8 shell)
 	  --mem-log             SBSP_MEM_LOG=1 (M8 shell)
 
-	Settings (M8 shell, host/ini.cpp): sbsp.ini beside card0.mcd holds the
+	Settings (M8 shell, host/ini.cpp): sbsp.ini beside the exe holds the
 	tester-facing knobs, each the ini spelling of an SBSP_* variable, and
 	is written with commented defaults on first run.  Precedence is
 	argument > environment > ini (loadIni below).  Argument twins:
@@ -200,7 +200,7 @@ static void usage(void)
 		"                        (implies --no-cd-pace; + --no-audio --seed: deterministic)\n"
 		"  --assert-continue     log asserts, keep going  (SBSP_ASSERT_CONTINUE=1)\n"
 		"  --mem-log             RamUsed high-water log   (SBSP_MEM_LOG=1)\n"
-		"Settings (sbsp.ini next to card0.mcd, written with defaults on first run;\n"
+		"Settings (sbsp.ini beside the exe, written with defaults on first run;\n"
 		"argument > environment > ini):\n"
 		"  --ini <path>          settings file            (SBSP_INI)\n"
 		"  --window WxH|fullscreen  window size / borderless fullscreen (SBSP_WINDOW)\n"
@@ -245,6 +245,8 @@ static const char *argValue(const char *name, int *i, int argc, char **argv,
 	than through a header because this TU carries no include set (see
 	port/CMakeLists.txt psyq_args).  */
 extern "C" int Port_SaveDir(char *dst, size_t n);
+extern "C" int Port_ExeDir(char *dst, size_t n);
+extern "C" int Port_FileExists(const char *path);
 extern "C" int Port_IniLoad(const char *path);
 extern "C" int Port_IniWriteDefaults(const char *path);
 extern "C" int Port_IniSet(const char *key, const char *value, const char *what);
@@ -255,33 +257,57 @@ extern "C" int Port_HarnessRun(void);
 	variable and the loader's "only if unset" rule sees arguments and the
 	inherited environment alike; the three parsed-into-globals options
 	(--level/--seed/--language) read their variables after this returns.
-	Location: --ini / SBSP_INI, else <save dir>\sbsp.ini next to card0.mcd.
-	Defaults are written only at that default location and only for an
-	interactive run: the harness mints a temp --save-dir per run and the
-	unit exes must not leave files behind.  */
+	Location: --ini / SBSP_INI, else <exe dir>\sbsp.ini - where a tester
+	will look, and what makes an unpacked folder self-contained.  An older
+	one beside card0.mcd is still read when there is none there.  Defaults
+	are written only for an interactive run (a scripted one must leave no
+	files behind), and in the save directory instead when the exe's own is
+	not writable.  */
 static void loadIni(void)
 {
-	char path[600];
+	char exeDir[512], saveDir[512], path[600], legacy[600];
+
 	const char *explicitPath = getenv("SBSP_INI");
-	int isDefault = !(explicitPath && *explicitPath) && !getenv("SBSP_SAVE_DIR");
 	if (explicitPath && *explicitPath)
-		snprintf(path, sizeof(path), "%s", explicitPath);
-	else
 	{
-		char dir[512];
-		Port_SaveDir(dir, sizeof(dir));
-		snprintf(path, sizeof(path), "%s\\sbsp.ini", dir);
+		if (Port_IniLoad(explicitPath) < 0)
+			fprintf(stderr, "[ini] cannot open %s\n", explicitPath);
+		return;
 	}
-	if (Port_IniLoad(path) < 0)
+
+	int haveExe = Port_ExeDir(exeDir, sizeof(exeDir));
+	if (haveExe)
+		snprintf(path, sizeof(path), "%s\\sbsp.ini", exeDir);
+
+	/*	Beside card0.mcd is where this file first lived; it is still READ
+		when there is none beside the exe, so an edited one is never
+		silently ignored - but a new one is always written next to the exe,
+		where a settings file belongs and where the tester will look.  */
+	Port_SaveDir(saveDir, sizeof(saveDir));
+	snprintf(legacy, sizeof(legacy), "%s\\sbsp.ini", saveDir);
+
+	if (haveExe && Port_IniLoad(path) >= 0)
 	{
-		if (isDefault && !Port_HarnessRun())
-		{
-			if (Port_IniWriteDefaults(path))
-				Port_IniLoad(path);
-		}
-		else if (explicitPath && *explicitPath)
-			fprintf(stderr, "[ini] cannot open %s\n", path);
+		if (Port_FileExists(legacy))
+			fprintf(stderr, "[ini] note: %s also exists and was NOT read - "
+							"the one beside the exe wins; delete the other\n", legacy);
+		return;
 	}
+	if (Port_IniLoad(legacy) >= 0)
+		return;
+
+	/*	None yet.  A scripted run leaves no files behind.  */
+	if (Port_HarnessRun())
+		return;
+	if (haveExe && Port_IniWriteDefaults(path))
+	{
+		Port_IniLoad(path);
+		return;
+	}
+	/*	the exe directory is not writable (an install under Program Files):
+		fall back to the save directory, which always is  */
+	if (Port_IniWriteDefaults(legacy))
+		Port_IniLoad(legacy);
 }
 
 /*	Priority 101 (0-100 are reserved): runs before every normal-priority

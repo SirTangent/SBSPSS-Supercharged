@@ -1,11 +1,13 @@
 /*	sbsp.ini (M8 shell): a config file for the settings a tester touches.
 
-	The file lives beside card0.mcd (Port_SaveDir: SBSP_SAVE_DIR, else
-	saves\ next to the exe, else %APPDATA%\SBSPSS) and is written with
-	commented defaults on the first run at that default location.  Every
-	key is the ini spelling of an SBSP_* environment variable, and loading
-	it is nothing more than _putenv for each key whose variable is not
-	already set - so the precedence is
+	The file lives beside sbsp.exe - where a tester will look for it, and
+	what makes an unpacked folder self-contained - and is written there
+	with commented defaults on the first run (args.cpp loadIni; an older
+	one beside card0.mcd is still read, and a read-only install directory
+	falls back to the save directory).  Every key is the ini spelling of an
+	SBSP_* environment variable, and loading it is nothing more than
+	_putenv for each key whose variable is not already set - so the
+	precedence is
 
 	    command line  >  environment  >  sbsp.ini  >  built-in default
 
@@ -18,8 +20,7 @@
 	default writer.  Harness switches (SBSP_UNCAPPED, SBSP_EXIT_AFTER,
 	SBSP_PAD_FILE, ...) deliberately have no ini spelling: a stray line in
 	a tester's ini must never turn an interactive session into a scripted
-	one (watchdog armed, pause-on-focus-loss inert).  save_dir is refused
-	too - the ini's own location depends on it.
+	one (watchdog armed, pause-on-focus-loss inert).
 
 	Constructor-free, allocation-free (fixed buffers), CRT only: this TU is
 	part of the shim archive and rides along into the unit exes.
@@ -64,6 +65,7 @@ static const IniKey kKeys[] =
 	{ "pause_on_focus_loss", "SBSP_PAUSE_ON_FOCUS_LOSS", "1",        "1 = freeze the game (and its audio) while another window has the focus" },
 	{ "language",            "SBSP_LANGUAGE",            "english",  "text language: english swedish dutch italian german - NOTE: only English text exists in the data, the other slots load the same English strings (github issue #37)" },
 	{ "data_dir",            "SBSP_DATA_DIR",            "",         "directory holding BIGLUMP.BIN etc.; empty = look in data\\ beside the exe, then the repo's out\\<territory>\\cd" },
+	{ "save_dir",            "SBSP_SAVE_DIR",            "",         "directory for card0.mcd; empty = saves\\ beside the exe, else %APPDATA%\\SBSPSS" },
 };
 #define NUM_KEYS	(int)(sizeof(kKeys) / sizeof(kKeys[0]))
 
@@ -127,12 +129,6 @@ extern "C" int Port_IniLoad(const char *path)
 		*eq = 0;
 		char *key   = trim(s);
 		char *value = trim(eq + 1);
-		if (_stricmp(key, "save_dir") == 0)
-		{
-			fprintf(stderr, "[ini] %s:%d: save_dir cannot live in the ini (it says where the ini is) - "
-							"use --save-dir or SBSP_SAVE_DIR\n", path, lineNo);
-			continue;
-		}
 		const IniKey *k = findKey(key);
 		if (!k)
 		{

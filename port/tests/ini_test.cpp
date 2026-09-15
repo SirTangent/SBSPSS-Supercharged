@@ -1,9 +1,9 @@
 /*	Unit test for the M8 shell settings file (port/psyq/host/ini.cpp) and
 	the host path helpers (host/hostpath.cpp).
 
-	Checks the parser (comments, blanks, whitespace, unknown keys, the
-	refused save_dir key, empty values), the "only if the environment is
-	unset" rule that gives argument > environment > ini, that the written
+	Checks the parser (comments, blanks, whitespace, unknown keys, empty
+	values), the "only if the environment is unset" rule that gives
+	argument > environment > ini, that the written
 	defaults round-trip through the loader with every non-empty default
 	applied, --set's forced override, and that Port_SaveDir honours
 	SBSP_SAVE_DIR verbatim.  No SDL, no window: the exe runs from the repo
@@ -78,16 +78,17 @@ int main(void)
 		"  Scale = integer  \r\n"
 		"bogus=1\n"
 		"key_cross=\n"
-		"save_dir=somewhere\n"
+		"save_dir=ini_test_tmp\\from_ini\n"
 		"no equals sign here\n"
 		"pad_deadzone=30\n");
 	int applied = Port_IniLoad("ini_test_tmp/a.ini");
-	check(applied == 2, "a.ini: exactly scale + pad_deadzone applied");
+	check(applied == 3, "a.ini: exactly scale + save_dir + pad_deadzone applied");
 	check(envIs("SBSP_VOLUME", "42"), "environment beats the ini");
 	check(envIs("SBSP_SCALE", "integer"), "key is case-insensitive, value trimmed");
 	check(envIs("SBSP_PAD_DEADZONE", "30"), "plain key=value");
 	check(envIs("SBSP_KEY_CROSS", NULL), "empty value leaves the variable unset");
-	check(envIs("SBSP_SAVE_DIR", NULL), "save_dir is refused");
+	check(envIs("SBSP_SAVE_DIR", "ini_test_tmp\\from_ini"),
+		  "save_dir is a normal key (the ini itself lives beside the exe)");
 	check(getenv("SBSP_BOGUS") == NULL, "unknown keys never export anything");
 
 	/*	2. a second load never overrides what the first exported  */
@@ -121,7 +122,7 @@ int main(void)
 	check(envIs("SBSP_KEY_SELECT", "Right Shift"), "a default with a space survives");
 	check(envIs("SBSP_LANGUAGE", "english"), "language default");
 	check(envIs("SBSP_DATA_DIR", NULL), "empty defaults are written commented out");
-	check(Port_IniKeyCount() == 25, "key table has the 11 settings + 14 key bindings");
+	check(Port_IniKeyCount() == 26, "key table has the 12 settings + 14 key bindings");
 
 	/*	6. paths  */
 	char dir[512];
