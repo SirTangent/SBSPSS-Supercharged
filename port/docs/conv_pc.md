@@ -612,7 +612,7 @@ does not exist.  The two whole-archive links use CMake's
 **clang-cl toolchain (`cmake/clangcl-toolchain.cmake`, presets
 `clangcl-debug` / `clangcl-final`).**  `--target=i686-pc-windows-msvc`,
 lld-link, llvm-rc; inside a vcvars prompt the INCLUDE/LIB environment is
-used, outside one the newest VS 2022 MSVC toolset and Windows SDK are
+used, outside one the newest VS 2026/2022 MSVC toolset and Windows SDK are
 globbed and passed as `/vctoolsdir` `/winsdkdir` `/winsdkversion` to
 clang-cl and as `/libpath:` to lld-link (CMake drives the linker
 directly, so the driver cannot derive them).  `cmake/deps_vc.cmake`
@@ -653,7 +653,8 @@ shim-only configure.
 `mingw-w64-i686-python` and runs `ctest -L unit` then `ctest -L
 playthrough` (every route/level's stderr goes to `<build>/tier-logs`,
 uploaded on failure); a new `clangcl` job builds the same tree with the
-runner's own cmake/ninja/python, its LLVM and VS 2022, no MSYS2 at all,
+runner's own cmake/ninja/python, its LLVM and Visual Studio (2026 on
+today's windows-latest), no MSYS2 at all,
 and runs both labels - `continue-on-error` while the toolchain is young.
 The MSYS2 SDL3 URL pin stays (the mirror still serves the file); the
 durable escape from the shrinking mingw32 index is the clang-cl route.

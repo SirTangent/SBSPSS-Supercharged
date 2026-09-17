@@ -21,7 +21,7 @@ In line with the overall project purpose, you can build the game executable usin
 | Windows 10 or 11, 64-bit | The game itself is a 32-bit executable; it runs fine on 64-bit Windows using WoW64 translation. |
 | Git with Git LFS | Install [Git for Windows](https://git-scm.com/install/windows), then `git lfs install` once. |
 | MSYS2, installed at `C:\msys64` | Needed to substitute parts of the 1999 cygwin toolchain. Download from <https://www.msys2.org>. The default install path matters as `port/CMakePresets.json` hard-codes `C:/msys64/mingw32/bin/ninja.exe`. If you must install elsewhere, edit that line and set `MSYS2_WIN` (Windows path) before running the `.cmd` scripts. |
-| *Optional:* LLVM + Visual Studio 2022 C++ x86 build tools | Only for the `clangcl-*` presets (section 4): [LLVM](https://releases.llvm.org) at `C:\Program Files\LLVM` (or the "C++ Clang tools for Windows" VS component) plus the MSVC v143 x86 tools and a Windows 10/11 SDK. Everything else (SDL3, Vulkan headers) is fetched by CMake. |
+| *Optional:* LLVM + Visual Studio 2022/2026 C++ x86 build tools | Only for the `clangcl-*` presets (section 4): [LLVM](https://releases.llvm.org) at `C:\Program Files\LLVM` (or the "C++ Clang tools for Windows" VS component) plus the MSVC x86 build tools and a Windows 10/11 SDK. Everything else (SDL3, Vulkan headers) is fetched by CMake. |
 
 Just a note, your GPU must support Vulkan. Most modern systems do.
 

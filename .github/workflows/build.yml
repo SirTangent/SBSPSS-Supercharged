@@ -143,7 +143,8 @@ jobs:
   # MSVC CRT and Windows SDK - the toolchain that does not depend on MSYS2's
   # shrinking 32-bit repository, and the one Visual Studio debugs natively.
   # No MSYS2 here at all: the runner's cmake/ninja/python, LLVM under
-  # C:\Program Files, VS 2022's x86 build tools + SDK, and the SDL3 VC /
+  # C:\Program Files, Visual Studio's x86 build tools + SDK (VS 2026 under
+  # ...\Microsoft Visual Studio8 on windows-latest since 2026-09), and the SDL3 VC /
   # Vulkan-Headers packages port/cmake/deps_vc.cmake fetches.  Advisory
   # while the toolchain is young (M8 PR 4 timebox): a failure here is a
   # finding to look at, not a red PR.
