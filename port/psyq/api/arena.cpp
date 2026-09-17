@@ -23,15 +23,15 @@
 #include "system/asmport.h"		/* declares PORT_Scratchpad */
 #include "system/lnkopt.h"
 #include "host/diag.h"
+#include "host/compiler.h"
 
-extern "C" { __attribute__((aligned(16))) unsigned char PORT_Scratchpad[1024+PORT_SCRATCHPAD_GUARD]; }
+extern "C" { alignas(16) unsigned char PORT_Scratchpad[1024+PORT_SCRATCHPAD_GUARD]; }
 
 /*	Guard pattern past the scratchpad's 1KB; host/diag.cpp's Port_MemWatch
-	checks it every vblank.  Seeded at priority 101 - before every normal
+	checks it every vblank.  Seeded by PORT_EARLY_CTOR - before every normal
 	static constructor - because cd.cpp's CdBoot already writes the file
 	position list into the scratchpad before main() runs.  */
-__attribute__((constructor(101)))
-static void seedScratchpadGuard(void)
+PORT_EARLY_CTOR(seedScratchpadGuard)
 {
 	for (int i = 0; i < PORT_SCRATCHPAD_GUARD; i++)
 		PORT_Scratchpad[1024 + i] = PORT_SCRATCHPAD_GUARD_BYTE;

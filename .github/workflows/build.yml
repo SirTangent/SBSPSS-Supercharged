@@ -65,13 +65,16 @@ jobs:
           path: out/
           retention-days: 3
 
-  # PC (Win32) port: build via the mingw32 CMake presets, then run every
-  # test executable headlessly (sbsp.exe itself, the windowed game, is
-  # deliberately excluded).
+  # PC (Win32) port, the shipping MinGW build: configure+build via the
+  # mingw32 CMake preset, then ctest's two labels - `unit` (the shim unit
+  # exes + the headless link proof) and `playthrough` (the M8 harness:
+  # exit-code self-test, fast Tier 1 routes, short Tier 2 sweep, all
+  # --uncapped so they run faster than real time and deterministically).
+  # sbsp.exe itself - the windowed game - is only ever driven headlessly.
   pc-build-test:
     needs: data
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     defaults:
       run:
         shell: msys2 {0}
@@ -90,6 +93,8 @@ jobs:
       # CMAKE_MAKE_PROGRAM, so location must match for cmake to find it.
       # windows-latest already has MSYS2 installed there - release: false
       # reuses it instead of trying (and failing) a fresh install over it.
+      # python: the playthrough tier driver (port/tests/run_tier.py), found
+      # by CMake's find_package(Python3) at configure time.
       - uses: msys2/setup-msys2@v2
         with:
           location: C:\
@@ -101,6 +106,7 @@ jobs:
             mingw-w64-i686-cmake
             mingw-w64-i686-ninja
             mingw-w64-i686-vulkan-headers
+            mingw-w64-i686-python
           cache: true
 
       # MSYS2 is retiring the deprecated 32-bit environment and dropped
@@ -117,16 +123,78 @@ jobs:
       - name: Build PC port (debug)
         run: bash port/build-pc.sh debug
 
-      # Globbed rather than listed, so a new sbsp_shim_test() in CMakeLists.txt
-      # is picked up automatically instead of being built and silently never
-      # run. sbsp.exe - the windowed game - never matches *_test.exe.
-      - name: Run tests
+      - name: Unit tests
+        run: ctest --test-dir port/build/debug --output-on-failure -L unit
+
+      - name: Playthrough tiers (uncapped)
+        run: ctest --test-dir port/build/debug --output-on-failure -L playthrough
+
+      # every route/level run's stderr (the [scene]/[summary]/[assert] log
+      # the oracle grepped), for triage when a tier fails
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: tier-logs-mingw-${{ env.TERRITORY }}-${{ env.VERSION }}
+          path: port/build/debug/tier-logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The same port built by clang-cl (LLVM, i686-pc-windows-msvc) against the
+  # MSVC CRT and Windows SDK - the toolchain that does not depend on MSYS2's
+  # shrinking 32-bit repository, and the one Visual Studio debugs natively.
+  # No MSYS2 here at all: the runner's cmake/ninja/python, LLVM under
+  # C:\Program Files, VS 2022's x86 build tools + SDK, and the SDL3 VC /
+  # Vulkan-Headers packages port/cmake/deps_vc.cmake fetches.  Advisory
+  # while the toolchain is young (M8 PR 4 timebox): a failure here is a
+  # finding to look at, not a red PR.
+  clangcl:
+    needs: data
+    runs-on: windows-latest
+    timeout-minutes: 40
+    continue-on-error: true
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      SDL_VIDEODRIVER: dummy
+      SDL_AUDIODRIVER: dummy
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: sbsp-data-${{ env.TERRITORY }}-${{ env.VERSION }}
+          path: out/
+
+      - name: Toolchain versions
         run: |
-          set -e
-          for exe in port/build/debug/sbsp_headless.exe port/build/debug/*_test.exe; do
-              echo "=== $(basename "$exe") ==="
-              "$exe"
-          done
+          & "C:\Program Files\LLVM\bin\clang-cl.exe" --version
+          cmake --version
+          ninja --version
+
+      # the preset borrows MSYS2's ninja for local use; the runner has its
+      # own on PATH
+      - name: Configure (clang-cl, i686-pc-windows-msvc)
+        working-directory: port
+        run: cmake --preset clangcl-debug -DCMAKE_MAKE_PROGRAM=ninja
+
+      - name: Build
+        working-directory: port
+        run: cmake --build --preset clangcl-debug
+
+      - name: Unit tests
+        run: ctest --test-dir port/build/clangcl-debug --output-on-failure -L unit
+
+      - name: Playthrough tiers (uncapped)
+        run: ctest --test-dir port/build/clangcl-debug --output-on-failure -L playthrough
+
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: tier-logs-clangcl-${{ env.TERRITORY }}-${{ env.VERSION }}
+          path: port/build/clangcl-debug/tier-logs/
+          if-no-files-found: ignore
+          retention-days: 7
 
   # Original PlayStation executable (Spongey.cpe), linked with the vintage
   # PSY-Q toolchain committed under tools/psyq/bin. No MinGW needed - just

@@ -575,6 +575,89 @@ session script snapshots the card, runs `sbsp-debug.exe --record-pad
 --assert-continue --mem-log` with stdout and stderr in separate files (the
 harness rule), and prints the exit code and `[summary]`.
 
+### CI + clang-cl (M8 PR 4)
+
+No game-source change again: the PS1 sources compile unmodified under
+clang-cl, so the M8 entry numbering stays at #30 and the PSX build is
+untouched by construction.  What the PR adds is a second toolchain for the
+same tree, PDBs for the first one, and CI that runs both.
+
+**`SBSP_CODEVIEW` (MinGW PDBs).**  `-gcodeview` (gcc 15+) puts CodeView
+records in the objects and `ld --pdb=` (binutils 2.39+; empty name =
+`<exe>.pdb`) collects them, so Visual Studio and WinDbg debug the MinGW
+exe with source and locals.  Verified by loading `sbsp.pdb` through
+dbghelp (`SymFromName` + `SymGetLineFromAddr64` resolve `main`,
+`Raster_Triangle`, `CdInit` to file:line).  Two quirks: llvm-pdbutil
+rejects ld's PDB ("DBI file info substream not aligned") although the
+Microsoft reader takes it, and ld prints four non-fatal `undefined
+reference to __ZZN9CCDFileIO9ReadAsyncER11sASyncQueueE5Error` lines
+against `.debug$S` (gcc emits an S_LDATA32 for a function-local static
+whose symbol it then never defines).  `SBSP_CODEVIEW=1 port/build-pc.sh
+debug` or `-DSBSP_CODEVIEW=ON`; off by default because gdb wants DWARF.
+
+**Portable spellings (`host/compiler.h`).**  Every compiler-specific
+construct the shim had lives in one header: `PORT_EARLY_CTOR(fn)` is
+`__attribute__((constructor(101)))` on GNU and a function pointer placed
+in the `.CRT$XCT` initializer slot under `_MSC_VER` (the CRT walks
+`.CRT$XCA..XCZ` in order; compiler-generated static constructors are
+`.CRT$XCU`, so XCT runs first - proven at -O2 under clang-cl, where the
+pointer is also marked `used` so the optimizer cannot drop an
+unreferenced internal global); `PORT_NORETURN` is `__declspec(noreturn)`
+/ `__attribute__((noreturn))`.  `PORT_Scratchpad` is `alignas(16)`; the
+`PSYQpause()` shadow falls back to `__debugbreak()` where `__builtin_trap`
+does not exist.  The two whole-archive links use CMake's
+`$<LINK_LIBRARY:WHOLE_ARCHIVE,sbsp_game>` (= `--whole-archive` on GNU ld,
+`/WHOLEARCHIVE:` on lld-link).
+
+**clang-cl toolchain (`cmake/clangcl-toolchain.cmake`, presets
+`clangcl-debug` / `clangcl-final`).**  `--target=i686-pc-windows-msvc`,
+lld-link, llvm-rc; inside a vcvars prompt the INCLUDE/LIB environment is
+used, outside one the newest VS 2022 MSVC toolset and Windows SDK are
+globbed and passed as `/vctoolsdir` `/winsdkdir` `/winsdkversion` to
+clang-cl and as `/libpath:` to lld-link (CMake drives the linker
+directly, so the driver cannot derive them).  `cmake/deps_vc.cmake`
+fetches the official `SDL3-devel-<ver>-VC.zip` (SDL3.lib + SDL3.dll - no
+static lib, so `sbsp_exe_link` copies the DLL beside each exe via
+`$<TARGET_RUNTIME_DLLS>`) and Khronos `Vulkan-Headers` at the tag matching
+MSYS2's `VK_HEADER_VERSION` (350) into `port/build/deps`, pinned by
+SHA-256.  Flag spellings the frontend decides (`SBSP_MSVC`): `/Z7 /O2 /MT
+/EHs-c- /GR-` and `/clang:-std=gnu++98 /clang:-fpermissive
+/clang:-fno-builtin /clang:-fno-strict-aliasing /clang:-idirafter<dir>`;
+`-Wno-<x>` passes through unchanged but `-Wall` must be `/W3` - to
+clang-cl a bare `-Wall` *is* `/Wall`, i.e. `-Weverything`, and a
+`/clang:-Wall` is appended after every `-Wno-`, undoing them.
+`_CRT_SECURE_NO_WARNINGS` silences the CRT's `fopen`/`getenv` advisories
+(the `_s` forms are not portable to MinGW).
+
+**The game under clang-cl** (the stretch goal) needed three things, none
+in `source/`: `_CRT_NOEXCEPT=throw()` for the game target, because the
+UCRT headers spell their exception specifications `noexcept` for every
+C++ dialect and gnu++98 has no such keyword (corecrt.h lets the user pick
+the spelling first); `StCdIntrFlag` defined with C++ linkage in
+`str_stream.cpp`, because fmv.cpp declares it as a plain `extern long` -
+one symbol under the Itanium ABI (global variable names are not
+mangled), two under MSVC's; and a linker alias
+`/alternatename:?SinTable@@3QBFB=?SinTable@@3PAFA`, because mathtab.h
+declares `extern const s16 SinTable[1024]` and sincos.cpp defines it
+non-const - the same one-symbol/two-symbols story, resolved at link time
+rather than with a `!PSX_MIPS_ASM` arm while the MinGW exe is the one
+that ships.  Two clang-only warning classes joined the game's suppression
+list (`-Wnonportable-include-path`: case-mismatched `#include`s, 1060 of
+them; `-Wshift-negative-value`: `(-1)<<n` in pcart/pghost).  With those,
+`sbsp.exe`, `sbsp_headless.exe` and all fifteen unit exes build with 0
+warnings and the `unit` and `playthrough` ctest labels pass on the
+clang-cl tree.  `SBSP_BUILD_GAME=OFF` still drops the game targets for a
+shim-only configure.
+
+**CI (`.github/workflows/build.yml`).**  The MinGW job now installs
+`mingw-w64-i686-python` and runs `ctest -L unit` then `ctest -L
+playthrough` (every route/level's stderr goes to `<build>/tier-logs`,
+uploaded on failure); a new `clangcl` job builds the same tree with the
+runner's own cmake/ninja/python, its LLVM and VS 2022, no MSYS2 at all,
+and runs both labels - `continue-on-error` while the toolchain is young.
+The MSYS2 SDL3 URL pin stays (the mirror still serves the file); the
+durable escape from the shrinking mingw32 index is the clang-cl route.
+
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 
 - String-literal → `char*` conversions (pervasive; `-Wno-write-strings`).
@@ -595,5 +678,6 @@ header-guard, unused, write-strings.  The shim keeps plain `-Wall`.
 
 Every warning those flags do *not* suppress has since been fixed at its
 source (entries #13/#14 above), so **both variants build with 0 warnings and
-0 errors**.  Keep it that way: a new warning now means new code, not
-inherited noise.
+0 errors** - under MinGW g++ and under clang-cl alike (M8 PR 4; clang's
+extra classes are listed there).  Keep it that way: a new warning now means
+new code, not inherited noise.

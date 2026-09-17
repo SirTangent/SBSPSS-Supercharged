@@ -15,34 +15,91 @@
             "displayName": "USA DEBUG (CD)",
             "inherits": "base",
             "binaryDir": "${sourceDir}/build/debug",
-            "cacheVariables": { "SBSP_VARIANT": "DEBUG" }
+            "cacheVariables": {
+                "SBSP_VARIANT": "DEBUG"
+            }
         },
         {
             "name": "final",
             "displayName": "USA FINAL (CD)",
             "inherits": "base",
             "binaryDir": "${sourceDir}/build/final",
-            "cacheVariables": { "SBSP_VARIANT": "FINAL" }
+            "cacheVariables": {
+                "SBSP_VARIANT": "FINAL"
+            }
         },
         {
             "name": "eur-debug",
             "displayName": "EUR DEBUG (CD)",
             "inherits": "base",
             "binaryDir": "${sourceDir}/build/eur-debug",
-            "cacheVariables": { "SBSP_VARIANT": "DEBUG", "SBSP_TERRITORY": "EUR" }
+            "cacheVariables": {
+                "SBSP_VARIANT": "DEBUG",
+                "SBSP_TERRITORY": "EUR"
+            }
         },
         {
             "name": "eur-final",
             "displayName": "EUR FINAL (CD)",
             "inherits": "base",
             "binaryDir": "${sourceDir}/build/eur-final",
-            "cacheVariables": { "SBSP_VARIANT": "FINAL", "SBSP_TERRITORY": "EUR" }
+            "cacheVariables": {
+                "SBSP_VARIANT": "FINAL",
+                "SBSP_TERRITORY": "EUR"
+            }
+        },
+        {
+            "name": "clangcl",
+            "hidden": true,
+            "generator": "Ninja",
+            "toolchainFile": "${sourceDir}/cmake/clangcl-toolchain.cmake",
+            "cacheVariables": {
+                "CMAKE_MAKE_PROGRAM": "C:/msys64/mingw32/bin/ninja.exe"
+            }
+        },
+        {
+            "name": "clangcl-debug",
+            "displayName": "USA DEBUG (CD) - clang-cl",
+            "inherits": "clangcl",
+            "binaryDir": "${sourceDir}/build/clangcl-debug",
+            "cacheVariables": {
+                "SBSP_VARIANT": "DEBUG"
+            }
+        },
+        {
+            "name": "clangcl-final",
+            "displayName": "USA FINAL (CD) - clang-cl",
+            "inherits": "clangcl",
+            "binaryDir": "${sourceDir}/build/clangcl-final",
+            "cacheVariables": {
+                "SBSP_VARIANT": "FINAL"
+            }
         }
     ],
     "buildPresets": [
-        { "name": "debug",     "configurePreset": "debug" },
-        { "name": "final",     "configurePreset": "final" },
-        { "name": "eur-debug", "configurePreset": "eur-debug" },
-        { "name": "eur-final", "configurePreset": "eur-final" }
+        {
+            "name": "debug",
+            "configurePreset": "debug"
+        },
+        {
+            "name": "final",
+            "configurePreset": "final"
+        },
+        {
+            "name": "eur-debug",
+            "configurePreset": "eur-debug"
+        },
+        {
+            "name": "eur-final",
+            "configurePreset": "eur-final"
+        },
+        {
+            "name": "clangcl-debug",
+            "configurePreset": "clangcl-debug"
+        },
+        {
+            "name": "clangcl-final",
+            "configurePreset": "clangcl-final"
+        }
     ]
 }

@@ -15,6 +15,10 @@
 #undef pollhost
 #undef PSYQpause
 #define pollhost()	((void)0)
+#if defined(__GNUC__) || defined(__clang__)
 #define PSYQpause()	__builtin_trap()
+#else
+#define PSYQpause()	__debugbreak()
+#endif
 
 #endif

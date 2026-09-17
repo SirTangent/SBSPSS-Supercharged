@@ -1,17 +1,27 @@
 #!/bin/bash
 # Configure + build the PC (Win32) port: every preset by default.
 #
-#   port/build-pc.sh [<preset>|usa|eur|all] [extra ninja args...]
-#   port/build-pc.sh test [usa|eur]    build, then ctest -L unit and -L playthrough on each tree
-#   port/build-pc.sh soak [usa|eur]    build, then the full Tier 1 + Tier 2 sweep on each tree
+#   port/build-pc.sh [<preset>|usa|eur|clangcl|all] [extra ninja args...]
+#   port/build-pc.sh test [usa|eur|clangcl]  build, then ctest -L unit and -L playthrough on each tree
+#   port/build-pc.sh soak [usa|eur]          build, then the full Tier 1 + Tier 2 sweep on each tree
 #
 # Presets (port/CMakePresets.json): debug, final (USA; usa-debug / usa-final
 # are accepted aliases) and eur-debug, eur-final (EUR, PAL 50Hz); `usa` /
-# `eur` name a territory's pair and `all` is every tree.  Each tree needs
-# its territory's data first (one build serves DEBUG and FINAL, issue #35):
+# `eur` name a territory's pair and `all` is every MinGW tree.  Each tree
+# needs its territory's data first (one build serves DEBUG and FINAL, issue
+# #35):
 #   port/build-data.cmd usa            (out/USA/include + out/USA/cd)
 #   port/build-data.cmd eur            (out/EUR/include + out/EUR/cd)
 # - build_one checks for both and names the missing command.
+#
+# clangcl-debug / clangcl-final (`clangcl` = both) are the same USA trees
+# built by clang-cl against the MSVC CRT (cmake/clangcl-toolchain.cmake:
+# needs LLVM + Visual Studio's x86 build tools, not MSYS2 - only its ninja
+# is borrowed).  They are kept out of `all`: the MinGW exes are the ones
+# that ship.
+#
+# SBSP_CODEVIEW=1 in the environment configures the MinGW trees with
+# -DSBSP_CODEVIEW=ON (a .pdb beside every exe, for Visual Studio / WinDbg).
 #
 # Requires the MSYS2 mingw32 toolchain:
 #   pacman -S --needed mingw-w64-i686-gcc mingw-w64-i686-cmake mingw-w64-i686-ninja
@@ -30,7 +40,7 @@ shift 2>/dev/null || true
 
 usage()
 {
-    echo "usage: port/build-pc.sh [debug|final|usa-debug|usa-final|eur-debug|eur-final|usa|eur|all|test [usa|eur]|soak [usa|eur]] [ninja args]" >&2
+    echo "usage: port/build-pc.sh [debug|final|usa-debug|usa-final|eur-debug|eur-final|clangcl-debug|clangcl-final|usa|eur|clangcl|all|test [usa|eur|clangcl]|soak [usa|eur]] [ninja args]" >&2
     exit 1
 }
 
@@ -41,8 +51,9 @@ presets_for()
     case "$w" in
         usa)  echo "debug final" ;;
         eur)  echo "eur-debug eur-final" ;;
+        clangcl) echo "clangcl-debug clangcl-final" ;;
         all|"") echo "debug final eur-debug eur-final" ;;
-        debug|final|eur-debug|eur-final) echo "$w" ;;
+        debug|final|eur-debug|eur-final|clangcl-debug|clangcl-final) echo "$w" ;;
         usa-debug) echo "debug" ;;      # the build-data.sh spelling, same tree
         usa-final) echo "final" ;;
         *) usage ;;
@@ -73,7 +84,10 @@ build_one()
     shift                       # the rest is extra ninja args, not the preset
     check_data "$preset"
     echo "=== configure+build: $preset ==="
-    cmake --preset "$preset"
+    case "$preset" in
+        clangcl-*) cmake --preset "$preset" ;;
+        *)         cmake --preset "$preset" -DSBSP_CODEVIEW="${SBSP_CODEVIEW:-0}" ;;
+    esac
     cmake --build --preset "$preset" "$@"
 }
 
