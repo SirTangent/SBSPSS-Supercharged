@@ -144,7 +144,8 @@ jobs:
   # shrinking 32-bit repository, and the one Visual Studio debugs natively.
   # No MSYS2 here at all: the runner's cmake/ninja/python, LLVM under
   # C:\Program Files, Visual Studio's x86 build tools + SDK (VS 2026 under
-  # ...\Microsoft Visual Studio8 on windows-latest since 2026-09), and the SDL3 VC /
+  # C:\Program Files\Microsoft Visual Studio\18 on windows-latest since
+  # 2026-09), and the SDL3 VC /
   # Vulkan-Headers packages port/cmake/deps_vc.cmake fetches.  Advisory
   # while the toolchain is young (M8 PR 4 timebox): a failure here is a
   # finding to look at, not a red PR.
