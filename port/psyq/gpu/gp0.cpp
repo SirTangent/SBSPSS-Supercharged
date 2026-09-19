@@ -470,7 +470,7 @@ extern "C" void DrawOTag(u_long *p)
 	const int		timed = Port_PaceLogOn();
 	const double	t0 = timed ? Port_NowSeconds() : 0.0;
 
-	uintptr_t	window =(uintptr_t)p & ~(uintptr_t)0xFFFFFF;
+	uintptr_t	window = (uintptr_t)p & ~(uintptr_t)0xFFFFFF;
 	uint32_t	*tagp  = (uint32_t *)p;
 	int			guard  = 1 << 20;
 

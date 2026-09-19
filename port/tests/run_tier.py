@@ -227,6 +227,13 @@ def compare_baseline(res, name, log_name):
         return [l for l in lines if l.startswith("[frame] ") or l.startswith("[scene] ")]
     want = stream(path.read_text(encoding="utf-8").splitlines())
     got = stream(res.lines)
+    # An empty stream on BOTH sides compares equal, so a baseline captured
+    # from a build that emitted no [frame] lines at all - the determinism set
+    # lost --frame-crc, the log was truncated - would pass every run against
+    # every other.  The oracle has to have something to say.
+    if not want:
+        print(f"  FAIL {name}: baseline {path} has no [scene]/[frame] lines to compare against")
+        return False
     if want == got:
         print(f"       baseline: {len(got)} [scene]/[frame] lines identical to {path}")
         return True
@@ -418,6 +425,15 @@ def main():
         BASELINE = Path(a.compare_frames).resolve()
         if not BASELINE.is_dir():
             print(f"no such baseline directory: {BASELINE}")
+            return 2
+        # run_game writes <logs>/<name>.log BEFORE compare_baseline reads
+        # <baseline>/<name>.log, so the same directory for both would have
+        # every run compare against the log it just wrote itself - a green
+        # sweep that proves nothing.  Keeping this run's logs is legitimate;
+        # it just needs its own directory.
+        if a.logs and Path(a.logs).resolve() == BASELINE:
+            print(f"--logs and --compare-frames are the same directory ({BASELINE}): "
+                  f"every run would be compared against itself - give --logs a different one")
             return 2
     if not (a.tier1 or a.tier2 or a.selftest):
         ap.error("nothing to do: pass --tier1, --tier2 and/or --selftest")

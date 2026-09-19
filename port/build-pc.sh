@@ -95,9 +95,9 @@ test_one()
 {
     preset="$1"
     echo "=== ctest ($preset): unit ==="
-    ctest --test-dir "build/$preset" --output-on-failure -L unit
+    ctest --test-dir "build/$preset" --output-on-failure -L unit --no-tests=error
     echo "=== ctest ($preset): playthrough ==="
-    ctest --test-dir "build/$preset" --output-on-failure -L playthrough
+    ctest --test-dir "build/$preset" --output-on-failure -L playthrough --no-tests=error
 }
 
 soak_one()

@@ -23,8 +23,10 @@
 	- the texture page and CLUT OVERLAPPING the draw target, so the
 	  read-after-write order inside one primitive is pinned too.
 
-	Writes outside the clip rect are caught by a full-VRAM comparison
-	against a shadow copy every FULL_CHECK_EVERY cases and at the end.
+	Writes outside the clip rect are caught by a full-VRAM comparison against
+	a shadow copy after EVERY case - see the loop for why a cadence is not
+	good enough.  The two rasterizers take turns drawing first, so the
+	closing table is not biased by one of them always meeting a warm cache.
 
 	RASTER_DIFF_CASES=<n> overrides the case count (soak), RASTER_DIFF_SEED
 	the seed.  The closing table is the micro-benchmark: reference vs live
@@ -44,7 +46,6 @@ void RasterRef_Rect(int x, int y, int w, int h, int u0, int v0,
 void RasterRef_Line(const RasterVtx *a, const RasterVtx *b, const RasterCfg *cfg);
 
 #define DEFAULT_CASES		20000
-#define FULL_CHECK_EVERY	512
 #define RENOISE_EVERY		2048
 #define MAX_REPORTS			10
 
@@ -71,7 +72,7 @@ static int chance(int percent)
 /*****************************************************************************/
 static uint16_t s_shadow[VRAM_H][VRAM_W];	/* what g_vram must be outside the case's clip rect */
 static uint16_t s_pre[VRAM_H][VRAM_W];		/* clip-rect contents before the case */
-static uint16_t s_ref[VRAM_H][VRAM_W];		/* clip-rect contents after the reference */
+static uint16_t s_first[VRAM_H][VRAM_W];	/* clip-rect contents after whichever drew first */
 
 static void noiseVram(void)
 {
@@ -134,8 +135,10 @@ static int classOf(const Case &c)
 /*****************************************************************************/
 static int coordNear(int lo, int hi)
 {
+	/*	the full range a vertex can reach: signext11() gives -1024..1023 and
+		the drawing offset adds another -1024..1023  */
 	if (chance(6))
-		return rndRange(-1024, 2047);		/* far out: size rejects, heavy clipping */
+		return rndRange(-2048, 2046);		/* far out: size rejects, heavy clipping */
 	return rndRange(lo - 48, hi + 48);
 }
 
@@ -175,7 +178,12 @@ static void makeCase(Case *c)
 	}
 	cfg.texBaseX = rndRange(0, 15) << 6;
 	cfg.texBaseY = rndRange(0, 1) << 8;
-	cfg.texDepth = rndRange(0, 2);
+	/*	0..3, not 0..2: gp0.cpp takes texDepth straight out of the E1 bits
+		((tp >> 7) & 3), so 3 reaches the rasterizer, and it is exactly the
+		value the flag word folds away (the reference's switch `default:` vs
+		the new depth-2 arm).  The fold is only proven if the fuzzer can
+		produce it.  */
+	cfg.texDepth = rndRange(0, 3);
 	cfg.clutX    = rndRange(0, 63) << 4;
 	cfg.clutY    = rndRange(0, 511);
 	if (chance(25))
@@ -335,20 +343,20 @@ static void describe(const Case &c, long n)
 }
 
 /*****************************************************************************/
-static int fullCheck(long n)
+/*	Name the pixel this case wrote outside its clip rect.  Reached only when
+	the per-case memcmp has already found one.  */
+static void reportStray(const Case &c, long n)
 {
-	if (memcmp(g_vram, s_shadow, sizeof(s_shadow)) == 0)
-		return 0;
 	for (int y = 0; y < VRAM_H; y++)
 		for (int x = 0; x < VRAM_W; x++)
 			if (g_vram[y][x] != s_shadow[y][x])
 			{
-				std::printf("FAIL: write outside a clip rect by case %ld or earlier - "
+				std::printf("FAIL: case %ld wrote outside its clip rect - "
 							"vram[%d][%d] = %04x, want %04x\n",
 							n, y, x, g_vram[y][x], s_shadow[y][x]);
-				return 1;
+				describe(c, n);
+				return;
 			}
-	return 1;
 }
 
 int main()
@@ -366,6 +374,7 @@ int main()
 
 	int		failures = 0;
 	long	drawn = 0;			/* cases where the reference changed at least one pixel */
+	long	executed = 0;		/* the loop stops early once MAX_REPORTS is hit */
 
 	for (long n = 0; n < cases && failures < MAX_REPORTS; n++)
 	{
@@ -375,34 +384,46 @@ int main()
 		Case c;
 		makeCase(&c);
 		int cls = classOf(c);
+		executed++;
+
+		/*	Alternate which rasterizer draws first.  Whichever runs second
+			starts with the clip rect freshly written by the first, so a fixed
+			order hands it a warm cache and biases the table below; over a run
+			each side pays that cost equally.  */
+		const int refFirst = (n & 1) == 0;
 
 		copyRect(s_pre, g_vram, c.clipX0, c.clipY0, c.clipX1, c.clipY1);
 
 		Clock::time_point t0 = Clock::now();
-		draw(c, 1);
+		draw(c, refFirst);
 		Clock::time_point t1 = Clock::now();
 
-		copyRect(s_ref, g_vram, c.clipX0, c.clipY0, c.clipX1, c.clipY1);
+		copyRect(s_first, g_vram, c.clipX0, c.clipY0, c.clipX1, c.clipY1);
 		copyRect(g_vram, s_pre, c.clipX0, c.clipY0, c.clipX1, c.clipY1);
 
 		Clock::time_point t2 = Clock::now();
-		draw(c, 0);
+		draw(c, !refFirst);
 		Clock::time_point t3 = Clock::now();
 
-		s_refNs[cls] += (double)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
-		s_newNs[cls] += (double)std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t2).count();
+		double nsFirst  = (double)std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+		double nsSecond = (double)std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t2).count();
+		s_refNs[cls] += refFirst ? nsFirst : nsSecond;
+		s_newNs[cls] += refFirst ? nsSecond : nsFirst;
 		s_classCases[cls]++;
 
+		/*	the second draw's result is still in g_vram, the first's in s_first  */
 		int bad = 0, changed = 0;
 		for (int y = c.clipY0; y <= c.clipY1 && !bad; y++)
 			for (int x = c.clipX0; x <= c.clipX1; x++)
 			{
-				if (s_ref[y][x] != s_pre[y][x])
+				uint16_t ref = refFirst ? s_first[y][x] : g_vram[y][x];
+				uint16_t got = refFirst ? g_vram[y][x] : s_first[y][x];
+				if (ref != s_pre[y][x])
 					changed = 1;
-				if (g_vram[y][x] != s_ref[y][x])
+				if (got != ref)
 				{
 					std::printf("FAIL: vram[%d][%d] = %04x, reference %04x (was %04x)\n",
-								y, x, g_vram[y][x], s_ref[y][x], s_pre[y][x]);
+								y, x, got, ref, s_pre[y][x]);
 					describe(c, n);
 					bad = 1;
 					break;
@@ -412,20 +433,29 @@ int main()
 		failures += bad;
 
 		/* carry the reference result forward so one miss is one report */
-		copyRect(g_vram, s_ref, c.clipX0, c.clipY0, c.clipX1, c.clipY1);
-		copyRect(s_shadow, s_ref, c.clipX0, c.clipY0, c.clipX1, c.clipY1);
+		if (refFirst)
+			copyRect(g_vram, s_first, c.clipX0, c.clipY0, c.clipX1, c.clipY1);
 
-		if ((n % FULL_CHECK_EVERY) == FULL_CHECK_EVERY - 1 || n == cases - 1)
+		/*	Take the reference's legitimate writes into the shadow FIRST, so
+			that afterwards any surviving difference is necessarily outside
+			the clip rect - a pixel neither rasterizer was allowed to touch.  */
+		copyRect(s_shadow, g_vram, c.clipX0, c.clipY0, c.clipX1, c.clipY1);
+
+		/*	EVERY case, not on a cadence: this is the only check that sees a
+			write outside the clip rect, and the sync above erases any stray a
+			later case's rect happens to cover - on a cadence a rare escape
+			(the kind a differential fuzzer exists for) is wiped before it is
+			ever looked at, while the systematic one you would notice anyway
+			still trips.  A 1MB memcmp per case is worth that.  */
+		if (memcmp(g_vram, s_shadow, sizeof(s_shadow)) != 0)
 		{
-			if (fullCheck(n))
-			{
-				failures++;
-				memcpy(g_vram, s_shadow, sizeof(s_shadow));
-			}
+			reportStray(c, n);
+			failures++;
+			memcpy(g_vram, s_shadow, sizeof(s_shadow));
 		}
 	}
 
-	std::printf("%ld of %ld cases drew pixels\n", drawn, cases);
+	std::printf("%ld of %ld cases drew pixels\n", drawn, executed);
 	std::printf("%-18s %8s %12s %12s %8s\n", "class", "cases", "ref ns/case", "new ns/case", "speedup");
 	double refAll = 0, newAll = 0;
 	for (int i = 0; i < T_COUNT; i++)
@@ -438,13 +468,16 @@ int main()
 					s_refNs[i] / s_classCases[i], s_newNs[i] / s_classCases[i],
 					s_newNs[i] > 0 ? s_refNs[i] / s_newNs[i] : 0.0);
 	}
-	std::printf("%-18s %8ld %12s %12s %7.2fx\n", "all", cases, "", "",
+	std::printf("%-18s %8ld %12s %12s %7.2fx\n", "all", executed, "", "",
 				newAll > 0 ? refAll / newAll : 0.0);
 
-	/* a generator that stopped drawing would pass vacuously */
-	if (cases >= 1000 && drawn < cases / 4)
+	/*	A generator that stopped drawing would pass vacuously.  Measured
+		against the cases actually EXECUTED: a run that stopped early on real
+		failures must not also accuse the generator - that is noise on exactly
+		the output you need to read.  */
+	if (executed >= 1000 && drawn < executed / 4)
 	{
-		std::printf("FAIL: only %ld of %ld cases drew anything - generator is broken\n", drawn, cases);
+		std::printf("FAIL: only %ld of %ld cases drew anything - generator is broken\n", drawn, executed);
 		failures++;
 	}
 
