@@ -5,6 +5,8 @@
 #ifndef PORT_DIAG_H
 #define PORT_DIAG_H
 
+#include "compiler.h"		/* PORT_NORETURN */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -27,7 +29,7 @@ int		Port_InputAtExit(void);
 /*	The one way out of the process: prints [summary] then _exit(code).
 	_exit, not exit: the game never shuts down on PS1, so its static
 	destructors were never designed to run (one traps).  */
-void	Port_Exit(int code) __attribute__((noreturn));
+PORT_NORETURN void Port_Exit(int code);
 
 /*	Game-side hooks; the game sees these through source/system/asmport.h.  */
 void	Port_SceneEvent(const char *sceneName);

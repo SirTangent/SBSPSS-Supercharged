@@ -404,7 +404,9 @@ extern "C" void StrStream_ResetForTest(void)
 /*****************************************************************************/
 /*	libcd St* surface (LIBCD.H:257-272).  */
 
-extern "C" long StCdIntrFlag;			/* fmv.cpp polls it; never set */
+/* fmv.cpp polls it (never set); declared there as a plain C++ `extern long`,
+   which is the same symbol as an extern "C" one under the Itanium ABI and a
+   different one under MSVC's, so this definition has C++ linkage too.  */
 long StCdIntrFlag;
 
 extern "C" void StCdInterrupt(void)

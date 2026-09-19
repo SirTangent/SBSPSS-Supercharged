@@ -72,6 +72,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "compiler.h"		/* PORT_EARLY_CTOR */
 
 static int	g_bootLevel = -1;		/* -1 = normal boot (frontend) */
 static long	g_seed;
@@ -286,11 +287,10 @@ static void loadIni(void)
 						"at a writable file\n");
 }
 
-/*	Priority 101 (0-100 are reserved): runs before every normal-priority
-	static constructor in the program, so the env aliases are in place
+/*	PORT_EARLY_CTOR: runs before every normal-priority static constructor
+	in the program, so the env aliases are in place
 	before any consumer - including cd.cpp's CdBoot - reads them.  */
-__attribute__((constructor(101)))
-static void parseArgs(void)
+PORT_EARLY_CTOR(parseArgs)
 {
 	static const struct { const char *arg; const char *env; } aliases[] =
 	{

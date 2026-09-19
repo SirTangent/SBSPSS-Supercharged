@@ -21,6 +21,7 @@ In line with the overall project purpose, you can build the game executable usin
 | Windows 10 or 11, 64-bit | The game itself is a 32-bit executable; it runs fine on 64-bit Windows using WoW64 translation. |
 | Git with Git LFS | Install [Git for Windows](https://git-scm.com/install/windows), then `git lfs install` once. |
 | MSYS2, installed at `C:\msys64` | Needed to substitute parts of the 1999 cygwin toolchain. Download from <https://www.msys2.org>. The default install path matters as `port/CMakePresets.json` hard-codes `C:/msys64/mingw32/bin/ninja.exe`. If you must install elsewhere, edit that line and set `MSYS2_WIN` (Windows path) before running the `.cmd` scripts. |
+| *Optional:* LLVM + Visual Studio 2022/2026 C++ x86 build tools | Only for the `clangcl-*` presets (section 4): [LLVM](https://releases.llvm.org) at `C:\Program Files\LLVM` (or the "C++ Clang tools for Windows" VS component) plus the MSVC x86 build tools and a Windows 10/11 SDK. Everything else (SDL3, Vulkan headers) is fetched by CMake. |
 
 Just a note, your GPU must support Vulkan. Most modern systems do.
 
@@ -108,11 +109,50 @@ with Ninja. A clean build takes a few minutes. Output:
 | `debug` | `port\build\debug\sbsp.exe` | Asserts on, debug overlays and screen tools available, prim-pool overflow detection. Use this one while developing. |
 | `final` | `port\build\final\sbsp.exe` | The shipping configuration, heavier optimisation, asserts compiled out. |
 
-The same directories also contain `sbsp_headless.exe` and the thirteen
-`*_test.exe` unit-test executables (section 7).
+The same directories also contain `sbsp_headless.exe` and the fifteen
+`*_test.exe` unit-test executables. `port\build-pc.cmd test` builds and then
+runs them all (ctest label `unit`) followed by the automated playthrough
+tiers (label `playthrough`: a scripted, faster-than-real-time run through
+every scene and every level); CI does the same on each pull request.
 
 If configure fails with "Generated headers missing", section 3 was skipped or
 failed.
+
+### Debugging in Visual Studio (optional)
+
+The MinGW executables carry DWARF debug info, which gdb reads and Visual
+Studio does not. Set `SBSP_CODEVIEW=1` before building to get CodeView
+instead, with a `.pdb` beside every executable:
+
+```bat
+set SBSP_CODEVIEW=1
+port\build-pc.cmd debug
+```
+
+Then *File > Open > Project/Solution* on `port\build\debug\sbsp.exe` in
+Visual Studio (or open it in WinDbg) and you have source, breakpoints and
+locals. The same flag is a CMake option, `-DSBSP_CODEVIEW=ON`. Building
+with it prints a few harmless `undefined reference ... (.debug$S)` lines at
+link time (a GCC CodeView quirk with one function-local static); the PDB is
+fine.
+
+### Building with clang-cl (optional)
+
+The port also builds with LLVM's `clang-cl` against the MSVC C runtime and
+Windows SDK (32-bit, `i686-pc-windows-msvc`), the toolchain Visual Studio
+debugs natively and the one that does not depend on MSYS2's shrinking
+32-bit package repository:
+
+```bat
+port\build-pc.cmd clangcl-debug
+```
+
+Output is `port\build\clangcl-debug\` with the same executables, each
+with its `.pdb` and an `SDL3.dll` beside it (the official SDL VC package
+has no static library). The first configure downloads SDL3 and the Vulkan
+headers into `port\build\deps\`. `port\build-pc.cmd test clangcl` runs
+the same tests. The MinGW executables remain the ones that ship; CI builds
+the clang-cl variant as an advisory job.
 
 ## 5. Run
 

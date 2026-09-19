@@ -8,7 +8,7 @@
 	     DecDCTvlc3 + DecDCTin, tolerance-compared against ffmpeg's RGB24
 	     decode (the oracle is NOT bit-exact - different IDCT - so this
 	     asserts closeness and prints the stats).
-	  3. Sweep layer: every video frame of every data/CDData/*.str is
+	  3. Sweep layer: every video frame of every .str under data/CDData is
 	     VLC-decoded into a game-sized (77,120B) buffer, asserting BS
 	     version, exactly 1800 blocks per 320x240 frame, monotonic frame
 	     numbers, and that the declared MDEC size fits the game's vlcbuf -

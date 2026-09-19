@@ -14,7 +14,7 @@
 	  SBSP_WRITE_GOLDEN=1     rewrite the golden files from this build
 	  SBSP_FMV_DUMP_RAW=<dir> also dump <movie>_NNN.rgb raster frames
 
-	Needs the staged movies (out/.../CD/*.STR or SBSP_DATA_DIR); skips
+	Needs the staged movies (the .STR files under out/.../CD, or SBSP_DATA_DIR); skips
 	gracefully when they are absent (run port/build-data.cmd first).
 */
 #include <cstdio>
