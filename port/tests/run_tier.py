@@ -46,6 +46,14 @@ Tier 2 boots every LvlTable level (--level 0..24) with --invincible and the
 shared routes/walk_right.pad, and requires exit 0, no forbidden lines and
 at least two distinct [frame] CRCs after the level opened (a black or stuck
 display yields exactly one).  Prim/RAM peaks are reported, not judged.
+
+--compare-frames DIR is the cross-build pixel oracle (M8 perf pass): DIR is
+the --logs directory of an earlier run of the same tiers on another build
+of the same territory/variant, and each run's [scene] + [frame] stream must
+match its same-named log there line for line.
+
+    run_tier.py --exe <before> --tier1 --tier2 --logs base
+    run_tier.py --exe <after>  --tier1 --tier2 --compare-frames base
 """
 import argparse
 import difflib
@@ -200,6 +208,38 @@ def run_game(exe, args, env, timeout, log_path=None):
     return RunResult(code, out.splitlines(), wall)
 
 
+BASELINE = None     # --compare-frames: directory of an earlier run's --logs
+
+
+def compare_baseline(res, name, log_name):
+    """--compare-frames: this run's [scene] + [frame] lines must equal those
+    of the same-named log another build left with --logs.  Everything here
+    runs under the determinism set, so the streams are a pure function of
+    the exe: a rasterizer (or any other) change that moves one displayed
+    pixel on one vblank shows up as the first differing line."""
+    if BASELINE is None:
+        return True
+    path = Path(BASELINE) / log_name
+    if not path.exists():
+        print(f"  FAIL {name}: no baseline log {path}")
+        return False
+    def stream(lines):
+        return [l for l in lines if l.startswith("[frame] ") or l.startswith("[scene] ")]
+    want = stream(path.read_text(encoding="utf-8").splitlines())
+    got = stream(res.lines)
+    if want == got:
+        print(f"       baseline: {len(got)} [scene]/[frame] lines identical to {path}")
+        return True
+    for i, (w, g) in enumerate(zip(want, got)):
+        if w != g:
+            print(f"  FAIL {name}: differs from baseline {path} at stream line {i + 1}:")
+            print(f"       baseline: {w}")
+            print(f"       this run: {g}")
+            return False
+    print(f"  FAIL {name}: baseline {path} has {len(want)} [scene]/[frame] lines, this run {len(got)}")
+    return False
+
+
 def report_common(res, name):
     ok = True
     if res.code != 0:
@@ -233,6 +273,7 @@ def run_route(exe, route, seed, logdir, replay):
         if v > ceiling:
             print(f"  FAIL {route.name}: {k}={v} exceeds {ceiling}")
             ok = False
+    ok &= compare_baseline(res, route.name, f"{route.name}.log")
     frames = len(res.frame_crcs())
     if frames < route.min_frames:
         print(f"  FAIL {route.name}: {frames} distinct unmasked frame CRC(s), {route.min_frames} required")
@@ -313,6 +354,7 @@ def tier2(exe, seed, short, logdir, only):
         print(f"== tier2 {name} (chapter {lvl // 5 + 1} level {lvl % 5 + 1}): {' '.join(args)}")
         res = run_game(exe, args, {}, 600, log)
         good = report_common(res, name)
+        good &= compare_baseline(res, name, f"tier2_{name}.log")
         crcs = res.frame_crcs(after_scene="Game")
         if len(crcs) < 2:
             print(f"  FAIL {name}: only {len(crcs)} distinct unmasked frame CRC(s) after [scene] Game")
@@ -360,6 +402,9 @@ def main():
                     help="the exe's territory build: selects '# territory' routes and "
                          "'# usa'/'# eur' header lines (default USA)")
     ap.add_argument("--logs", help="directory to keep every run's log")
+    ap.add_argument("--compare-frames", metavar="DIR",
+                    help="a --logs directory from another build of the same territory/variant: "
+                         "every tier 1 / tier 2 run's [scene] + [frame] CRC stream must be identical to it")
     a = ap.parse_args()
 
     exe = Path(a.exe).resolve()
@@ -368,6 +413,12 @@ def main():
         return 2
     if a.logs:
         Path(a.logs).mkdir(parents=True, exist_ok=True)
+    if a.compare_frames:
+        global BASELINE
+        BASELINE = Path(a.compare_frames).resolve()
+        if not BASELINE.is_dir():
+            print(f"no such baseline directory: {BASELINE}")
+            return 2
     if not (a.tier1 or a.tier2 or a.selftest):
         ap.error("nothing to do: pass --tier1, --tier2 and/or --selftest")
 

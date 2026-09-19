@@ -132,27 +132,50 @@ extern "C" double Port_NowSeconds(void)
 	before the present was decoupled from emulated time.  */
 static unsigned long	g_vsync0Count;
 
-static void paceLog(void)
-{
-	static int				enabled = -1;
-	static unsigned long	lastVsync0;
-	static double			lastWall;
+/*	Phase split of the window's wall time (M8 perf): "raster" is every
+	DrawOTag (gpu/gp0.cpp), "present" is Host_VBlank - events, tooling and the
+	Vulkan present, which is where a capped run's vsync wait lands - and "rest"
+	is what remains: the game itself plus, capped, the Sleep(1) idle.  Only an
+	--uncapped window reads as a CPU budget.  */
+static double	g_paceSec[PORT_PACE_PHASES];
 
+extern "C" int Port_PaceLogOn(void)
+{
+	static int enabled = -1;
 	if (enabled < 0)
 	{
 		const char *e = getenv("SBSP_PACE_LOG");
 		enabled = (e && *e && *e != '0');
 	}
+	return enabled;
+}
+
+extern "C" void Port_PaceAdd(int phase, double seconds)
+{
+	g_paceSec[phase] += seconds;
+}
+
+static void paceLog(void)
+{
+	static unsigned long	lastVsync0;
+	static double			lastWall;
+
 	int window = 5 * g_hz;
-	if (!enabled || (g_vblank % window) != 0)
+	if (!Port_PaceLogOn() || (g_vblank % window) != 0)
 		return;
 
 	double now = Port_NowSeconds();
+	double wall = now - lastWall;
 	unsigned long dv = g_vsync0Count - lastVsync0;
-	fprintf(stderr, "[pace] hz=%d vblank=%lu  vsync0=%lu in window (vbl/frame %.2f)  wall %.2fs for %d vbl\n",
-			g_hz, g_vblank, dv, dv ? (double)window / (double)dv : 0.0, now - lastWall, window);
+	fprintf(stderr, "[pace] hz=%d vblank=%lu  vsync0=%lu in window (vbl/frame %.2f)  wall %.2fs for %d vbl"
+					"  raster %.3fs present %.3fs rest %.3fs\n",
+			g_hz, g_vblank, dv, dv ? (double)window / (double)dv : 0.0, wall, window,
+			g_paceSec[PORT_PACE_RASTER], g_paceSec[PORT_PACE_PRESENT],
+			wall - g_paceSec[PORT_PACE_RASTER] - g_paceSec[PORT_PACE_PRESENT]);
 	lastVsync0 = g_vsync0Count;
 	lastWall   = now;
+	for (int i = 0; i < PORT_PACE_PHASES; i++)
+		g_paceSec[i] = 0.0;
 }
 
 extern "C" void Port_Pump(void)
@@ -235,7 +258,13 @@ extern "C" void Port_Pump(void)
 			g_vsyncCallback();		/* game vblank work first (loading icon...) */
 		Port_RCnt2Vblank(g_hz);
 		Port_CdVblank(g_hz);		/* XA sector clock: decode + deliveries */
-		Host_VBlank(g_vblank);		/* ...then events + present + tooling */
+		{
+			const int		timed = Port_PaceLogOn();
+			const double	t0 = timed ? Port_NowSeconds() : 0.0;
+			Host_VBlank(g_vblank);	/* ...then events + present + tooling */
+			if (timed)
+				Port_PaceAdd(PORT_PACE_PRESENT, Port_NowSeconds() - t0);
+		}
 		Port_AudioVBlank(g_hz);		/* WAV dump: this vblank's audio, if armed */
 		paceLog();
 		inPump = 0;

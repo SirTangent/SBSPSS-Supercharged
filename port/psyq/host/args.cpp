@@ -196,7 +196,7 @@ static void usage(void)
 		"  --save-dir <path>     memory-card directory    (SBSP_SAVE_DIR)\n"
 		"  --no-cd-pace          instant loads            (SBSP_CD_PACE=0)\n"
 		"  --no-audio            no playback device       (SBSP_NO_AUDIO=1)\n"
-		"  --pace-log            frame-pacing stderr log  (SBSP_PACE_LOG=1)\n"
+		"  --pace-log            frame-pacing stderr log + raster/present/rest split  (SBSP_PACE_LOG=1)\n"
 		"  --uncapped            vblanks not wall-paced   (SBSP_UNCAPPED=1)\n"
 		"                        (implies --no-cd-pace; + --no-audio --seed: deterministic)\n"
 		"  --assert-continue     log asserts, keep going  (SBSP_ASSERT_CONTINUE=1)\n"

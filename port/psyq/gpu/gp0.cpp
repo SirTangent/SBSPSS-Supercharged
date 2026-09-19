@@ -24,6 +24,7 @@
 #include "stub_log.h"
 #include "gpu/gpu_core.h"
 #include "host/diag.h"
+#include "host/pump.h"
 
 /*****************************************************************************/
 static int signext11(int v)
@@ -193,12 +194,6 @@ static int execRect(const uint32_t *w, int avail)
 	rasterRect(x, y, rw, rh, u0, v0, w[0], &cfg);
 	return need;
 }
-
-/*	Axis-aligned rect: no edge rules, texture walks u/v with byte wrap.
-	Shares the pixel pipeline with the triangle path via Raster_Triangle's
-	helpers - implemented in raster.cpp; declared here for clarity.  */
-void Raster_Rect(int x, int y, int w, int h, int u0, int v0,
-				 uint8_t r, uint8_t g, uint8_t b, const RasterCfg *cfg);
 
 static void rasterRect(int x, int y, int w, int h, int u0, int v0,
 					   uint32_t colw, const RasterCfg *cfg)
@@ -469,7 +464,13 @@ extern "C" void DrawOTag(u_long *p)
 	verifyArenaWindowOnce();
 	primPoolWatch();
 
-	uintptr_t	window = (uintptr_t)p & ~(uintptr_t)0xFFFFFF;
+	/*	--pace-log phase split: the whole OT walk is "raster" (GP0 decode is
+		noise beside the pixel loops).  One clock pair per DrawOTag, and only
+		when the log is on.  */
+	const int		timed = Port_PaceLogOn();
+	const double	t0 = timed ? Port_NowSeconds() : 0.0;
+
+	uintptr_t	window =(uintptr_t)p & ~(uintptr_t)0xFFFFFF;
 	uint32_t	*tagp  = (uint32_t *)p;
 	int			guard  = 1 << 20;
 
@@ -506,6 +507,9 @@ extern "C" void DrawOTag(u_long *p)
 			Port_Exit(PORT_EXIT_FAULT);
 		}
 	}
+
+	if (timed)
+		Port_PaceAdd(PORT_PACE_RASTER, Port_NowSeconds() - t0);
 }
 
 extern "C" void DrawPrim(void *p)
