@@ -198,6 +198,51 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # clang-cl again, targeting x86_64-pc-windows-msvc (M9): the same tree as
+  # a true 64-bit exe (SBSP_PC64 - 4-byte pointer fields kept in the
+  # file-overlay structs, a 16-aligned heap).  Same labels as clangcl;
+  # advisory like it.
+  clangcl-x64:
+    needs: data
+    runs-on: windows-latest
+    timeout-minutes: 40
+    continue-on-error: true
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      SDL_VIDEODRIVER: dummy
+      SDL_AUDIODRIVER: dummy
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: sbsp-data-${{ env.TERRITORY }}-${{ env.VERSION }}
+          path: out/
+
+      - name: Configure (clang-cl, x86_64-pc-windows-msvc)
+        working-directory: port
+        run: cmake --preset clangcl-x64-debug -DCMAKE_MAKE_PROGRAM=ninja
+
+      - name: Build
+        working-directory: port
+        run: cmake --build --preset clangcl-x64-debug
+
+      - name: Unit tests
+        run: ctest --test-dir port/build/clangcl-x64-debug --output-on-failure -L unit --no-tests=error
+
+      - name: Playthrough tiers (uncapped)
+        run: ctest --test-dir port/build/clangcl-x64-debug --output-on-failure -L playthrough --no-tests=error
+
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: tier-logs-clangcl-x64-${{ env.TERRITORY }}-${{ env.VERSION }}
+          path: port/build/clangcl-x64-debug/tier-logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
   # Original PlayStation executable (Spongey.cpe), linked with the vintage
   # PSY-Q toolchain committed under tools/psyq/bin. No MinGW needed - just
   # MSYS2 base driving those 32-bit PE console tools directly. Only links

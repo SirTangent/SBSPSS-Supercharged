@@ -1,9 +1,9 @@
 #!/bin/bash
 # Configure + build the PC (Win32) port: every preset by default.
 #
-#   port/build-pc.sh [<preset>|usa|eur|clangcl|all] [extra ninja args...]
-#   port/build-pc.sh test [usa|eur|clangcl]  build, then ctest -L unit and -L playthrough on each tree
-#   port/build-pc.sh soak [usa|eur]          build, then the full Tier 1 + Tier 2 sweep on each tree
+#   port/build-pc.sh [<preset>|usa|eur|clangcl|clangcl64|all] [extra ninja args...]
+#   port/build-pc.sh test [usa|eur|clangcl|clangcl64]  build, then ctest -L unit and -L playthrough on each tree
+#   port/build-pc.sh soak [usa|eur|clangcl|clangcl64]  build, then the full Tier 1 + Tier 2 sweep on each tree
 #
 # Presets (port/CMakePresets.json): debug, final (USA; usa-debug / usa-final
 # are accepted aliases) and eur-debug, eur-final (EUR, PAL 50Hz); `usa` /
@@ -19,6 +19,9 @@
 # needs LLVM + Visual Studio's x86 build tools, not MSYS2 - only its ninja
 # is borrowed).  They are kept out of `all`: the MinGW exes are the ones
 # that ship.
+#
+# clangcl-x64-debug / clangcl-x64-final (`clangcl64` = both) are clang-cl
+# again, targeting x86_64 (M9); also kept out of `all`.
 #
 # SBSP_CODEVIEW=1 in the environment configures the MinGW trees with
 # -DSBSP_CODEVIEW=ON (a .pdb beside every exe, for Visual Studio / WinDbg).
@@ -40,7 +43,7 @@ shift 2>/dev/null || true
 
 usage()
 {
-    echo "usage: port/build-pc.sh [debug|final|usa-debug|usa-final|eur-debug|eur-final|clangcl-debug|clangcl-final|usa|eur|clangcl|all|test [usa|eur|clangcl]|soak [usa|eur]] [ninja args]" >&2
+    echo "usage: port/build-pc.sh [debug|final|usa-debug|usa-final|eur-debug|eur-final|clangcl-debug|clangcl-final|clangcl-x64-debug|clangcl-x64-final|usa|eur|clangcl|clangcl64|all|test [usa|eur|clangcl|clangcl64]|soak [usa|eur|clangcl|clangcl64]] [ninja args]" >&2
     exit 1
 }
 
@@ -52,8 +55,9 @@ presets_for()
         usa)  echo "debug final" ;;
         eur)  echo "eur-debug eur-final" ;;
         clangcl) echo "clangcl-debug clangcl-final" ;;
+        clangcl64) echo "clangcl-x64-debug clangcl-x64-final" ;;
         all|"") echo "debug final eur-debug eur-final" ;;
-        debug|final|eur-debug|eur-final|clangcl-debug|clangcl-final) echo "$w" ;;
+        debug|final|eur-debug|eur-final|clangcl-debug|clangcl-final|clangcl-x64-debug|clangcl-x64-final) echo "$w" ;;
         usa-debug) echo "debug" ;;      # the build-data.sh spelling, same tree
         usa-final) echo "final" ;;
         *) usage ;;
