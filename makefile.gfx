@@ -260,7 +260,7 @@ UI_GFX_TRANS :=				+bambootopleft.bmp +bamboobotleft.bmp +bambootopright.bmp +ba
 							+keyZ.bmp +keyX.bmp +keyA.bmp +keyS.bmp \
 							+keyQ.bmp +keyW.bmp +keyE.bmp +keyR.bmp \
 							+keyUp.bmp +keyDown.bmp +keyLeft.bmp +keyRight.bmp \
-							+keyEnter.bmp +keyRShift.bmp +keyUpDown.bmp \
+							+keyEnter.bmp +keyRShift.bmp \
 							+mappointer.bmp +speechbubblecorner.bmp \
 							faces/mr_krabs.bmp faces/patrick.bmp faces/plankton.bmp \
 							faces/sandy.bmp faces/spongebob.bmp faces/squidward.bmp \
@@ -409,6 +409,7 @@ $(SPRITES_TEX_OUT) : $(SPRITES_ALL_DEP)
 		@$(PARKGRAB) -b+ $(SPRITES_ALL_IN) -t:12,4,1 -l:$(SPRITES_OUT_DIR)/sprites.lbm -o:$(SPRITES_TEX_OUT)
 		@$(MV) -f $(SPRITES_OUT_DIR)/sprites.h $(SPRITES_HDR_OUT)
 		@$(ECHO) Sprites Made
+
 
 GRAF_DIRS_TO_MAKE	+=		$(SPRITES_OUT_DIR)
 GFX_DATA_OUT		+=		$(SPRITES_TEX_OUT)

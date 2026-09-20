@@ -19,11 +19,12 @@
 
 	The sprite size tracks the contents of Sprites.Spr, so it moves whenever
 	a bitmap is added to the in-game banks in makefile.gfx.  It was 134604
-	before the 15 keyboard key caps of github issue #43 (+180).  */
+	before the 14 keyboard key caps of github issue #43 (+168, one 12-byte
+	frame header each).  */
 static const s32 EXPECT_CACHE_POS   = 2048;
 static const s32 EXPECT_CACHE_SIZE  = 3920;
 static const s32 EXPECT_SPRITES_POS = 4096;
-static const s32 EXPECT_SPRITES_SIZE= 134784;
+static const s32 EXPECT_SPRITES_SIZE= 134772;
 
 static int	s_failures;
 

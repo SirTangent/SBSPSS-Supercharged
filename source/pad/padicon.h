@@ -61,13 +61,6 @@ public:
 	/*	The PS1 glyph for a button, ignoring the keyboard entirely.  For
 		the places that want the hardware icon as such.  */
 	static int		getPsxFrame(int _padButton);
-
-	/*	The in-game prompt for a "hold up or down" action draws the Up and
-		Down icons side by side.  The key-cap set has one 26px sprite for
-		that pair, which is both tidier and narrower than two 16px caps,
-		so ask for it here: a frame, or -1 meaning "draw getFrame(PAD_UP)
-		and getFrame(PAD_DOWN) side by side as before".  */
-	static int		getUpDownFrame();
 };
 
 

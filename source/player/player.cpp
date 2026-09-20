@@ -3444,14 +3444,8 @@ int			MaxTLen=0;
 				case PAD_TRIANGLE:
 				case PAD_CIRCLE:
 				case PAD_SQUARE:	Icon[0]=CPadIcon::getFrame(Button);		break;
-				case PAD_UP:		// one sprite for the pair where there is one
-									Icon[0]=CPadIcon::getUpDownFrame();
-									if(Icon[0]==-1)
-									{
-										Icon[0]=CPadIcon::getFrame(PAD_UP);
-										Icon[1]=CPadIcon::getFrame(PAD_DOWN);
-									}
-									break;
+				case PAD_UP:		Icon[0]=CPadIcon::getFrame(PAD_UP);
+									Icon[1]=CPadIcon::getFrame(PAD_DOWN);	break;
 				default:			ASSERT(!"Unknown Pad Button");			break;
 
 			}

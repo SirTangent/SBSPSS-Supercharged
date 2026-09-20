@@ -86,6 +86,9 @@ static const int	s_capFrame[]=
 	FRM__KEYENTER,		/* PORT_CAP_ENTER	*/
 	FRM__KEYRSHIFT,		/* PORT_CAP_RSHIFT	*/
 };
+/*	The cap art has no combined up+down sprite, so the one prompt slot that
+	wants both (the coral blower's aim line) draws the two arrow caps side
+	by side, exactly as it draws the two PS1 glyphs.  */
 typedef char	s_capFrameIsComplete[(sizeof(s_capFrame)/sizeof(s_capFrame[0]))==PORT_CAP__COUNT?1:-1];
 #endif
 
@@ -140,30 +143,6 @@ int	CPadIcon::getFrame(int _padButton)
 	}
 #endif
 	return getPsxFrame(_padButton);
-}
-
-
-/*----------------------------------------------------------------------
-	Function:	CPadIcon::getUpDownFrame
-	Purpose:	The single sprite for the Up+Down prompt slot, where the
-				key-cap set has one.
-	Params:
-	Returns:	a frame in Sprites.Spr, or -1 for "draw the two icons"
-  ---------------------------------------------------------------------- */
-int	CPadIcon::getUpDownFrame()
-{
-#ifndef	PSX_MIPS_ASM
-	/*	Only when BOTH halves resolved to their own key caps: if either is
-		still a PS1 glyph - a gamepad is driving, or one of the two has
-		been rebound to a key with no cap - the pair has to be drawn from
-		the two separate icons or it would mix the two icon sets.  */
-	if(getFrame(PAD_UP)!=getPsxFrame(PAD_UP)&&
-	   getFrame(PAD_DOWN)!=getPsxFrame(PAD_DOWN))
-	{
-		return FRM__KEYUPDOWN;
-	}
-#endif
-	return -1;
 }
 
 
