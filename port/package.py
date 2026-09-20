@@ -60,13 +60,16 @@ PE_MACHINE = {0x014C: "x86", 0x8664: "x64"}
 
 
 def pe_machine(path):
-    """'x86' / 'x64' from the PE header - the zip must not carry a 32-bit
-    SDL3.dll beside the 64-bit exes, or an exe from the wrong tree."""
+    """'x86' / 'x64' from the PE header, or None if the file is not a PE at
+    all - the zip must not carry a 32-bit SDL3.dll beside the 64-bit exes, or
+    an exe from the wrong tree.  "not a PE" is its own answer rather than a
+    string in the same channel: the caller names the architecture it wanted
+    in the message, and a sentence there would read as one."""
     with open(path, "rb") as f:
         head = f.read(4096)
     off = int.from_bytes(head[0x3C:0x40], "little")
     if head[:2] != b"MZ" or head[off:off + 2] != b"PE":
-        return "not a PE file"
+        return None
     code = int.from_bytes(head[off + 4:off + 6], "little")
     return PE_MACHINE.get(code, f"machine 0x{code:04X}")
 
@@ -108,8 +111,13 @@ def preflight(territory, build, x64):
     for name, path in exes.items():
         if not path.is_file():
             problems.append(f"missing {path.relative_to(REPO)} - run: port\\build-pc.cmd {how[name]}")
-        elif pe_machine(path) != want[name]:
-            problems.append(f"{path.relative_to(REPO)} is {pe_machine(path)}, not {want[name]} - "
+            continue
+        got = pe_machine(path)
+        if got is None:
+            problems.append(f"{path.relative_to(REPO)} is not a PE file - truncated, or a "
+                            f"half-written copy? run: port\\build-pc.cmd {how[name]}")
+        elif got != want[name]:
+            problems.append(f"{path.relative_to(REPO)} is {got}, not {want[name]} - "
                             f"a stale tree? run: port\\build-pc.cmd {how[name]}")
     for name in DATA_FILES:
         path = data_dir / name
