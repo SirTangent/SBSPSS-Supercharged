@@ -47,6 +47,16 @@
 /*----------------------------------------------------------------------
 	Tyepdefs && Defines
 	------------------- */
+#if defined(SBSP_PC64)
+// x64 PC: the string table is 4-byte pointer fields in the file (conv_pc.md #32)
+#include "fptr.h"
+#define	TRANS_PTR				FPTR<char>
+#define	TRANS_RELOC(p,base)		(p).set((char *)(base)+(p).raw())
+#else
+#define	TRANS_PTR				char *
+#define	TRANS_RELOC(p,base)		(p)=(char *)((u32)(p)+(u32)(base))
+#line 49	// keep the PS1 build's __LINE__ (ASSERTs below) byte-identical
+#endif
 
 /*----------------------------------------------------------------------
 	Structure defintions
@@ -54,12 +64,12 @@
 struct TransHeader
 {
 	u32		m_numOfStrings;
-	char *	m_stringPtrs[1];
+	TRANS_PTR	m_stringPtrs[1];
 
 	void relocate(void)
 		{
 		for (unsigned int f=0;f<m_numOfStrings;f++)
-			m_stringPtrs[f]=(char *)((u32)m_stringPtrs[f]+(u32)this);
+			TRANS_RELOC(m_stringPtrs[f],this);
 		}
 
 	char const * getString(unsigned int stringNum) const

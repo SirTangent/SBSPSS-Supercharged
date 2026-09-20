@@ -324,7 +324,7 @@ void	CActorCache::LoadPalette(sActorPool *Actor)
 			R.w=CACHE_PALW;
 			R.h=CACHE_PALH;
 			while(DrawSync(1));
-			LoadImage( &R, (u32*)Actor->ActorGfx->Palette);
+			LoadImage( &R, (u32*)(u8*)Actor->ActorGfx->Palette);
 			Actor->ActorGfx->Clut=getClut(R.x,R.y);
 			CurrentPalette++;
 		}
@@ -428,15 +428,15 @@ int		TotalFrames=0;
 
 sSpriteAnimBank	*Spr=(sSpriteAnimBank*)CFileIO::loadFile(Filename,"ActorGfx");
 
-		Spr->AnimList=(sSpriteAnim*)		MakePtr(Spr,(int)Spr->AnimList);
-		Spr->FrameList=(sSpriteFrameGfx*)	MakePtr(Spr,(int)Spr->FrameList);
-		Spr->Palette=(u8*)					MakePtr(Spr,(int)Spr->Palette);
+		RELOC_PTR(Spr->AnimList,sSpriteAnim,Spr);
+		RELOC_PTR(Spr->FrameList,sSpriteFrameGfx,Spr);
+		RELOC_PTR(Spr->Palette,u8,Spr);
 
 // FixUp AnimList
 		for (i=0; i<Spr->AnimCount; i++)
 		{
 			sSpriteAnim	*ThisAnim=&Spr->AnimList[i];
-			ThisAnim->Anim=(sSpriteFrame*)	MakePtr(Spr,(int)ThisAnim->Anim);
+			RELOC_PTR(ThisAnim->Anim,sSpriteFrame,Spr);
 			TotalFrames+=ThisAnim->FrameCount;
 		}
 
@@ -446,7 +446,7 @@ sSpriteAnimBank	*Spr=(sSpriteAnimBank*)CFileIO::loadFile(Filename,"ActorGfx");
 			sSpriteFrameGfx	*ThisFrame=&Spr->FrameList[i];
 			if (ThisFrame->PAKSpr)
 			{
-				ThisFrame->PAKSpr=(u8*)				MakePtr(Spr,(int)ThisFrame->PAKSpr);
+				RELOC_PTR(ThisFrame->PAKSpr,u8,Spr);
 			}
 		}
 

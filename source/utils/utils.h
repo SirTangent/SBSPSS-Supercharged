@@ -21,6 +21,16 @@ extern const s16 CircleTable[ CIRCLE_TAB_MAX];
 /*****************************************************************************/
 u8		*MakePtr(void *BasePtr,int Offset);
 
+// Relocate a file-overlay pointer field in place: the file holds an offset
+// from Base, the game wants a pointer (tools/Data/include/dstructs.h DPTR).
+// On the x64 PC build the field is a 4-byte FPTR<T>, read and written
+// through raw()/set(); everywhere else this is the original expression.
+#if defined(SBSP_PC64)
+#define	RELOC_PTR(F,T,Base)	(F).set((T*)MakePtr(Base,(int)(F).raw()))
+#else
+#define	RELOC_PTR(F,T,Base)	(F)=(T*)MakePtr(Base,(int)(F))
+#endif
+
 /*****************************************************************************/
 /*** Loads of inlines ********************************************************/
 /*****************************************************************************/

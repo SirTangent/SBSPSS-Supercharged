@@ -233,7 +233,7 @@ extern int __vsprintf(char *buf, const char *fmt, __va_list args)
 				flags |= ZEROPAD;
 			}
 			str = number(str,
-				(unsigned long) __va_arg(args, void *), 16,
+				__va_arg_ptr(args), 16,
 				field_width, precision, flags);
 			continue;
 
@@ -278,9 +278,9 @@ extern int __vsprintf(char *buf, const char *fmt, __va_list args)
 			num = __va_arg(args, unsigned long);
 		else if (qualifier == 'h')
 			if (flags & SIGN)
-				num = __va_arg(args, short);
+				num = __va_arg_short(args);
 			else
-				num = __va_arg(args, unsigned short);
+				num = __va_arg_ushort(args);
 		else if (flags & SIGN)
 			num = __va_arg(args, int);
 		else

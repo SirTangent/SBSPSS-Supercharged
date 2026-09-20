@@ -208,13 +208,13 @@ sLvlTab *lvlTab=&LvlTable[LevelNo];
 		CSoundMediator::setSong((CSoundMediator::SONGID)lvlTab->songId);
 
 		LevelHdr=(sLevelHdr*)CFileIO::loadFile(lvlTab->LevelFilename,"Level");
-		LevelHdr->ElemBank2d=(sElem2d*)	MakePtr(LevelHdr,(int)LevelHdr->ElemBank2d);
-		LevelHdr->ElemBank3d=(sElem3d*)	MakePtr(LevelHdr,(int)LevelHdr->ElemBank3d);
-		LevelHdr->TriList=(sTri*)		MakePtr(LevelHdr,(int)LevelHdr->TriList);
-		LevelHdr->QuadList=(sQuad*)		MakePtr(LevelHdr,(int)LevelHdr->QuadList);
-		LevelHdr->VtxList=(sVtx*)		MakePtr(LevelHdr,(int)LevelHdr->VtxList);
-		LevelHdr->VtxIdxList=(u16*)		MakePtr(LevelHdr,(int)LevelHdr->VtxIdxList);
-		LevelHdr->ModelList=(sModel*)	MakePtr(LevelHdr,(int)LevelHdr->ModelList);
+		RELOC_PTR(LevelHdr->ElemBank2d,sElem2d,LevelHdr);
+		RELOC_PTR(LevelHdr->ElemBank3d,sElem3d,LevelHdr);
+		RELOC_PTR(LevelHdr->TriList,sTri,LevelHdr);
+		RELOC_PTR(LevelHdr->QuadList,sQuad,LevelHdr);
+		RELOC_PTR(LevelHdr->VtxList,sVtx,LevelHdr);
+		RELOC_PTR(LevelHdr->VtxIdxList,u16,LevelHdr);
+		RELOC_PTR(LevelHdr->ModelList,sModel,LevelHdr);
 
 // Deal with RGB Tables (and create if none)
 		if (LevelHdr->RGBLayer)

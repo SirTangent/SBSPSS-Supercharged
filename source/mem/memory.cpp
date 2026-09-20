@@ -26,7 +26,7 @@ int			MemNodeCount=0;
 static const unsigned int	HEAD_GUARD_FILL_PATTERN	=0x3e3e3e3e;
 static const unsigned int	MEM_FILL_PATTERN		=0x3d3d3d3d;
 static const unsigned int	TAIL_GUARD_FILL_PATTERN	=0x3c3c3c3c;
-static const unsigned int	NUM_MEM_GUARDS=2;
+static const unsigned int	NUM_MEM_GUARDS=MEM_NUM_GUARDS;
 static const unsigned int	MEM_GUARD_SIZE=sizeof(int)*NUM_MEM_GUARDS;
 #endif	/* USE_MEM_GUARDS */
 
@@ -424,10 +424,10 @@ char * MemAllocate( u32 TLen, char const *Name, char const * File, int LineNumbe
 sLList	*mem = &MainRam;
 u16		Head = mem->Head;
 char	*Addr = (char*)-1;
-u32		Len = ((TLen + 3) & 0xfffffffc);
+u32		Len = MEM_ROUND(TLen);
 int		BestNode,FirstNode;
 
-		Len += 4;			//add on 4 to store Addr !
+		Len += MEM_ALIGN;			//add on 4 to store Addr !
 #ifdef	USE_MEM_GUARDS
 		Len+=(MEM_GUARD_SIZE*2);
 #endif	/* USE_MEM_GUARDS */
@@ -459,7 +459,7 @@ int		BestNode,FirstNode;
 
 
 		*(u32*)Addr = Len;
-		Addr += 4;
+		Addr += MEM_ALIGN;
 
 #ifdef	USE_MEM_GUARDS
 		unsigned int	i;
@@ -469,14 +469,14 @@ int		BestNode,FirstNode;
 		}
 		Addr+=MEM_GUARD_SIZE;
 
-		for(i=0;i<((TLen+3)&0xfffffffc);i+=sizeof(int))
+		for(i=0;i<MEM_ROUND(TLen);i+=sizeof(int))
 		{
 			*(int*)(Addr+i)=MEM_FILL_PATTERN;
 		}
 
 		for(i=0;i<MEM_GUARD_SIZE;i+=sizeof(int))
 		{
-			*(int*)(Addr+((TLen+3)&0xfffffffc)+i)=TAIL_GUARD_FILL_PATTERN;
+			*(int*)(Addr+MEM_ROUND(TLen)+i)=TAIL_GUARD_FILL_PATTERN;
 		}
 #endif	/* USE_MEM_GUARDS */
 
@@ -505,14 +505,14 @@ char	*Addr = (char*)Address;
 #ifdef	USE_MEM_GUARDS
 		Addr-=MEM_GUARD_SIZE;
 #endif	/* USE_MEM_GUARDS */
-		Addr -= 4;
+		Addr -= MEM_ALIGN;
 		Len = *(u32*)Addr;
 		
 #ifdef	USE_MEM_GUARDS
 		// Check that the guards are intact
 		unsigned int	i;
 		unsigned int	*guardAddr;
-		guardAddr=(unsigned int*)(Addr+4);
+		guardAddr=(unsigned int*)(Addr+MEM_ALIGN);
 		for(i=0;i<MEM_GUARD_SIZE;i+=sizeof(unsigned int),guardAddr++)
 		{
 			if(*guardAddr!=HEAD_GUARD_FILL_PATTERN)
