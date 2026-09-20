@@ -95,9 +95,18 @@ test_one()
 {
     preset="$1"
     echo "=== ctest ($preset): unit ==="
-    ctest --test-dir "build/$preset" --output-on-failure -L unit
+    ctest --test-dir "build/$preset" --output-on-failure -L unit --no-tests=error
+    # --no-tests=error turns "the label matched nothing" into a failure, which
+    # is the point: a playthrough label that quietly registered zero tests used
+    # to read green.  A shim-only tree (-DSBSP_BUILD_GAME=OFF) legitimately has
+    # no playthrough tests, though, so say so and skip rather than fail - the
+    # strict form is what CI runs, and CI always builds the game.
+    if [ ! -f "build/$preset/sbsp.exe" ]; then
+        echo "=== ctest ($preset): playthrough SKIPPED - no sbsp.exe (SBSP_BUILD_GAME=OFF?) ==="
+        return
+    fi
     echo "=== ctest ($preset): playthrough ==="
-    ctest --test-dir "build/$preset" --output-on-failure -L playthrough
+    ctest --test-dir "build/$preset" --output-on-failure -L playthrough --no-tests=error
 }
 
 soak_one()

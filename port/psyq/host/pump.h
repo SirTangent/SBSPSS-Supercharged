@@ -19,6 +19,13 @@ int				Port_VBlankHz(void);		/* the rate last set: 60 or 50 (GetVideoMode, pace 
 double			Port_NowSeconds(void);		/* QPC wall clock, fixed epoch (CD pacing) */
 int				Port_Uncapped(void);		/* SBSP_UNCAPPED=1: vblanks are not wall-clock paced */
 
+/*	--pace-log phase split (M8 perf): wall seconds spent in a phase since the
+	last [pace] line.  Callers bracket with Port_NowSeconds() only when
+	Port_PaceLogOn(), so an unlogged run never reads the clock for it.  */
+enum { PORT_PACE_RASTER, PORT_PACE_PRESENT, PORT_PACE_PHASES };
+int				Port_PaceLogOn(void);		/* SBSP_PACE_LOG=1 */
+void			Port_PaceAdd(int phase, double seconds);
+
 /*	Pause on focus loss (M8 shell, host/window.cpp).  While paused the pump
 	polls the window and delivers NO vblank; on resume it rebases the wall
 	clock onto the counter so no catch-up burst follows.  */

@@ -85,6 +85,10 @@ struct RasterCfg
 };
 void Raster_Triangle(const RasterVtx *v0, const RasterVtx *v1, const RasterVtx *v2,
 					 const RasterCfg *cfg);
+/*	Axis-aligned rect: no edge rules, texture walks u/v from (u0,v0) with
+	byte wrap; never gouraud, never dithered.  */
+void Raster_Rect(int x, int y, int w, int h, int u0, int v0,
+				 uint8_t r, uint8_t g, uint8_t b, const RasterCfg *cfg);
 void Raster_Line(const RasterVtx *a, const RasterVtx *b, const RasterCfg *cfg);
 void Raster_FillRect15(int x, int y, int w, int h, uint16_t col15);	/* raw, no clip/mask */
 

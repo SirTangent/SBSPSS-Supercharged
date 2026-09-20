@@ -354,6 +354,12 @@ endfunction()
 sbsp_shim_test(gte_trig_test)   # exact fixed-point trig fixtures (M1)
 sbsp_shim_test(gte_test)        # software cop2 / libgte fixtures (M3)
 sbsp_shim_test(gpu_test)        # software GPU: VRAM ops, OT walker, goldens
+# raster.cpp vs its frozen pre-optimisation copy, halfword for halfword over
+# seeded-random primitives.  The reference is compiled like the shim's own
+# raster.cpp so the closing ref-vs-live timing table compares like with like.
+sbsp_shim_test(raster_diff_test)
+target_sources(raster_diff_test PRIVATE tests/raster_ref.cpp)
+set_source_files_properties(tests/raster_ref.cpp PROPERTIES COMPILE_OPTIONS "${SBSP_OPT_FLAGS}")
 sbsp_shim_test(adpcm_test)      # SPU ADPCM decoder golden vectors (M5)
 sbsp_shim_test(spu_test)        # SPU voice mixer: gaussian/ADSR/pan (M5)
 sbsp_shim_test(xm_test)         # XMPlayer: PXM parse vs .xm, VAB upload (M5)

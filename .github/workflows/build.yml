@@ -124,10 +124,10 @@ jobs:
         run: bash port/build-pc.sh debug
 
       - name: Unit tests
-        run: ctest --test-dir port/build/debug --output-on-failure -L unit
+        run: ctest --test-dir port/build/debug --output-on-failure -L unit --no-tests=error
 
       - name: Playthrough tiers (uncapped)
-        run: ctest --test-dir port/build/debug --output-on-failure -L playthrough
+        run: ctest --test-dir port/build/debug --output-on-failure -L playthrough --no-tests=error
 
       # every route/level run's stderr (the [scene]/[summary]/[assert] log
       # the oracle grepped), for triage when a tier fails
@@ -185,10 +185,10 @@ jobs:
         run: cmake --build --preset clangcl-debug
 
       - name: Unit tests
-        run: ctest --test-dir port/build/clangcl-debug --output-on-failure -L unit
+        run: ctest --test-dir port/build/clangcl-debug --output-on-failure -L unit --no-tests=error
 
       - name: Playthrough tiers (uncapped)
-        run: ctest --test-dir port/build/clangcl-debug --output-on-failure -L playthrough
+        run: ctest --test-dir port/build/clangcl-debug --output-on-failure -L playthrough --no-tests=error
 
       - uses: actions/upload-artifact@v7
         if: failure()
