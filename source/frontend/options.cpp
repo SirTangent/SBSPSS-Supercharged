@@ -62,6 +62,10 @@
 #include "pad\pads.h"
 #endif
 
+#ifndef __PAD_PADICON_H__
+#include "pad\padicon.h"
+#endif
+
 #ifndef __VID_HEADER_
 #include "system\vid.h"
 #endif
@@ -143,6 +147,11 @@ int CFrontEndOptions::s_buttonOrder[]=
 	CPadConfig::PAD_CFG_WEAPONCHANGE,
 };
 
+/*	The icon the controls readout draws for each ICON_*.  CGUISpriteReadout
+	scans this while the m_value column ascends, so it has to stay in
+	ICON_* order.  The frames here are only the PS1 defaults: refreshIcons()
+	rewrites the column on entry to the options screen so the readout shows
+	the keys a PC player is actually pressing (github issue #43).  */
 CGUISpriteReadout::SpriteReadoutData	CFrontEndOptions::s_controlReadoutSprites[]=
 {
 	{	ICON_UP,FRM__BUTU		},
@@ -153,6 +162,12 @@ CGUISpriteReadout::SpriteReadoutData	CFrontEndOptions::s_controlReadoutSprites[]
 	{	ICON_CIRCLE,FRM__BUTC	},
 	{	ICON_SQUARE,FRM__BUTS	},
 	{	ICON_TRIANGLE,FRM__BUTT	},
+};
+
+/*	The pad button each of those rows describes, same order.  */
+static const int	s_controlReadoutButtons[]=
+{
+	PAD_UP,PAD_DOWN,PAD_LEFT,PAD_RIGHT,PAD_CROSS,PAD_CIRCLE,PAD_SQUARE,PAD_TRIANGLE,
 };
 
 CFrontEndOptions::ButtonToIconMap	CFrontEndOptions::s_controlMap[]=
@@ -254,6 +269,24 @@ static void paulColourSpaceToRGB(int _hue,int _brightness,int *_rgb)
 }
 
 /*----------------------------------------------------------------------
+	Function:	CFrontEndOptions::refreshIcons
+	Purpose:	Point the controls readout at the icons for whatever the
+				player is holding - key caps on PC, the PS1 glyphs on a
+				gamepad (github issue #43).  Called on entry to the
+				screen, which is the only time the readout is built.
+	Params:
+	Returns:
+  ---------------------------------------------------------------------- */
+void CFrontEndOptions::refreshIcons()
+{
+	for(int i=0;i<ICON_COUNT;i++)
+	{
+		s_controlReadoutSprites[i].m_frame=CPadIcon::getFrame(s_controlReadoutButtons[i]);
+	}
+}
+
+
+/*----------------------------------------------------------------------
 	Function:
 	Purpose:
 	Params:
@@ -265,6 +298,8 @@ void CFrontEndOptions::init()
 	CGUIGroupFrame		*fr;
 	CGUITextBox			*tb;
 	CGUISpriteReadout	*sr;
+
+	refreshIcons();
 
 
 	m_background=new ("Options Background") CScrollyBackground();
@@ -1031,7 +1066,7 @@ void	CFrontEndOptions::renderButtonPrompts()
 
 	if(renderCross)
 	{
-		fh1=m_spriteBank->getFrameHeader(FRM__BUTX);
+		fh1=m_spriteBank->getFrameHeader(CPadIcon::getFrame(PAD_CROSS));
 		width=fh1->W+OPTIONS_INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_fontBank->getStringWidth(STR__FRONTEND__CROSS_TO_SELECT);
 		x=128-(width/2);
 		m_spriteBank->printFT4(fh1,x,OPTIONS_INSTRUCTIONS_Y_POS+OPTIONS_INSTRUCTIONS_BUTTON_Y_OFFSET,0,0,0);
@@ -1041,8 +1076,8 @@ void	CFrontEndOptions::renderButtonPrompts()
 
 	if(renderArrows)
 	{
-		fh1=m_spriteBank->getFrameHeader(FRM__BUTL);
-		fh2=m_spriteBank->getFrameHeader(FRM__BUTR);
+		fh1=m_spriteBank->getFrameHeader(CPadIcon::getFrame(PAD_LEFT));
+		fh2=m_spriteBank->getFrameHeader(CPadIcon::getFrame(PAD_RIGHT));
 		width=fh1->W+OPTIONS_INSTRUCTIONS_GAP_BETWEEN_BUTTONS+fh2->W+OPTIONS_INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_fontBank->getStringWidth(STR__FRONTEND__ARROWS_TO_ADJUST);
 		x=128-(width/2);
 		m_spriteBank->printFT4(fh1,x,OPTIONS_INSTRUCTIONS_Y_POS+OPTIONS_INSTRUCTIONS_BUTTON_Y_OFFSET,0,0,0);
@@ -1054,7 +1089,7 @@ void	CFrontEndOptions::renderButtonPrompts()
 
 	if(renderTriangle)
 	{
-		fh1=m_spriteBank->getFrameHeader(FRM__BUTT);
+		fh1=m_spriteBank->getFrameHeader(CPadIcon::getFrame(PAD_TRIANGLE));
 		width=fh1->W+OPTIONS_INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_fontBank->getStringWidth(STR__FRONTEND__TRIANGLE_TO_GO_BACK);
 		x=256+128-(width/2);
 		m_spriteBank->printFT4(fh1,x,OPTIONS_INSTRUCTIONS_Y_POS+OPTIONS_INSTRUCTIONS_BUTTON_Y_OFFSET,0,0,0);

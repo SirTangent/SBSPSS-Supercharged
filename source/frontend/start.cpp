@@ -58,6 +58,10 @@
 #include "pad\pads.h"
 #endif
 
+#ifndef __PAD_PADICON_H__
+#include "pad\padicon.h"
+#endif
+
 #ifndef __GAME_GAME_H__
 #include "game\game.h"
 #endif
@@ -354,8 +358,8 @@ void CFrontEndStart::drawInstructions()
 	m_font->setColour(255,255,255);
 
 	y=INSTRUCTIONS_YSTART;
-	fh1=sb->getFrameHeader(FRM__BUTL);
-	fh2=sb->getFrameHeader(FRM__BUTR);
+	fh1=sb->getFrameHeader(CPadIcon::getFrame(PAD_LEFT));
+	fh2=sb->getFrameHeader(CPadIcon::getFrame(PAD_RIGHT));
 	width=fh1->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS+fh2->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_font->getStringWidth(STR__SLOT_SELECT_SCREEN__LEFT_RIGHT_TO_SELECT_SLOT);
 	x=256-(width/2);
 	sb->printFT4(fh1,x,y+INSTRUCTIONS_BUTTON_Y_OFFSET,0,0,0);
@@ -366,7 +370,7 @@ void CFrontEndStart::drawInstructions()
 
 	text=slotInUse?STR__SLOT_SELECT_SCREEN__CROSS_TO_CONFIRM:STR__SLOT_SELECT_SCREEN__CROSS_TO_CREATE;
 	y+=INSTRUCTIONS_Y_SPACE_BETWEEN_LINES;
-	fh1=sb->getFrameHeader(FRM__BUTX);
+	fh1=sb->getFrameHeader(CPadIcon::getFrame(PAD_CROSS));
 	width=fh1->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_font->getStringWidth(text);
 	x=256-(width/2);
 	sb->printFT4(fh1,x,y+INSTRUCTIONS_BUTTON_Y_OFFSET,0,0,0);
@@ -374,7 +378,7 @@ void CFrontEndStart::drawInstructions()
 	m_font->print(x,y,text);
 
 	y+=INSTRUCTIONS_Y_SPACE_BETWEEN_LINES;
-	fh1=sb->getFrameHeader(FRM__BUTC);
+	fh1=sb->getFrameHeader(CPadIcon::getFrame(PAD_CIRCLE));
 	width=fh1->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_font->getStringWidth(STR__SLOT_SELECT_SCREEN__CIRCLE_TO_ERASE_SLOT);
 	x=256-(width/2);
 	if(slotInUse)
@@ -388,7 +392,7 @@ void CFrontEndStart::drawInstructions()
 	}
 
 	y+=INSTRUCTIONS_Y_SPACE_BETWEEN_LINES;
-	fh1=sb->getFrameHeader(FRM__BUTT);
+	fh1=sb->getFrameHeader(CPadIcon::getFrame(PAD_TRIANGLE));
 	width=fh1->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_font->getStringWidth(STR__SLOT_SELECT_SCREEN__TRIANGLE_TO_EXIT);
 	x=256-(width/2);
 	sb->printFT4(fh1,x,y+INSTRUCTIONS_BUTTON_Y_OFFSET,0,0,0);

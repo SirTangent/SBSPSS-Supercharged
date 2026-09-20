@@ -122,7 +122,7 @@ int main(void)
 	check(envIs("SBSP_KEY_SELECT", "Right Shift"), "a default with a space survives");
 	check(envIs("SBSP_LANGUAGE", "english"), "language default");
 	check(envIs("SBSP_DATA_DIR", NULL), "empty defaults are written commented out");
-	check(Port_IniKeyCount() == 26, "key table has the 12 settings + 14 key bindings");
+	check(Port_IniKeyCount() == 27, "key table has the 13 settings + 14 key bindings");
 
 	/*	6. paths  */
 	char dir[512];

@@ -173,6 +173,10 @@ private:
 	static CGUISpriteReadout::SpriteReadoutData	s_controlReadoutSprites[ICON_COUNT];
 	static ButtonToIconMap						s_controlMap[ICON_COUNT];
 
+	/*	Re-resolve the controls readout's icons against the device the
+		player is on (github issue #43).  */
+	static void									refreshIcons();
+
 	class FontBank								*m_fontBank;
 	class SpriteBank							*m_spriteBank;
 

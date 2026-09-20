@@ -15,11 +15,15 @@
 
 /*	The known-good FAT values verified in M0 (FAT parser + LZNP round-trip):
 	entry 0 SYSTEM_CACHE at 2048, 3920 bytes; entry 1 SPRITES_SPRITES_SPR at
-	4096, 134604 bytes.  */
+	4096.
+
+	The sprite size tracks the contents of Sprites.Spr, so it moves whenever
+	a bitmap is added to the in-game banks in makefile.gfx.  It was 134604
+	before the 15 keyboard key caps of github issue #43 (+180).  */
 static const s32 EXPECT_CACHE_POS   = 2048;
 static const s32 EXPECT_CACHE_SIZE  = 3920;
 static const s32 EXPECT_SPRITES_POS = 4096;
-static const s32 EXPECT_SPRITES_SIZE= 134604;
+static const s32 EXPECT_SPRITES_SIZE= 134784;
 
 static int	s_failures;
 

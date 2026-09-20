@@ -26,6 +26,10 @@
 #include "pad\pads.h"
 #endif
 
+#ifndef __PAD_PADICON_H__
+#include "pad\padicon.h"
+#endif
+
 #ifndef	__GFX_FADER_H__
 #include "gfx\fader.h"
 #endif
@@ -532,8 +536,8 @@ void CShopScene::renderUi()
 	x=xbase+instructionsXBase;
 	y=ybase+SHOP_INSTRUCTIONS_Y_BASE;
 	m_font->print(x,y,STR__SHOP_SCREEN__LEFT_RIGHT_TO_SELECT_ITEM);
-	fh1=sb->getFrameHeader(FRM__BUTL);
-	fh2=sb->getFrameHeader(FRM__BUTR);
+	fh1=sb->getFrameHeader(CPadIcon::getFrame(PAD_LEFT));
+	fh2=sb->getFrameHeader(CPadIcon::getFrame(PAD_RIGHT));
 	x-=SHOP_SPACE_BETWEEN_INSTRUCTIONS_AND_BUTTONS+fh2->W;
 	y+=SHOP_Y_BUTTON_OFFSET_FORM_TOP_OF_TEXT;
 	sb->printFT4(fh2,x,y,0,0,0);
@@ -544,16 +548,20 @@ void CShopScene::renderUi()
 	x=xbase+instructionsXBase;
 	y=ybase+SHOP_INSTRUCTIONS_Y_BASE+SHOP_Y_GAP_BETWEEN_INSTRUCTION_LINES;
 	m_font->print(x,y,STR__SHOP_SCREEN__CROSS_TO_PURCHASE);
-	fh1=sb->getFrameHeader(FRM__BUTX);
-	x-=SHOP_SPACE_BETWEEN_INSTRUCTIONS_AND_BUTTONS+fh2->W;
+	fh1=sb->getFrameHeader(CPadIcon::getFrame(PAD_CROSS));
+	/*	fh1, not fh2: the icon is right-aligned against the text, so the
+		step back has to be its OWN width.  Reading fh2 here (the right
+		arrow left over from the line above) was invisible while every
+		icon was 18px wide; the PC key caps are not (github issue #43).  */
+	x-=SHOP_SPACE_BETWEEN_INSTRUCTIONS_AND_BUTTONS+fh1->W;
 	y+=SHOP_Y_BUTTON_OFFSET_FORM_TOP_OF_TEXT;
 	sb->printFT4(fh1,x-1,y,0,0,0);
 
 	x=xbase+instructionsXBase;
 	y=ybase+SHOP_INSTRUCTIONS_Y_BASE+(SHOP_Y_GAP_BETWEEN_INSTRUCTION_LINES*2);
 	m_font->print(x,y,STR__SHOP_SCREEN__TRIANGLE_TO_EXIT);
-	fh1=sb->getFrameHeader(FRM__BUTT);
-	x-=SHOP_SPACE_BETWEEN_INSTRUCTIONS_AND_BUTTONS+fh2->W;
+	fh1=sb->getFrameHeader(CPadIcon::getFrame(PAD_TRIANGLE));
+	x-=SHOP_SPACE_BETWEEN_INSTRUCTIONS_AND_BUTTONS+fh1->W;	/* see above */
 	y+=SHOP_Y_BUTTON_OFFSET_FORM_TOP_OF_TEXT;
 	sb->printFT4(fh1,x-1,y,0,0,0);
 

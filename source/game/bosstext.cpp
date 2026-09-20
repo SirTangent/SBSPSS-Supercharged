@@ -30,6 +30,10 @@
 #include "pad/pads.h"
 #endif
 
+#ifndef __PAD_PADICON_H__
+#include "pad/padicon.h"
+#endif
+
 #ifndef __GAME_GAME_H__
 #include "game\game.h"
 #endif
@@ -272,12 +276,12 @@ void	CBossText::render()
 	if(m_currentPage==0)
 	{
 		text=STR__BOSS__NEXT;
-		fh1=sb->getFrameHeader(FRM__BUTD);
+		fh1=sb->getFrameHeader(CPadIcon::getFrame(PAD_DOWN));
 	}
 	else
 	{
 		text=STR__BOSS__PREVIOUS;
-		fh1=sb->getFrameHeader(FRM__BUTU);
+		fh1=sb->getFrameHeader(CPadIcon::getFrame(PAD_UP));
 	}
 	width=fh1->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_fontBank->getStringWidth(text);
 	x=128-(width/2);
@@ -285,7 +289,7 @@ void	CBossText::render()
 	x+=fh1->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT;
 	m_fontBank->print(x,INSTRUCTIONS_Y_POS+s_bossTextYOffset,text);
 
-	fh1=sb->getFrameHeader(FRM__BUTX);
+	fh1=sb->getFrameHeader(CPadIcon::getFrame(PAD_CROSS));
 	width=fh1->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_fontBank->getStringWidth(STR__BOSS__CONTINUE);
 	x=256+128-(width/2);
 	sb->printFT4(fh1,x,INSTRUCTIONS_Y_POS+INSTRUCTIONS_BUTTON_Y_OFFSET+s_bossTextYOffset,0,0,0);

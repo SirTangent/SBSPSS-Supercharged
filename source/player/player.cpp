@@ -22,6 +22,10 @@
 #include "pad\pads.h"
 #endif
 
+#ifndef __PAD_PADICON_H__
+#include "pad\padicon.h"
+#endif
+
 #ifndef __PAD_VIBE_H__
 #include "pad\vibe.h"
 #endif
@@ -3284,7 +3288,11 @@ const int	PromptIconX=32;
 const int	PromptTextXOfs=20;
 const int	PromptTextYOfs=-4;
 const int	PromptY=(INGAME_SCREENH-32);
-const int	PromptXGap=20;
+/*	Was PromptXGap=20, hardcoded against the 18px PS1 glyphs.  The key caps
+	the PC build draws instead are not all 18px wide, so the step is the
+	frame's own width plus this much air (github issue #43); 2 reproduces
+	the original spacing exactly for the glyphs.  */
+const int	PromptIconGap=2;
 const int	PromptYGap=12;
 const int	PromptTMode=1;
 const int	PromptOnScreenTime=50*5;
@@ -3424,27 +3432,39 @@ int			MaxTLen=0;
 		while ((CPadConfig::PAD_CFG)Ptr->m_input!=CPadConfig::PAD_CFG_NONE)
 		{
 			X=PromptIconX;
-			int	Icon[2]={0,0};
-			switch(CPadConfig::getButton((CPadConfig::PAD_CFG)Ptr->m_input))
+			/*	CPadIcon::getFrame answers with the key cap the player is
+				actually pressing on PC (github issue #43), so the icons
+				are no longer a fixed width - the gap between them, and
+				the text that follows, come off the frame header now.  */
+			int	Button=CPadConfig::getButton((CPadConfig::PAD_CFG)Ptr->m_input);
+			int	Icon[2]={-1,-1};
+			switch(Button)
 			{
-				case PAD_CROSS:		Icon[0]=FRM__BUTX;	break;
-				case PAD_TRIANGLE:	Icon[0]=FRM__BUTT;	break;
-				case PAD_CIRCLE:	Icon[0]=FRM__BUTC;	break;
-				case PAD_SQUARE:	Icon[0]=FRM__BUTS;	break;
-				case PAD_UP:		Icon[0]=FRM__BUTU;	Icon[1]=FRM__BUTD; break;
-				default:			ASSERT(!"Unknown Pad Button");	break;
+				case PAD_CROSS:
+				case PAD_TRIANGLE:
+				case PAD_CIRCLE:
+				case PAD_SQUARE:	Icon[0]=CPadIcon::getFrame(Button);		break;
+				case PAD_UP:		// one sprite for the pair where there is one
+									Icon[0]=CPadIcon::getUpDownFrame();
+									if(Icon[0]==-1)
+									{
+										Icon[0]=CPadIcon::getFrame(PAD_UP);
+										Icon[1]=CPadIcon::getFrame(PAD_DOWN);
+									}
+									break;
+				default:			ASSERT(!"Unknown Pad Button");			break;
 
 			}
 			for (int i=0; i<2; i++)
 			{
-				if (Icon[i])
+				if (Icon[i]!=-1)
 				{
 					//Icon
 					Ft4=sb->printFT4(Icon[i],X,Y,0,0,0); setSemiTrans(Ft4,1); Ft4->tpage|=PromptTMode<<5; setRGB0(Ft4,PromptRGB,PromptRGB,PromptRGB);
 					//Icon Mask	- to aid alpha fade
 					int	Col=(PromptRGB*3)/2;
 					Ft4=sb->printFT4(Icon[i],X,Y,0,0,0); setSemiTrans(Ft4,1); Ft4->tpage|=2<<5;			setRGB0(Ft4,Col,Col,Col);
-					X+=PromptXGap;
+					X+=sb->getFrameWidth(Icon[i])+PromptIconGap;
 				}
 			}
 // text

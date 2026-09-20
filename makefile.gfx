@@ -257,6 +257,10 @@ UI_GFX_TRANS :=				+bambootopleft.bmp +bamboobotleft.bmp +bambootopright.bmp +ba
 							+slider_marker.bmp \
 							+butU.bmp +butD.bmp +butL.bmp +butR.bmp \
 							+butC.bmp +butS.bmp +butX.bmp +butT.bmp \
+							+keyZ.bmp +keyX.bmp +keyA.bmp +keyS.bmp \
+							+keyQ.bmp +keyW.bmp +keyE.bmp +keyR.bmp \
+							+keyUp.bmp +keyDown.bmp +keyLeft.bmp +keyRight.bmp \
+							+keyEnter.bmp +keyRShift.bmp +keyUpDown.bmp \
 							+mappointer.bmp +speechbubblecorner.bmp \
 							faces/mr_krabs.bmp faces/patrick.bmp faces/plankton.bmp \
 							faces/sandy.bmp faces/spongebob.bmp faces/squidward.bmp \
