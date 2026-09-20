@@ -74,6 +74,32 @@
             "cacheVariables": {
                 "SBSP_VARIANT": "FINAL"
             }
+        },
+        {
+            "name": "clangcl-x64",
+            "hidden": true,
+            "inherits": "clangcl",
+            "cacheVariables": {
+                "SBSP_ARCH": "x64"
+            }
+        },
+        {
+            "name": "clangcl-x64-debug",
+            "displayName": "USA DEBUG (CD) - clang-cl x64",
+            "inherits": "clangcl-x64",
+            "binaryDir": "${sourceDir}/build/clangcl-x64-debug",
+            "cacheVariables": {
+                "SBSP_VARIANT": "DEBUG"
+            }
+        },
+        {
+            "name": "clangcl-x64-final",
+            "displayName": "USA FINAL (CD) - clang-cl x64",
+            "inherits": "clangcl-x64",
+            "binaryDir": "${sourceDir}/build/clangcl-x64-final",
+            "cacheVariables": {
+                "SBSP_VARIANT": "FINAL"
+            }
         }
     ],
     "buildPresets": [
@@ -100,6 +126,14 @@
         {
             "name": "clangcl-final",
             "configurePreset": "clangcl-final"
+        },
+        {
+            "name": "clangcl-x64-debug",
+            "configurePreset": "clangcl-x64-debug"
+        },
+        {
+            "name": "clangcl-x64-final",
+            "configurePreset": "clangcl-x64-final"
         }
     ]
 }

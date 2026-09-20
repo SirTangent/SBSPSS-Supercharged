@@ -1,6 +1,8 @@
 # MSYS2 MinGW-w64 i686 toolchain for the SBSPSS Win11 port.
-# The game must build 32-bit: the on-disc data formats embed 4-byte pointers
-# that are patched in place at load time (see tools/Data/include/dstructs.h).
+# 32-bit, the shipping build.  (The on-disc data formats embed 4-byte pointers
+# that are patched in place at load time, tools/Data/include/dstructs.h; the
+# x64 build - clang-cl only, cmake/clangcl-toolchain.cmake - reads them
+# through a 4-byte pointer type instead.)
 #
 # Install once:  pacman -S --needed mingw-w64-i686-gcc mingw-w64-i686-cmake mingw-w64-i686-ninja
 
