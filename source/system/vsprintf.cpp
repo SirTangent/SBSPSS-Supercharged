@@ -56,10 +56,13 @@ static int skip_atoi(const char **s)
 
 /*	The integer number() carries.  long everywhere the game has ever built,
 	except the MSVC x64 ABI (M9), where long stays 32 bits while a pointer is
-	8 bytes - %p would print half an address.  Widening the carrier alone
-	would break %u/%x, whose value reaches here already reinterpreted through
-	a 32-bit unsigned; every assignment below therefore states its own
-	sign-extension, which is what the 32-bit builds were doing implicitly.  */
+	8 bytes - %p would print half an address.
+
+	Off _WIN64 num_t IS long, so every use below is the same type the 1999
+	code named and the generated code is unchanged - which the PS1 build
+	requires: Spongey.cpe is held to byte-identity, and this file is shared
+	with it.  The one place the widening is visible is the number() call at
+	the end of __vsprintf, and it is #if'd for exactly that reason.  */
 #if defined(_WIN64)
 typedef long long			num_t;
 typedef unsigned long long	unum_t;
@@ -146,7 +149,7 @@ static char * number(char * str, num_t num, int base, int size, int precision
 extern int __vsprintf(char *buf, const char *fmt, __va_list args)
 {
 	int len;
-	unum_t num;
+	unsigned long num;
 	int i, base;
 	char * str;
 	const char *s;
@@ -289,20 +292,27 @@ extern int __vsprintf(char *buf, const char *fmt, __va_list args)
 			continue;
 		}
 		if (qualifier == 'l')
-		{
-			if (flags & SIGN)	num = (unum_t)(num_t)__va_arg(args, long);
-			else				num = (unum_t)__va_arg(args, unsigned long);
-		}
+			num = __va_arg(args, unsigned long);
 		else if (qualifier == 'h')
 			if (flags & SIGN)
-				num = (unum_t)(num_t)__va_arg_short(args);
+				num = __va_arg_short(args);
 			else
-				num = (unum_t)__va_arg_ushort(args);
+				num = __va_arg_ushort(args);
 		else if (flags & SIGN)
-			num = (unum_t)(num_t)__va_arg(args, int);
+			num = __va_arg(args, int);
 		else
-			num = (unum_t)__va_arg(args, unsigned int);
-		str = number(str, (num_t)num, base, field_width, precision, flags);
+			num = __va_arg(args, unsigned int);
+#if defined(_WIN64)
+		/*	num is 32 bits (unsigned long) but num_t is 64: widen by the
+			format's own signedness.  A signed value arrived here already
+			reinterpreted through the unsigned, so it needs the round trip
+			back through long; an unsigned one must zero-extend, or %x of
+			0xffffffff would print sixteen f's.  */
+		str = number(str, (flags & SIGN) ? (num_t)(long)num : (num_t)num,
+					 base, field_width, precision, flags);
+#else
+		str = number(str, num, base, field_width, precision, flags);
+#endif
 	}
 	*str = '\0';
 	return str-buf;
