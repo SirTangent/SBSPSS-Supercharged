@@ -773,6 +773,18 @@ import member in, so lld-link saw the symbol twice.  Under `_WIN64` the
 `api/libapi_stubs.cpp` defines it under that name.  The i686 builds are
 untouched.
 
+**The CD ready callback** was the one behavioural x64 bug, found by the
+A/B rather than the compiler: on the `gameover_continue` route the x64
+exe never left the Continue screen.  libcd types the callback
+`void (*CdlCB)(u_char, u_char *)`, but the game's handler is
+`XACDReadyCallback(int Intr, u8 *)` cast to it (`sound/cdxa.cpp`) and
+switches on all 32 bits of `Intr`.  MIPS and i686 hand a `u_char` over as
+a full zero-extended word; the x64 ABI leaves the upper bits of the
+register undefined, so the handler missed `CdlDataReady`, never saw the
+ID-352 terminator, and the speech "played" forever.  `cd/xa_stream.cpp`
+now calls the handler as `(int, u_char *)`.  `CdlCB` is the only SDK
+callback type with a sub-`int` parameter that the shim invokes.
+
 **Arena.**  `api/arena.cpp` keeps its 16MB-aligned probe below 1GB, which
 a 64-bit process satisfies as easily as a 32-bit one - so the 24-bit prim
 tags (`gfx/prim.h`, `gpu/gp0.cpp`'s `window | addr24`) needed nothing.
