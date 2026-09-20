@@ -691,15 +691,16 @@ run time through `sbsp.ini`.
     resolver every draw site now calls instead of naming `FRM__BUT*`.  It
     holds the pad-button → PS1-glyph table and the cap → `FRM__KEY*` table;
     on the PS1 toolchain the whole keyboard arm is `#ifndef PSX_MIPS_ASM`-ed
-    out and it is a plain lookup.  `getUpDownFrame()` serves the one prompt
-    slot that draws Up and Down together, returning the single 26px
-    `FRM__KEYUPDOWN` cap only when *both* halves resolved to key caps, so the
-    two icon sets are never mixed in one prompt.
+    out and it is a plain lookup.  The cap art has no combined Up+Down
+    sprite, so the one prompt slot that wants both (the coral blower's aim
+    line) draws the two arrow caps side by side, exactly as it draws the two
+    PS1 glyphs.
 
-50. **`Graphics/UI/+key*.bmp` (15 new), `makefile.gfx`** — the key caps, same
-    4bpp/`+`-prefixed convention as `+but*.bmp` so `parkgrab` generates
-    `FRM__KEY*` for free.  16x14 for the letter and arrow caps, 22x14 for
-    `Enter`/`R Shift`, 26x14 for the Up+Down pair.  All fifteen share one
+50. **`Graphics/UI/+key*.bmp` (14 new, Git LFS), `makefile.gfx`** — the key
+    caps, cut from the `Keyboard_Thick_v1` sheet.  Same 4bpp/`+`-prefixed
+    convention as `+but*.bmp` so `parkgrab` generates `FRM__KEY*` for free.
+    14x14 for the letter and arrow caps, 16x14 for `ENTR`/`SHFT`, every cap
+    padded to a common 14px height so prompt rows line up.  All fourteen share one
     16-entry palette, so the whole set costs a single CLUT (`PAL__KEYA`);
     `Sprites.Spr` grows 180 bytes, which is why `port/tests/headless.cpp`
     carries a new `EXPECT_SPRITES_SIZE`.
@@ -725,6 +726,31 @@ run time through `sbsp.ini`.
     A recorded playthrough wants `keys`: without it the icons, and so the
     frame CRC, would depend on whether the machine happened to have a pad
     plugged in.
+
+53. **`source/gfx/font.cpp`** (github issue #24) — every `fontTab[_char]`
+    lookup now indexes through `(u8)`.  `fontTab` is a 256-entry table whose
+    upper half is live: `0x91`/`0x92`, the Windows-1252 quotes the dialogue
+    text really uses for its apostrophes, map to the `'` glyph, and
+    `0xC0`-`0xFF` carry the accented EUR characters.  `_char` is a plain
+    `char`, which is signed on x86, so `0x92` read `fontTab[-110]` - from
+    *before* the table - and whatever junk sat there was used as a sprite
+    frame number.  With a kind link layout that was a wide blank gap where the
+    apostrophe should be (#24 as filed).  It is layout-dependent, though: the
+    extra sprites of #43 moved the data, the junk became a frame whose header
+    was garbage, and `getFrameHeader()` of it drew a screen-high slab sampling
+    the framebuffer - the clear colour at first, then a column of grass -
+    across every dialogue line containing an apostrophe.  Same latent-bug
+    class as #13/#17/#19: harmless-by-luck on PS1, visibly broken on Win32,
+    and it would have taken out every accented glyph once the EUR text came up.
+
+54. **`build/mklevel.pl`, `makefile.gfx`** — the generated level rule now
+    depends on `$(INC_DIR)/Sprites.h`, which gets a rule of its own (it is only
+    a side effect of the `Sprites.Spr` rule).  `MkLevel` bakes the sprite frame
+    numbers that header defines into the `.lvl`, but the rule named only the
+    `.mex`, so a from-scratch build could run `MkLevel` before the header
+    existed and an incremental build never rebuilt a level after the sprite
+    bank changed.  Not the cause of #24's symptom, but the same family of
+    missing dependency, found while chasing it.
 
 Covered by `port/tests/pad_test.cpp` (the cap table, the three modes, a
 rebind following its key, and the fall back to the glyph for a key with no
