@@ -207,7 +207,11 @@ it says - real localization is issue #37.)
 **Tester zip.** `port\package.cmd [--territory usa|eur]` (or `python port\package.py`) bundles the
 FINAL and DEBUG executables, the data, a `saves\` folder, a README and
 `run-test-session.cmd` (a recorded, logged play session) into
-`port\build\sbsp-<territory>-<date>.zip`.
+`port\build\sbsp-<territory>-<date>.zip`. Add `--x64` (USA, after
+`port\build-pc.cmd clangcl64`) to include the 64-bit executables as
+`sbsp64.exe` / `sbsp64-debug.exe` with their `SDL3.dll`; they share the data,
+settings and memory card with the 32-bit ones, and
+`run-test-session.cmd x64` records a session on them.
 
 **Skipping to a level** while testing:
 

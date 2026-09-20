@@ -838,6 +838,30 @@ for the cross-toolchain work (issue #39) together with the frames on
 which MinGW and clang-cl differ whatever the pointer size (campaign
 463-512 in both variants; Tier 2 level 24 from frame 306 in DEBUG).
 
+### x64 in the tester zip (M9 PR 3)
+
+No game-source change.  `port/package.py --x64` adds the clang-cl x86_64
+exes to the zip *beside* the 32-bit MinGW pair rather than instead of
+them: `sbsp64.exe` (from `build/clangcl-x64-final`), `sbsp64-debug.exe`
+(`clangcl-x64-debug`) and one `SDL3.dll` - the first non-static file in the
+package, because the official SDL VC package has no static library.  The
+MinGW exes are static and never look at it, so the x64 DLL can sit in the
+same folder; what must never happen is an exe or DLL of the wrong
+architecture getting in from a stale tree, so every PE file's machine
+word is checked against what its name promises (`pe_machine`).  USA only:
+there are no clang-cl EUR presets, and `--territory eur --x64` says so.
+Without `--x64` the zip is what it was.
+
+The four exes share `data\`, `sbsp.ini` and `saves\card0.mcd` - everything
+is found beside the exe (`cd.cpp`, `hostpath.cpp`) and the save format has
+no pointer-size dependence (the A/B above compares cards byte for byte) -
+so a tester can move one campaign between them.  `run-test-session.cmd
+x64 [final]` records a session on the 64-bit pair; `session.pad`'s
+`# abi ptr=8` line says which build made it.  Verified by unpacking the
+zip into a scratch directory and booting all four exes from there
+headlessly: each finds `data\` beside itself and they agree on the frame
+CRC.
+
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 
 - String-literal → `char*` conversions (pervasive; `-Wno-write-strings`).
