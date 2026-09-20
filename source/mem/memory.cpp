@@ -28,17 +28,7 @@ static const unsigned int	MEM_FILL_PATTERN		=0x3d3d3d3d;
 static const unsigned int	TAIL_GUARD_FILL_PATTERN	=0x3c3c3c3c;
 static const unsigned int	NUM_MEM_GUARDS=MEM_NUM_GUARDS;
 static const unsigned int	MEM_GUARD_SIZE=sizeof(int)*NUM_MEM_GUARDS;
-#define	MEM_BLOCK_HDR	(MEM_ALIGN+MEM_GUARD_SIZE)
-#else
-#define	MEM_BLOCK_HDR	(MEM_ALIGN)
 #endif	/* USE_MEM_GUARDS */
-
-/*	The length word MemAllocate wrote at the block base, reached from the
-	pointer it handed back.  MemFree walks back in bytes and so must this:
-	stepping back NUM_MEM_GUARDS+1 u32s was the same thing only while
-	MEM_ALIGN was 4, and SBSP_PC64 (M9) makes it 16 - the read then lands
-	inside the head guard and reports 0x3e3e3e3e as the block length.  */
-#define	MEM_BLOCK_LEN(p)	(*(u32 *)((char *)(p) - MEM_BLOCK_HDR))
 
 
 /*****************************************************************************/
@@ -233,6 +223,10 @@ void dumpDebugMem()
 				x >>= s_dumpShift;
 				x += s_dumpX;
 
+				/*	the length word at the block base, reached in bytes
+					as MemFree reaches it: stepping back NUM_MEM_GUARDS+1
+					u32s was the same address only while MEM_ALIGN was 4,
+					and SBSP_PC64 makes it 16 (mem/memory.h).  */
 				len = MEM_BLOCK_LEN(addr);
 				len = (((u32)addr) - ((u32)memBase))+len;
 				len *= s_dumpScale;
@@ -283,6 +277,10 @@ void dumpDebugMem()
 
 		mem = &memDump[ s_currentMemPart ];
 		if (mem->addr)
+			/*	block base in bytes, as above: under SBSP_PC64 MEM_ALIGN
+				is 16, and stepping back in u32s would land inside the
+				head guard and report the fill pattern as the length
+				(MEM_BLOCK_LEN, mem/memory.h).  */
 			len = MEM_BLOCK_LEN(mem->addr);
 		else
 			len = 0;
