@@ -54,16 +54,30 @@ static int skip_atoi(const char **s)
 #define SPECIAL	32		/* 0x */
 #define LARGE	64		/* use 'ABCDEF' instead of 'abcdef' */
 
+/*	The integer number() carries.  long everywhere the game has ever built,
+	except the MSVC x64 ABI (M9), where long stays 32 bits while a pointer is
+	8 bytes - %p would print half an address.  Widening the carrier alone
+	would break %u/%x, whose value reaches here already reinterpreted through
+	a 32-bit unsigned; every assignment below therefore states its own
+	sign-extension, which is what the 32-bit builds were doing implicitly.  */
+#if defined(_WIN64)
+typedef long long			num_t;
+typedef unsigned long long	unum_t;
+#else
+typedef long				num_t;
+typedef unsigned long		unum_t;
+#endif
+
 /* Portable rewrite of the old GNU statement-expression macro */
-static inline int do_div(long &n,int base)
+static inline int do_div(num_t &n,int base)
 {
 int	__res;
-	__res=(int)(((unsigned long)n)%(unsigned)base);
-	n=(long)(((unsigned long)n)/(unsigned)base);
+	__res=(int)(((unum_t)n)%(unsigned)base);
+	n=(num_t)(((unum_t)n)/(unsigned)base);
 	return(__res);
 }
 
-static char * number(char * str, long num, int base, int size, int precision
+static char * number(char * str, num_t num, int base, int size, int precision
 	,int type)
 {
 	char c,sign,tmp[66];
@@ -132,7 +146,7 @@ static char * number(char * str, long num, int base, int size, int precision
 extern int __vsprintf(char *buf, const char *fmt, __va_list args)
 {
 	int len;
-	unsigned long num;
+	unum_t num;
 	int i, base;
 	char * str;
 	const char *s;
@@ -233,7 +247,7 @@ extern int __vsprintf(char *buf, const char *fmt, __va_list args)
 				flags |= ZEROPAD;
 			}
 			str = number(str,
-				__va_arg_ptr(args), 16,
+				(num_t)__va_arg_ptr(args), 16,
 				field_width, precision, flags);
 			continue;
 
@@ -275,17 +289,20 @@ extern int __vsprintf(char *buf, const char *fmt, __va_list args)
 			continue;
 		}
 		if (qualifier == 'l')
-			num = __va_arg(args, unsigned long);
+		{
+			if (flags & SIGN)	num = (unum_t)(num_t)__va_arg(args, long);
+			else				num = (unum_t)__va_arg(args, unsigned long);
+		}
 		else if (qualifier == 'h')
 			if (flags & SIGN)
-				num = __va_arg_short(args);
+				num = (unum_t)(num_t)__va_arg_short(args);
 			else
-				num = __va_arg_ushort(args);
+				num = (unum_t)__va_arg_ushort(args);
 		else if (flags & SIGN)
-			num = __va_arg(args, int);
+			num = (unum_t)(num_t)__va_arg(args, int);
 		else
-			num = __va_arg(args, unsigned int);
-		str = number(str, num, base, field_width, precision, flags);
+			num = (unum_t)__va_arg(args, unsigned int);
+		str = number(str, (num_t)num, base, field_width, precision, flags);
 	}
 	*str = '\0';
 	return str-buf;

@@ -8,8 +8,9 @@
 // (conv_pc.md #33).  The defs below walk the
 // stack from &v, which is the i386 convention only - x64 passes the first four
 // arguments in registers.  A short is promoted to int on its way through ...
-// and must be fetched as one; %p prints the low 32 bits of the pointer
-// (number() takes a long - every game pointer lives in the arena, below 4GB).
+// and must be fetched as one; %p yields the whole pointer as uintptr_t
+// (vsprintf.cpp's num_t carries it - long is 32 bits in the MSVC x64 ABI, and
+// %p is handed statics and stack addresses, not just arena pointers).
 #include <stdarg.h>
 #include <stdint.h>
 typedef va_list __va_list;
@@ -18,7 +19,7 @@ typedef va_list __va_list;
 #define __va_end(ap)			va_end(ap)
 #define __va_arg_short(ap)		((short)va_arg(ap,int))
 #define __va_arg_ushort(ap)		((unsigned short)va_arg(ap,int))
-#define __va_arg_ptr(ap)		((unsigned long)(uintptr_t)va_arg(ap,void *))
+#define __va_arg_ptr(ap)		((uintptr_t)va_arg(ap,void *))
 #else
 // stdarg defs from MSVC
 #define _INTSIZEOF(n)   ( (sizeof(n) + sizeof(int) - 1) & ~(sizeof(int) - 1) )

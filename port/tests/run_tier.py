@@ -155,10 +155,12 @@ class Route:
 
 
 class RunResult:
-    def __init__(self, code, lines, wall):
+    def __init__(self, code, lines, wall, card=None):
         self.code = code
         self.lines = lines
         self.wall = wall
+        # bytes of the card0.mcd the run left, or None if it never saved
+        self.card = card
         self.scenes = [l.split()[1] for l in lines if l.startswith("[scene] ")]
         self.summary = {}
         for l in lines:
@@ -217,9 +219,7 @@ def run_game(exe, args, env, timeout, log_path=None):
     card = Path(save_dir) / "card0.mcd"
     card_bytes = card.read_bytes() if card.exists() else None
     shutil.rmtree(save_dir, ignore_errors=True)
-    res = RunResult(code, out.splitlines(), wall)
-    res.card = card_bytes
-    return res
+    return RunResult(code, out.splitlines(), wall, card_bytes)
 
 
 BASELINE = None     # --compare-frames: directory of an earlier run's --logs
@@ -305,9 +305,26 @@ def run_route_cross(exe, route, seed, logdir):
     res = run_game(exe, args, route.env, route.timeout, log)
     ok = report_common(res, name)
     if res.scenes != route.expect:
-        print(f"  FAIL {name}: [scene] sequence differs from the route's # expect")
+        print(f"  FAIL {name}: [scene] sequence differs (expected vs actual):")
+        for l in difflib.unified_diff(route.expect, res.scenes, "expected", "actual", lineterm="", n=2):
+            print("       " + l)
         ok = False
+    # The route's ceilings hold across ABIs too - except peak_ram, which is a
+    # function of pointer size (x64 objects are bigger and the heap aligns to
+    # 16).  peak_prim and peak_memnodes are exactly what would catch an
+    # x64-only allocation regression, so they are not skipped with it.
+    for k, ceiling in route.max.items():
+        if k == "peak_ram":
+            continue
+        v = res.summary_int(k)
+        if v > ceiling:
+            print(f"  FAIL {name}: {k}={v} exceeds {ceiling}")
+            ok = False
     ok &= compare_baseline(res, name, f"{route.name}.log")
+    frames = len(res.frame_crcs())
+    if frames < route.min_frames:
+        print(f"  FAIL {name}: {frames} distinct unmasked frame CRC(s), {route.min_frames} required")
+        ok = False
     want = Path(REPLAY_FROM) / f"{route.name}.mcd"
     card = "no card on either side"
     if want.exists() != (res.card is not None):
@@ -322,8 +339,10 @@ def run_route_cross(exe, route, seed, logdir):
         card = f"card0.mcd {len(res.card)} bytes identical"
     epochs = sum(1 for l in rec.read_text(encoding="utf-8").splitlines() if l.startswith("# epoch"))
     print(f"  {'PASS' if ok else 'FAIL'} {name}: {res.wall:.1f}s wall, "
-          f"{res.summary.get('vblanks', '?')} vblanks, {epochs} epochs checked, {card}, "
-          f"peak_ram={res.summary.get('peak_ram', '?')}")
+          f"{res.summary.get('vblanks', '?')} vblanks, {epochs} epochs checked, "
+          f"{frames} distinct frames, {card}, "
+          f"peak_ram={res.summary.get('peak_ram', '?')} peak_prim={res.summary.get('peak_prim', '?')} "
+          f"peak_memnodes={res.summary.get('peak_memnodes', '?')}")
     return ok
 
 
@@ -526,6 +545,12 @@ def main():
         if a.replay_from:
             ap.error("--keep-artifacts and --replay-from: a cross replay records nothing to keep")
         KEEP = Path(a.keep_artifacts).resolve()
+        # Emptied, not merged into: a route only writes its artifacts when it
+        # passes, so one left by an earlier (or another exe's) run would be
+        # replayed and byte-compared by --replay-from as if this run had made
+        # it - a stale PASS over a route that just failed.
+        if KEEP.is_dir():
+            shutil.rmtree(KEEP)
         KEEP.mkdir(parents=True, exist_ok=True)
     if a.replay_from:
         # without the other exe's logs a cross replay would only prove "no
