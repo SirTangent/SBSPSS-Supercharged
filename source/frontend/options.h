@@ -174,8 +174,11 @@ private:
 	static ButtonToIconMap						s_controlMap[ICON_COUNT];
 
 	/*	Re-resolve the controls readout's icons against the device the
-		player is on (github issue #43).  */
-	static void									refreshIcons();
+		player is on (github issue #43); 1 if any of them moved.  The
+		readouts themselves are kept so think() can tell them to pick the
+		new frames up.  */
+	static int									refreshIcons();
+	class CGUISpriteReadout						*m_controlReadouts[CONTROL_COUNT];
 
 	class FontBank								*m_fontBank;
 	class SpriteBank							*m_spriteBank;
