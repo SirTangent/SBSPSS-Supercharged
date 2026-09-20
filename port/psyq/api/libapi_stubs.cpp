@@ -8,7 +8,10 @@
 	model is single-threaded so they are no-ops.  (The Win32 functions of the
 	same name are stdcall and take a parameter - different decorated symbols
 	on i686, so no collision.  x64 decorates nothing, so there the PSY-Q one
-	is renamed - the same #define the game sees in port/include/libapi.h.)
+	carries the psyq_sdk_ name the game reaches it by; this is shim code and
+	does not get port/include/libapi.h's SBSP_PC64 rename, so it spells the
+	symbol out.  Both conditions mean "the 64-bit build" - SBSP_PC64 is set
+	exactly when CMAKE_SIZEOF_VOID_P is 8.)
 
 	The event/root-counter set drives system/clickcount.cpp's RCnt2 timer
 	for real since M2: OpenEvent(RCntCNT2) registers the handler, SetRCnt
@@ -17,10 +20,6 @@
 	the game's 17200 target = ~246 Hz = ~4 ticks per NTSC vblank).
 */
 #include "stub_log.h"
-
-#ifdef _WIN64
-#define EnterCriticalSection psyq_sdk_EnterCriticalSection	/* port/include/libapi.h */
-#endif
 
 /* RCnt2 timer state, ticked by Port_RCnt2Vblank from the pump */
 static long		(*g_rcnt2Func)();
@@ -54,7 +53,11 @@ extern "C" {
 long GetSp(void)					{ return 0; }
 long SetSp(long newSp)				{ (void)newSp; return 0; }
 
+#ifdef _WIN64
+void psyq_sdk_EnterCriticalSection(void)	{ }
+#else
 void EnterCriticalSection(void)		{ }
+#endif
 void ExitCriticalSection(void)		{ }
 
 long OpenEvent(unsigned long desc, long spec, long mode, long (*func)())

@@ -12,13 +12,21 @@
 	has one calling convention and no decoration, so the static CRT pulling
 	kernel32's import member in makes it a duplicate symbol.  There the PSY-Q
 	one is renamed for good, declaration and callers alike (no #undef), and
-	psyq/api/libapi_stubs.cpp defines it under the same name.  No TU that
-	includes this header calls the Win32 function.
+	psyq/api/libapi_stubs.cpp defines that name directly.
+
+	The rename is keyed on SBSP_PC64, not on _WIN64: SBSP_PC64 is set on the
+	game target alone (CMakeLists.txt), and every caller of the PSY-Q
+	function is game code (fileio.cpp, psxboot.cpp, clickcount.cpp).  Keying
+	it on the compiler-wide _WIN64 would rewrite the name in shim
+	translation units too, where <windows.h> is ordinary and its
+	EnterCriticalSection(LPCRITICAL_SECTION) would collide with the macro -
+	a build break in whichever order the two headers happened to arrive.
+	A shim TU that wants PSY-Q's no-op should call it by its real name.
 */
 #ifndef _PORT_SHADOW_LIBAPI_H
 #define _PORT_SHADOW_LIBAPI_H
 
-#ifdef _WIN64
+#ifdef SBSP_PC64
 #define EnterCriticalSection psyq_sdk_EnterCriticalSection
 #endif
 

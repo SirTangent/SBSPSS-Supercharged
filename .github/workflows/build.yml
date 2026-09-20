@@ -221,6 +221,12 @@ jobs:
           name: sbsp-data-${{ env.TERRITORY }}-${{ env.VERSION }}
           path: out/
 
+      - name: Toolchain versions
+        run: |
+          & "C:\Program Files\LLVM\bin\clang-cl.exe" --version
+          cmake --version
+          ninja --version
+
       - name: Configure (clang-cl, x86_64-pc-windows-msvc)
         working-directory: port
         run: cmake --preset clangcl-x64-debug -DCMAKE_MAKE_PROGRAM=ninja

@@ -32,6 +32,15 @@ ABI_CHECK(sQuad,			sizeof(sQuad)			== 28);
 ABI_CHECK(sSpriteFrame,		sizeof(sSpriteFrame)	== 4);
 ABI_CHECK(sThingActor,		sizeof(sThingActor)		== 14);
 
+/*	the arrays the converted DPTR fields point at - sLevelHdr's VtxList and
+	ModelList, sLayerShadeHdr's TypeList and GfxList.  A pointer field is only
+	half the contract: the stride it is indexed by has to hold too.  */
+ABI_CHECK(sVtx,						sizeof(sVtx)					== 8);
+ABI_CHECK(sBBox,					sizeof(sBBox)					== 8);
+ABI_CHECK(sModel,					sizeof(sModel)					== 12);
+ABI_CHECK(sLayerShadeBackGfxType,	sizeof(sLayerShadeBackGfxType)	== 8);
+ABI_CHECK(sLayerShadeBackGfx,		sizeof(sLayerShadeBackGfx)		== 28);
+
 #if defined(SBSP_PC64)
 ABI_CHECK(FPTR,				sizeof(FPTR<char>)		== 4);
 ABI_CHECK(pointer,			sizeof(void *)			== 8);
