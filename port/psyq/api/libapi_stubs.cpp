@@ -7,7 +7,8 @@
 	EnterCriticalSection/ExitCriticalSection disable PS1 interrupts; the pump
 	model is single-threaded so they are no-ops.  (The Win32 functions of the
 	same name are stdcall and take a parameter - different decorated symbols
-	on i686, so no collision.)
+	on i686, so no collision.  x64 decorates nothing, so there the PSY-Q one
+	is renamed - the same #define the game sees in port/include/libapi.h.)
 
 	The event/root-counter set drives system/clickcount.cpp's RCnt2 timer
 	for real since M2: OpenEvent(RCntCNT2) registers the handler, SetRCnt
@@ -16,6 +17,10 @@
 	the game's 17200 target = ~246 Hz = ~4 ticks per NTSC vblank).
 */
 #include "stub_log.h"
+
+#ifdef _WIN64
+#define EnterCriticalSection psyq_sdk_EnterCriticalSection	/* port/include/libapi.h */
+#endif
 
 /* RCnt2 timer state, ticked by Port_RCnt2Vblank from the pump */
 static long		(*g_rcnt2Func)();
