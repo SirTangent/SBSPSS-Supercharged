@@ -152,17 +152,11 @@ void deliverNext(void)
 		fprintf(stderr, "[xa] terminator sector %ld (chan %d) delivered\n",
 				thisLBA - g_startLBA, (sec[10] | (sec[11] << 8)) >> 10 & 31);
 
-	/*	Called as (int, u_char *), not as the CdlCB it is stored as.  libcd.h
-		types the first argument u_char, but the game's handler is
-		`XACDReadyCallback(int Intr, u8 *)` cast to CdlCB (sound/cdxa.cpp) and
-		switches on all 32 bits.  MIPS and i686 hand a u_char over in a full,
-		zero-extended word, so that works there; the x64 ABI leaves the upper
-		bits of the register undefined for a u_char parameter - the handler
-		then missed CdlDataReady, never saw a terminator, and speech "played"
-		forever (M9: found by the x64 A/B on the gameover_continue route).  */
-	typedef void (*ReadyHandler)(int, u_char *);
+	/*	g_cdReadyCallback is a PortCdCB - (int, u_char *), the signature the
+		handler really has rather than the CdlCB it is registered as; the why
+		is in xa_stream.h.  */
 	static u_char result[8];
-	((ReadyHandler)g_cdReadyCallback)(CdlDataReady, result);
+	g_cdReadyCallback(CdlDataReady, result);
 	g_stagedValid = 0;						/* served only during the callback */
 }
 

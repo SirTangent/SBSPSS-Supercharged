@@ -21,8 +21,20 @@ void XaStream_Serve(uint32_t *madr, int sizeWords);	/* CdGetSector body */
 /*	once per emulated vblank, from Port_Pump  */
 extern "C" void Port_CdVblank(int vblankHz);
 
+/*	The CD callbacks, typed the way the game actually defines them.  libcd.h's
+	CdlCB types the first argument u_char, but every handler the game
+	registers is `f(int Intr, u_char *result)` cast to CdlCB (sound/cdxa.cpp,
+	fmv.cpp) and switches on all 32 bits.  MIPS and i686 hand a u_char over in
+	a full, zero-extended word, so that works there; the x64 ABI leaves the
+	upper bits of the register undefined for a u_char parameter - the handler
+	then missed CdlDataReady, never saw a terminator, and speech "played"
+	forever (M9: found by the x64 A/B on the gameover_continue route).
+	Storing the pointer at the handler's own signature makes every call site
+	correct by construction; cd.cpp converts once, where the cast is made.  */
+typedef void (*PortCdCB)(int, u_char *);
+
 /*	provided by cd.cpp  */
-extern CdlCB g_cdReadyCallback;
+extern PortCdCB g_cdReadyCallback;
 int Port_CdXaTrackInfo(FILE **fp, long *startLBA, long *sectors);
 int Port_CdFileForLBA(long lba, FILE **fp, long *startLBA, long *sectors,
 					  int *bytesPerSector, const char **name);

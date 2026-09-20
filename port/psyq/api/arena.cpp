@@ -66,8 +66,15 @@ struct ArenaBoot
 		}
 		if (!base)
 		{
-			fprintf(stderr, "[shim] arena: no %uMB block free at a 16MB-aligned base "
-							"below 1GB, aborting\n", (unsigned)(ARENA_SIZE >> 20));
+			/*	Two different failures reach here: on 32-bit the any-base
+				fallback above has failed too, so there is no contiguous
+				window left at all; on x64 only the aligned probe ran.  */
+			if (sizeof(void *) == 4)
+				fprintf(stderr, "[shim] arena: no %uMB of address space free at "
+								"any base, aborting\n", (unsigned)(ARENA_SIZE >> 20));
+			else
+				fprintf(stderr, "[shim] arena: no %uMB block free at a 16MB-aligned "
+								"base below 1GB, aborting\n", (unsigned)(ARENA_SIZE >> 20));
 			Port_Exit(PORT_EXIT_FAULT);
 		}
 

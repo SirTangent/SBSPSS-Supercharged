@@ -269,5 +269,15 @@ static void dumpDatabase(void)
 }
 
 
+/*	TransHeader is overlaid on translations/<lang>.dat exactly as the structs
+	in dstructs.h are overlaid on the level and actor files, and TRANS_PTR is
+	a hand-rolled parallel of their DPTR.  port/abi/abi_check.cpp cannot guard
+	it - the struct is file-local - so the same negative-array check lives
+	here.  Kept at the end of the file: the #line 49 above fixes the PS1
+	build's __LINE__ for the ASSERTs, and inserting anything above it would
+	move them.  */
+typedef char abi_check_TransHeader[(sizeof(TransHeader) == 8) ? 1 : -1];
+
+
 /*===========================================================================
  end */
