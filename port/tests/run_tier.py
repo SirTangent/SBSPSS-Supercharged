@@ -54,6 +54,14 @@ match its same-named log there line for line.
 
     run_tier.py --exe <before> --tier1 --tier2 --logs base
     run_tier.py --exe <after>  --tier1 --tier2 --compare-frames base
+
+--keep-artifacts DIR / --replay-from DIR is the cross-exe replay (M9, the
+x64 A/B): the first exe keeps each Tier 1 route's recording and memory card,
+the second replays those recordings instead of the routes and must produce
+no [replay] desync, the first exe's streams and a byte-identical card.
+
+    run_tier.py --exe <x86> --tier1 --logs L32 --keep-artifacts A32
+    run_tier.py --exe <x64> --tier1 --logs L64 --compare-frames L32 --replay-from A32
 """
 import argparse
 import difflib
@@ -204,8 +212,14 @@ def run_game(exe, args, env, timeout, log_path=None):
     if log_path:
         Path(log_path).write_text(out, encoding="utf-8")
         Path(str(log_path) + ".stdout").write_text(game_out, encoding="utf-8")
+    # the memory card the run left behind (None: it never saved), for
+    # --keep-artifacts / --replay-from
+    card = Path(save_dir) / "card0.mcd"
+    card_bytes = card.read_bytes() if card.exists() else None
     shutil.rmtree(save_dir, ignore_errors=True)
-    return RunResult(code, out.splitlines(), wall)
+    res = RunResult(code, out.splitlines(), wall)
+    res.card = card_bytes
+    return res
 
 
 BASELINE = None     # --compare-frames: directory of an earlier run's --logs
@@ -260,7 +274,62 @@ def report_common(res, name):
     return ok
 
 
+KEEP = None         # --keep-artifacts: where passing routes leave <route>.rec.pad / <route>.mcd
+REPLAY_FROM = None  # --replay-from: another exe's --keep-artifacts directory
+
+
+def first_difference(a, b):
+    n = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
+    return f"first difference at offset 0x{n:X} (sizes {len(a)} / {len(b)})"
+
+
+def run_route_cross(exe, route, seed, logdir):
+    """--replay-from: drive this exe with the recording ANOTHER exe made of
+    the route (a 32-bit build's, for the x64 build: M9's A/B).  The recording
+    carries that exe's display CRC every 300 vblanks, which the game checks
+    itself ([replay] desync -> exit 13; RamUsed is skipped across ABIs,
+    host/input.cpp); on top of that the [scene]/[frame] streams must equal
+    the recording exe's log (--compare-frames, required with this option)
+    and the memory card the run leaves must be byte-identical to the one the
+    recording run left."""
+    rec = Path(REPLAY_FROM) / f"{route.name}.rec.pad"
+    name = route.name + " (cross replay)"
+    if not rec.exists():
+        print(f"  FAIL {name}: no recording {rec}")
+        return False
+    args = ["--pad-file", str(rec), "--seed", str(seed),
+            "--exit-after", str(route.exit_after)] + DETERMINISM + route.args
+    log = Path(logdir) / f"{route.name}.log" if logdir else None
+    print(f"== tier1 {name}: {' '.join(args)}"
+          + (f"  env {route.env}" if route.env else ""))
+    res = run_game(exe, args, route.env, route.timeout, log)
+    ok = report_common(res, name)
+    if res.scenes != route.expect:
+        print(f"  FAIL {name}: [scene] sequence differs from the route's # expect")
+        ok = False
+    ok &= compare_baseline(res, name, f"{route.name}.log")
+    want = Path(REPLAY_FROM) / f"{route.name}.mcd"
+    card = "no card on either side"
+    if want.exists() != (res.card is not None):
+        print(f"  FAIL {name}: memory card {'missing' if res.card is None else 'unexpected'} "
+              f"(the recording run {'left' if want.exists() else 'did not leave'} one)")
+        ok = False
+    elif res.card is not None:
+        ref = want.read_bytes()
+        if ref != res.card:
+            print(f"  FAIL {name}: card0.mcd differs from {want}: {first_difference(ref, res.card)}")
+            ok = False
+        card = f"card0.mcd {len(res.card)} bytes identical"
+    epochs = sum(1 for l in rec.read_text(encoding="utf-8").splitlines() if l.startswith("# epoch"))
+    print(f"  {'PASS' if ok else 'FAIL'} {name}: {res.wall:.1f}s wall, "
+          f"{res.summary.get('vblanks', '?')} vblanks, {epochs} epochs checked, {card}, "
+          f"peak_ram={res.summary.get('peak_ram', '?')}")
+    return ok
+
+
 def run_route(exe, route, seed, logdir, replay):
+    if REPLAY_FROM:
+        return run_route_cross(exe, route, seed, logdir)
     with tempfile.NamedTemporaryFile(prefix=f"{route.name}_", suffix=".rec.pad", delete=False) as tmp:
         rec = tmp.name
     args = ["--pad-file", str(route.path), "--record-pad", rec, "--seed", str(seed),
@@ -308,10 +377,18 @@ def run_route(exe, route, seed, logdir, replay):
         if frames1 != frames2:
             print(f"  FAIL {route.name} (replay): [frame] CRC stream differs from the recorded run")
             ok = False
+        if res2.card != res.card:
+            print(f"  FAIL {route.name} (replay): card0.mcd differs from the recorded run's"
+                  + (f": {first_difference(res.card, res2.card)}" if res.card and res2.card else ""))
+            ok = False
         epochs = sum(1 for l in Path(rec).read_text(encoding="utf-8").splitlines() if l.startswith("# epoch"))
         print(f"  {'PASS' if ok else 'FAIL'} {route.name} (replay): {res2.wall:.1f}s wall, "
               f"{len(frames1)} frames compared, {epochs} epochs checked")
     if ok:
+        if KEEP:
+            shutil.copyfile(rec, Path(KEEP) / f"{route.name}.rec.pad")
+            if res.card is not None:
+                (Path(KEEP) / f"{route.name}.mcd").write_bytes(res.card)
         os.unlink(rec)
     else:
         print(f"       recording kept: {rec}")
@@ -412,6 +489,13 @@ def main():
     ap.add_argument("--compare-frames", metavar="DIR",
                     help="a --logs directory from another build of the same territory/variant: "
                          "every tier 1 / tier 2 run's [scene] + [frame] CRC stream must be identical to it")
+    ap.add_argument("--keep-artifacts", metavar="DIR",
+                    help="tier 1: keep each passing route's recording (<route>.rec.pad) and the "
+                         "memory card it left (<route>.mcd) here, for another exe's --replay-from")
+    ap.add_argument("--replay-from", metavar="DIR",
+                    help="tier 1: instead of playing each route, replay the recording another exe "
+                         "left in DIR (--keep-artifacts) and require no desync, the same streams "
+                         "(needs --compare-frames with that exe's --logs) and the same memory card")
     a = ap.parse_args()
 
     exe = Path(a.exe).resolve()
@@ -437,6 +521,21 @@ def main():
             return 2
     if not (a.tier1 or a.tier2 or a.selftest):
         ap.error("nothing to do: pass --tier1, --tier2 and/or --selftest")
+    global KEEP, REPLAY_FROM
+    if a.keep_artifacts:
+        if a.replay_from:
+            ap.error("--keep-artifacts and --replay-from: a cross replay records nothing to keep")
+        KEEP = Path(a.keep_artifacts).resolve()
+        KEEP.mkdir(parents=True, exist_ok=True)
+    if a.replay_from:
+        # without the other exe's logs a cross replay would only prove "no
+        # desync at the 300-vblank epochs" - the stream compare is the oracle
+        if not a.compare_frames:
+            ap.error("--replay-from needs --compare-frames (the recording exe's --logs directory)")
+        REPLAY_FROM = Path(a.replay_from).resolve()
+        if not REPLAY_FROM.is_dir():
+            print(f"no such artifact directory: {REPLAY_FROM}")
+            return 2
 
     only_routes = only_levels = None
     if a.only is not None:

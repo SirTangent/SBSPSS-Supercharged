@@ -4,6 +4,7 @@
 #   port/build-pc.sh [<preset>|usa|eur|clangcl|clangcl64|all] [extra ninja args...]
 #   port/build-pc.sh test [usa|eur|clangcl|clangcl64]  build, then ctest -L unit and -L playthrough on each tree
 #   port/build-pc.sh soak [usa|eur|clangcl|clangcl64]  build, then the full Tier 1 + Tier 2 sweep on each tree
+#   port/build-pc.sh parity64 [final|debug]  build clang-cl x86 + x64, then the x64 A/B (streams, cross replay, cards)
 #
 # Presets (port/CMakePresets.json): debug, final (USA; usa-debug / usa-final
 # are accepted aliases) and eur-debug, eur-final (EUR, PAL 50Hz); `usa` /
@@ -43,7 +44,7 @@ shift 2>/dev/null || true
 
 usage()
 {
-    echo "usage: port/build-pc.sh [debug|final|usa-debug|usa-final|eur-debug|eur-final|clangcl-debug|clangcl-final|clangcl-x64-debug|clangcl-x64-final|usa|eur|clangcl|clangcl64|all|test [usa|eur|clangcl|clangcl64]|soak [usa|eur|clangcl|clangcl64]] [ninja args]" >&2
+    echo "usage: port/build-pc.sh [debug|final|usa-debug|usa-final|eur-debug|eur-final|clangcl-debug|clangcl-final|clangcl-x64-debug|clangcl-x64-final|usa|eur|clangcl|clangcl64|all|test [usa|eur|clangcl|clangcl64]|soak [usa|eur|clangcl|clangcl64]|parity64 [final|debug]] [ninja args]" >&2
     exit 1
 }
 
@@ -125,6 +126,27 @@ soak_one()
         --selftest --tier1 --tier2 --logs "build/$preset/soak-logs"
 }
 
+# The x64 A/B (M9): the 32-bit clang-cl exe plays every Tier 1 route and
+# Tier 2 level and keeps its logs, recordings and memory cards; the x64 exe
+# must then (1) produce the same [scene]/[frame] streams playing the same
+# tiers itself and (2) replay the 32-bit recordings without a desync, to the
+# same streams and byte-identical cards.
+parity64()
+{
+    v="$1"
+    d="build/parity64-$v"
+    rm -rf "$d"
+    echo "=== parity64 ($v): x86 baseline ==="
+    python3 tests/run_tier.py --exe "build/clangcl-$v/sbsp.exe" --tier1 --tier2 \
+        --logs "$d/L32" --keep-artifacts "$d/A32"
+    echo "=== parity64 ($v): x64, same tiers ==="
+    python3 tests/run_tier.py --exe "build/clangcl-x64-$v/sbsp.exe" --tier1 --tier2 \
+        --logs "$d/L64" --compare-frames "$d/L32"
+    echo "=== parity64 ($v): x64 replays the x86 recordings ==="
+    python3 tests/run_tier.py --exe "build/clangcl-x64-$v/sbsp.exe" --tier1 \
+        --logs "$d/L64x" --compare-frames "$d/L32" --replay-from "$d/A32"
+}
+
 # presets_for runs in a command substitution, so its usage exit must be
 # re-checked here or a bad word would silently build nothing.
 case "$what" in
@@ -137,6 +159,13 @@ case "$what" in
         list=$(presets_for "${1:-all}") || exit 1
         for p in $list; do build_one "$p"; done
         for p in $list; do soak_one "$p"; done
+        ;;
+    parity64)
+        v=$(echo "${1:-final}" | tr '[:upper:]' '[:lower:]')
+        case "$v" in debug|final) ;; *) usage ;; esac
+        build_one "clangcl-$v"
+        build_one "clangcl-x64-$v"
+        parity64 "$v"
         ;;
     *)
         list=$(presets_for "$what") || exit 1

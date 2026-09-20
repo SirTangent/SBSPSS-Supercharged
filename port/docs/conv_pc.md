@@ -805,6 +805,39 @@ offsets.
 **CI.**  A `clangcl-x64` job (advisory, like `clangcl`): configure, build,
 `ctest -L unit`, `ctest -L playthrough`.
 
+### x64 A/B (M9 PR 2)
+
+No game-source change.  The x64 exe is proven against the 32-bit one by
+three oracles, `port/build-pc.sh parity64 [final|debug]`:
+
+1. **Streams** - `run_tier.py --compare-frames` (M8 PR 5): every Tier 1
+   route and Tier 2 level, `[scene]` + `[frame]` CRC lines identical.
+2. **Cross-exe replay** - `--keep-artifacts DIR` makes the first exe keep
+   each passing route's `--record-pad` recording; `--replay-from DIR`
+   makes the second exe replay those instead of playing the routes.  The
+   recording's `# epoch` markers carry the display CRC every 300 vblanks
+   and the game checks them itself (`[replay] desync`, exit 13).  They
+   also carry `RamUsed`, which is *not* comparable across ABIs (bigger
+   objects, 16-byte heap granularity): recordings now start with
+   `# abi ptr=<4|8>` (absent = 4), and `host/input.cpp` skips the ram half
+   of the check - only that - when the recording's pointer size is not the
+   exe's, saying so once (`[input] cross-ABI recording ...`).
+3. **Memory card** - the `card0.mcd` a route leaves is kept beside its
+   recording and the cross replay's must be byte-identical (the same-exe
+   replay of a plain Tier 1 run now compares cards too).  The save structs
+   are all `char` (`memcard/saveload.h`, `game/gameslot.h`), so this holds
+   by construction; the check is there for uninitialised bytes.
+
+Result (USA, seed 1, clang-cl): DEBUG x64 = x86 on all 9 routes + 25
+levels (163,000 `[frame]` lines), cross replay clean in both directions,
+cards identical.  FINAL the same except 39 frames of the campaign route
+(6858-6897) where the **32-bit** clang-cl FINAL exe omits one sprite at
+the screen edge that x64 FINAL, MinGW FINAL and both DEBUG builds draw -
+a latent compiler-dependent read in the game, not an x64 matter, left
+for the cross-toolchain work (issue #39) together with the frames on
+which MinGW and clang-cl differ whatever the pointer size (campaign
+463-512 in both variants; Tier 2 level 24 from frame 306 in DEBUG).
+
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 
 - String-literal → `char*` conversions (pervasive; `-Wno-write-strings`).
