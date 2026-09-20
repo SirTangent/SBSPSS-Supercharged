@@ -258,7 +258,19 @@ static void padFileParse(void)
 				addEpoch(ep);
 			}
 			else if (sscanf(s, "# abi ptr=%d", &ptr) == 1)
+			{
+				/*	4 and 8 are the only pointer sizes this port builds for.
+					Anything else - a truncated or hand-edited recording -
+					would silently drop the RamUsed half of every epoch check
+					(see g_recordingPtr), so a genuine same-ABI heap
+					divergence would replay clean.  Refuse it instead.  */
+				if (ptr != 4 && ptr != 8)
+				{
+					fclose(f);
+					padFileFail(path, line, "bad `# abi ptr=' (expected 4 or 8)");
+				}
 				g_recordingPtr = ptr;
+			}
 			continue;
 		}
 		for (char *c = s + 1; *c; c++)		/* first '#' preceded by a blank */
