@@ -254,6 +254,9 @@ UI_GFX_NONTRANS_IN :=		$(foreach FILE,$(UI_GFX_NONTRANS),$(UI_GFX_DIR)/$(FILE))
 
 # The +key*.bmp caps are Blubrry's keyboard glyphs, used with permission
 # (see CREDITS.md); the PC build draws them in place of the +but* glyphs.
+# They are generated, not hand-edited: the artist's square-pixel cuts live in
+# port/art/keycaps/, and port/tools/stretch_keycaps.py widens each one for the
+# PS1's 1:1.5 pixel aspect the way the +but* glyphs already are (issue #43).
 UI_GFX_TRANS :=				+bambootopleft.bmp +bamboobotleft.bmp +bambootopright.bmp +bamboobotright.bmp \
 							+bamboohorizontal.bmp +bamboovertical.bmp \
 							+slider_marker.bmp \

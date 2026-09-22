@@ -914,9 +914,10 @@ run time through `sbsp.ini`.
 50. **`Graphics/UI/+key*.bmp` (14 new, Git LFS), `makefile.gfx`** — the key
     caps, cut from the `Keyboard_Thick_v1` sheet.  Same 4bpp/`+`-prefixed
     convention as `+but*.bmp` so `parkgrab` generates `FRM__KEY*` for free.
-    14x14 for the letter and arrow caps, 16x14 for `ENTR`/`SHFT`, every cap
-    padded to a common 14px height so prompt rows line up.  All fourteen share one
-    16-entry palette, so the whole set costs a single CLUT (`PAL__KEYA`);
+    The cuts are 14x14 for the letter and arrow caps and 16x14 for
+    `ENTR`/`SHFT`, every cap padded to a common 14px height so prompt rows
+    line up; entry 55 below says why what the data build actually eats is
+    20x14 and 24x14.  All fourteen share one 16-entry palette, so the whole set costs a single CLUT (`PAL__KEYA`);
     `Sprites.Spr` grows 180 bytes, which is why `port/tests/headless.cpp`
     carries a new `EXPECT_SPRITES_SIZE`.
 
@@ -966,6 +967,35 @@ run time through `sbsp.ini`.
     existed and an incremental build never rebuilt a level after the sprite
     bank changed.  Not the cause of #24's symptom, but the same family of
     missing dependency, found while chasing it.
+
+55. **`port/art/keycaps/` (new), `port/tools/stretch_keycaps.py` (new),
+    `Graphics/UI/+key*.bmp`** — the caps went in at the size they were cut,
+    and a square cut is not a square cap.  The game draws into a 512x256
+    frame that is scanned out into a 4:3 box (`vk/viewport.cpp`, a CRT before
+    that), so a pixel on screen is 1.5 times taller than it is wide, and
+    Climax's art is drawn in that space: `+butC.bmp` is 18x11 because a round
+    circle button has to be 18 across to come out round at 18*2/3 = 12 by 11.
+    The 14x14 caps came off a sheet drawn for square pixels, so in the window
+    they read as narrow upright slabs - 9.3 across by 14 down.  It got through
+    review because the screenshots were `--dump-frames` BMPs blown up 2x,
+    which is to say at square pixels, where the caps look right and the PS1
+    glyphs look stretched.  **Judge sprite art at the window's 4:3 shape, not
+    at the dump's** - getting that out of the tooling rather than out of a
+    reviewer's memory is github issue #53.  The artist's cuts now live in
+    `port/art/keycaps/` and `stretch_keycaps.py` writes the `Graphics/UI`
+    copies the data build eats, every column resampled to the largest even
+    width no wider than 1.5x the master: 14 -> 20, 16 -> 24.  Even, because
+    the resample is mirror-symmetric about the centre line, which is what
+    keeps an up arrow pointing straight up; 21 is the exact 1.5x and cannot
+    be symmetric with a 14px master, and
+    of the two even neighbours 20 doubles six of the fourteen columns rather
+    than eight, so the letter strokes stay nearer the master's weight.
+    Nearest-neighbour only - nine colours on one shared CLUT leave no room for
+    filtering to invent more.  `--check` re-derives and compares instead of
+    writing.  The bank did not change size (the packer trims each frame and
+    the pages had room), so `EXPECT_SPRITES_SIZE` stands.  Before and after at
+    the window's shape: `docs/assets/issues/43-key-caps-aspect.png`.  Every
+    draw site already measured `fh->W`, so no game source moved.
 
 Covered by `port/tests/pad_test.cpp` (the cap table, the three modes, a
 rebind following its key, and the fall back to the glyph for a key with no
