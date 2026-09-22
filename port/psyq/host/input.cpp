@@ -52,11 +52,17 @@
 
 #include "host/diag.h"
 #include "gpu/gpu_core.h"
+#include "system/types.h"
+#include "system/asmport.h"		/* PORT_CAP_* - the prompt-icon contract */
 
 extern unsigned char *Port_PadBuffer[2];	/* pads_shim.cpp */
 extern unsigned char *Port_PadMotor[2];		/* pads_shim.cpp - PadSetAct buffer */
 
 static SDL_Gamepad	*g_gamepad;
+
+/*	Which device the button prompts should describe (issue #43): 1 while the
+	gamepad is driving, 0 for the keyboard.  See Port_InputPadActive.  */
+static int			g_padActive;
 
 /*	Rumble (M6): last values armed on the device, so a steady game state
 	does not spam the driver every vblank, plus the small motor's smoothed
@@ -472,6 +478,7 @@ extern "C" void Port_InputHandleEvent(const void *evv)
 					SDL_GetGamepadName(g_gamepad));
 		g_rumbleLow = g_rumbleHigh = 0;		/* fresh device: re-arm from scratch */
 		g_smallLevel = 0;
+		g_padActive = 1;					/* a plugged-in pad owns the prompts until a key is pressed */
 	}
 	else if (ev->type == SDL_EVENT_GAMEPAD_REMOVED && g_gamepad &&
 			 ev->gdevice.which == SDL_GetGamepadID(g_gamepad))
@@ -480,6 +487,7 @@ extern "C" void Port_InputHandleEvent(const void *evv)
 		g_gamepad = NULL;
 		g_rumbleLow = g_rumbleHigh = 0;
 		g_smallLevel = 0;
+		g_padActive = 0;
 		fprintf(stderr, "[input] gamepad disconnected\n");
 	}
 }
@@ -569,6 +577,87 @@ extern "C" int Port_InputKeyFor(const char *button)
 	return -1;
 }
 
+/*****************************************************************************/
+/*	Prompt icons (issue #43).  The game draws a button icon beside every
+	"press this to do that" line; on PC the PS1 glyph is a lie for anyone on
+	the keyboard, so the prompt layer asks here which key cap to draw
+	instead.  This side owns the scancode -> cap mapping because the cap
+	identity has to track g_keys[], which is the only place a binding lives;
+	the game side owns cap -> sprite frame (source/pad/padicon.cpp).
+
+	PORT_CAP_NONE means "keep the PS1 glyph", and is returned when a pad is
+	the active device, when prompt_icons pins it that way, and when a key
+	has been rebound to something we have no cap art for.  The art set is
+	the RetroPad default layout - exactly the keys a player who never opens
+	sbsp.ini will see.  */
+static const struct { SDL_Scancode sc; int cap; } g_caps[] =
+{
+	{ SDL_SCANCODE_A,        PORT_CAP_A      },
+	{ SDL_SCANCODE_S,        PORT_CAP_S      },
+	{ SDL_SCANCODE_X,        PORT_CAP_X      },
+	{ SDL_SCANCODE_Z,        PORT_CAP_Z      },
+	{ SDL_SCANCODE_Q,        PORT_CAP_Q      },
+	{ SDL_SCANCODE_W,        PORT_CAP_W      },
+	{ SDL_SCANCODE_E,        PORT_CAP_E      },
+	{ SDL_SCANCODE_R,        PORT_CAP_R      },
+	{ SDL_SCANCODE_UP,       PORT_CAP_UP     },
+	{ SDL_SCANCODE_DOWN,     PORT_CAP_DOWN   },
+	{ SDL_SCANCODE_LEFT,     PORT_CAP_LEFT   },
+	{ SDL_SCANCODE_RIGHT,    PORT_CAP_RIGHT  },
+	{ SDL_SCANCODE_RETURN,   PORT_CAP_ENTER  },
+	{ SDL_SCANCODE_KP_ENTER, PORT_CAP_ENTER  },
+	{ SDL_SCANCODE_RSHIFT,   PORT_CAP_RSHIFT },
+};
+#define NUM_CAPS	(int)(sizeof(g_caps) / sizeof(g_caps[0]))
+
+/*	SBSP_PROMPT_ICONS (sbsp.ini prompt_icons): auto | keys | pad.  "keys"
+	is what a recorded playthrough wants - without it the icons, and so the
+	frame CRC, would depend on whether the machine happened to have a pad
+	plugged in.  */
+enum { PROMPT_AUTO = 0, PROMPT_KEYS, PROMPT_PAD };
+static int g_promptMode = -1;
+
+static void loadPromptMode(void)
+{
+	const char *e = getenv("SBSP_PROMPT_ICONS");
+	g_promptMode = PROMPT_AUTO;
+	if (!e || !*e)
+		return;
+	if (_stricmp(e, "auto") == 0)		g_promptMode = PROMPT_AUTO;
+	else if (_stricmp(e, "keys") == 0)	g_promptMode = PROMPT_KEYS;
+	else if (_stricmp(e, "pad") == 0)	g_promptMode = PROMPT_PAD;
+	else
+		fprintf(stderr, "[input] bad prompt_icons '%s' - want auto|keys|pad - using auto\n", e);
+}
+
+/*	1 while the gamepad is the device driving the game, 0 for the keyboard.
+	Tracked by Port_InputFrame from whichever device actually produced
+	buttons this vblank, seeded by plug/unplug, so the prompts follow the
+	player between the two without a setting.  */
+extern "C" int Port_InputPadActive(void)
+{
+	if (g_promptMode < 0)
+		loadPromptMode();
+	if (g_promptMode != PROMPT_AUTO)
+		return g_promptMode == PROMPT_PAD;
+	return g_padActive;
+}
+
+/*	The key cap to draw for a pad button name, or PORT_CAP_NONE for the
+	PS1 glyph.  */
+extern "C" int Port_InputPromptCap(const char *button)
+{
+	if (Port_InputPadActive())
+		return PORT_CAP_NONE;
+	int sc = Port_InputKeyFor(button);
+	if (sc < 0)
+		return PORT_CAP_NONE;
+	for (int i = 0; i < NUM_CAPS; i++)
+		if ((int)g_caps[i].sc == sc)
+			return g_caps[i].cap;
+	return PORT_CAP_NONE;			/* rebound to a key we have no cap for */
+}
+
 static unsigned keyboardMask(void)
 {
 	if (!sdlInputUp())
@@ -638,6 +727,7 @@ static void loadSettings(void)
 extern "C" void Port_InputReloadSettings(void)
 {
 	loadSettings();
+	loadPromptMode();
 	Port_InputBindKeys();
 }
 
@@ -736,7 +826,15 @@ extern "C" void Port_InputFrame(unsigned long vblank)
 
 	scriptsParse();
 	resolveEntries();
-	unsigned mask = keyboardMask() | gamepadMask() | scriptMask(vblank);
+	unsigned kb = keyboardMask();
+	unsigned gp = gamepadMask();
+	/*	Whichever device produced buttons this vblank owns the prompts.  A
+		frame where both (or neither) are pressed leaves it where it was, so
+		a thumb resting on the stick while a hand reaches for the keyboard
+		does not flicker the icons.  */
+	if (gp && !kb)		g_padActive = 1;
+	else if (kb && !gp)	g_padActive = 0;
+	unsigned mask = kb | gp | scriptMask(vblank);
 	epochCheck(vblank);
 	recordFrame(vblank, mask);
 

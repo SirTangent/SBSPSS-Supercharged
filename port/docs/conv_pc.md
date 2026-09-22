@@ -862,6 +862,110 @@ zip into a scratch directory and booting all four exes from there
 headlessly: each finds `data\` beside itself and they agree on the frame
 CRC.
 
+## Game-source changes (keyboard prompt icons, issue #43)
+
+**The problem.**  Every "press this to do that" line in the game draws a pad
+icon beside it, and all eight icons (`Graphics/UI/+but*.bmp`, 18x11 4bpp) are
+PlayStation glyphs.  On PC the player is usually on the keyboard, where the
+glyph says nothing: the jellyfishing-net prompt told them to press square,
+circle and triangle when the keys are `A`, `X` and `S`.  The glyphs are also
+compile-time constants, so they could never be right for a binding chosen at
+run time through `sbsp.ini`.
+
+47. **`port/psyq/host/input.cpp`** — `Port_InputPromptCap(button)` answers with
+    the key cap to draw for a pad button, and `Port_InputPadActive()` says
+    which device the prompts should describe.  The scancode → cap table lives
+    beside `g_keys[]`, the only place a binding lives, and the shim answers
+    with a cap id rather than an SDL scancode so no game code needs SDL.
+    `PORT_CAP_NONE` means "keep the PS1 glyph" and is the answer for a
+    gamepad, for `prompt_icons = pad`, and for a key rebound to something the
+    art set has no cap for.  The active device is tracked in
+    `Port_InputFrame` from whichever of the keyboard/gamepad masks actually
+    produced buttons that vblank (a frame where both or neither are pressed
+    leaves it alone, so the icons do not flicker), seeded by plug/unplug.
+
+48. **`source/system/asmport.h`** — the `PORT_CAP_*` enum and the three
+    declarations, in the existing `#ifndef PSX_MIPS_ASM` shared-contract
+    block.  The PS1 build compiles none of it.
+
+49. **`source/pad/padicon.cpp`, `source/pad/padicon.h`** (new TU, added to
+    `makefile.gaz` `pad_src` and regenerated into
+    `port/cmake/game_sources.cmake`) — `CPadIcon::getFrame(PAD_*)` is the one
+    resolver every draw site now calls instead of naming `FRM__BUT*`.  It
+    holds the pad-button → PS1-glyph table and the cap → `FRM__KEY*` table;
+    on the PS1 toolchain the whole keyboard arm is `#ifndef PSX_MIPS_ASM`-ed
+    out and it is a plain lookup.  The cap art has no combined Up+Down
+    sprite, so the one prompt slot that wants both (the coral blower's aim
+    line) draws the two arrow caps side by side, exactly as it draws the two
+    PS1 glyphs.
+
+50. **`Graphics/UI/+key*.bmp` (14 new, Git LFS), `makefile.gfx`** — the key
+    caps, cut from the `Keyboard_Thick_v1` sheet.  Same 4bpp/`+`-prefixed
+    convention as `+but*.bmp` so `parkgrab` generates `FRM__KEY*` for free.
+    14x14 for the letter and arrow caps, 16x14 for `ENTR`/`SHFT`, every cap
+    padded to a common 14px height so prompt rows line up.  All fourteen share one
+    16-entry palette, so the whole set costs a single CLUT (`PAL__KEYA`);
+    `Sprites.Spr` grows 180 bytes, which is why `port/tests/headless.cpp`
+    carries a new `EXPECT_SPRITES_SIZE`.
+
+51. **The ten draw sites** — `source/player/player.cpp` (in-game item
+    prompts), `source/frontend/options.cpp` (controls readout + footer),
+    `source/frontend/start.cpp`, `source/save/save.cpp`, `source/map/map.cpp`,
+    `source/shop/shop.cpp`, `source/game/convo.cpp`,
+    `source/game/bosstext.cpp`.  Most already measured `fh->W` and re-centred,
+    so they needed only the resolver call.  Three did not:
+    - `player.cpp` stepped by a hardcoded `PromptXGap=20` (the 18px glyph plus
+      2); now `getFrameWidth(icon)+PromptIconGap`, which reproduces the
+      original spacing exactly for the glyphs.
+    - `convo.h`'s `TEXTBOX_BUTTONS_GAP=20` became `TEXTBOX_BUTTONS_ICON_GAP=2`
+      added to the measured up-cap width — measured whether or not the up hint
+      is drawn, so the down arrow does not move as the page changes.
+    - `shop.cpp` stepped the cross and triangle icons back by `fh2->W`, the
+      *right arrow* header left over from the line above.  Invisible while
+      every icon was 18px wide; wrong as soon as they are not.  Now `fh1->W`.
+
+52. **`port/psyq/host/ini.cpp`, `port/psyq/host/args.cpp`** — `prompt_icons`
+    (`SBSP_PROMPT_ICONS`) `auto|keys|pad`.  `auto` follows the device in use.
+    A recorded playthrough wants `keys`: without it the icons, and so the
+    frame CRC, would depend on whether the machine happened to have a pad
+    plugged in.
+
+53. **`source/gfx/font.cpp`** (github issue #24) — every `fontTab[_char]`
+    lookup now indexes through `(u8)`.  `fontTab` is a 256-entry table whose
+    upper half is live: `0x91`/`0x92`, the Windows-1252 quotes the dialogue
+    text really uses for its apostrophes, map to the `'` glyph, and
+    `0xC0`-`0xFF` carry the accented EUR characters.  `_char` is a plain
+    `char`, which is signed on x86, so `0x92` read `fontTab[-110]` - from
+    *before* the table - and whatever junk sat there was used as a sprite
+    frame number.  With a kind link layout that was a wide blank gap where the
+    apostrophe should be (#24 as filed).  It is layout-dependent, though: the
+    extra sprites of #43 moved the data, the junk became a frame whose header
+    was garbage, and `getFrameHeader()` of it drew a screen-high slab sampling
+    the framebuffer - the clear colour at first, then a column of grass -
+    across every dialogue line containing an apostrophe.  Same latent-bug
+    class as #13/#17/#19: harmless-by-luck on PS1, visibly broken on Win32,
+    and it would have taken out every accented glyph once the EUR text came up.
+
+54. **`build/mklevel.pl`, `makefile.gfx`** — the generated level rule now
+    depends on `$(INC_DIR)/Sprites.h`, which gets a rule of its own (it is only
+    a side effect of the `Sprites.Spr` rule).  `MkLevel` bakes the sprite frame
+    numbers that header defines into the `.lvl`, but the rule named only the
+    `.mex`, so a from-scratch build could run `MkLevel` before the header
+    existed and an incremental build never rebuilt a level after the sprite
+    bank changed.  Not the cause of #24's symptom, but the same family of
+    missing dependency, found while chasing it.
+
+Covered by `port/tests/pad_test.cpp` (the cap table, the three modes, a
+rebind following its key, and the fall back to the glyph for a key with no
+cap art) and by the `playthrough` label on both toolchains.
+
+**Still PS1-worded (deliberately not changed).**  `data/translations/text.dat`
+says "Press the **X button** to continue" (the memory-card result screens) and
+"PRESS **START**".  One string table serves both builds, so editing it would
+make the PS1 build wrong; saying it correctly on each needs device-aware text
+(a runtime substitution in the shim, or a second string set), which is a
+larger change than an icon swap and is left for its own issue.
+
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 
 - String-literal → `char*` conversions (pervasive; `-Wno-write-strings`).

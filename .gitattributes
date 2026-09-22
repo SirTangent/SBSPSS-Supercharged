@@ -1,3 +1,5 @@
 '*.Ixa' filter=lfs diff=lfs merge=lfs -text
 *.Ixa filter=lfs diff=lfs merge=lfs -text
 *.exe filter=lfs diff=lfs merge=lfs -text
+Graphics/UI/+key*.bmp filter=lfs diff=lfs merge=lfs -text
+docs/assets/issues/*.png filter=lfs diff=lfs merge=lfs -text

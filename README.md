@@ -250,6 +250,10 @@ reaches the game.
 What each button does in the game is configurable from the in-game Options
 menu, exactly as on the console.
 
+The keyboard key-cap icons the PC build shows in its button prompts are by
+[Blubrry](https://itsblubrry.itch.io/basic-keyboard-controller-glyphs), used
+with permission - see [CREDITS.md](CREDITS.md).
+
 **Debug build only:** two development tools from the original code are kept
 alive on PC. Select (`Right Shift`) opens the VRAM viewer, and L2 + Start
 (`E` + `Enter`) writes a screenshot. If a menu seems to have vanished into a
