@@ -7,7 +7,8 @@
 	Project:	Spongebob
 	Purpose:	One resolver for "which icon goes beside this prompt".
 
-	Copyright (c) 2000 Climax Development Ltd
+	Part of the SBSPSS-Supercharged Win11 port, not the original Climax
+	source: written for the port in 2026.
 
 ===========================================================================*/
 
