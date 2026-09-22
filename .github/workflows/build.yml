@@ -149,11 +149,26 @@ jobs:
   # Vulkan-Headers packages port/cmake/deps_vc.cmake fetches.  Advisory
   # while the toolchain is young (M8 PR 4 timebox): a failure here is a
   # finding to look at, not a red PR.
+  #
+  # One job definition, two targets (M9): i686-pc-windows-msvc, and the
+  # same tree as a true 64-bit exe (SBSP_PC64 - 4-byte pointer fields kept
+  # in the file-overlay structs, a 16-aligned heap).  A matrix rather than
+  # two copies, so a change to the steps cannot land in one and miss the
+  # other.
   clangcl:
+    name: clangcl (${{ matrix.triple }})
     needs: data
     runs-on: windows-latest
     timeout-minutes: 40
     continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - preset: clangcl-debug
+            triple: i686-pc-windows-msvc
+          - preset: clangcl-x64-debug
+            triple: x86_64-pc-windows-msvc
     defaults:
       run:
         shell: pwsh
@@ -176,76 +191,25 @@ jobs:
 
       # the preset borrows MSYS2's ninja for local use; the runner has its
       # own on PATH
-      - name: Configure (clang-cl, i686-pc-windows-msvc)
+      - name: Configure (clang-cl, ${{ matrix.triple }})
         working-directory: port
-        run: cmake --preset clangcl-debug -DCMAKE_MAKE_PROGRAM=ninja
+        run: cmake --preset ${{ matrix.preset }} -DCMAKE_MAKE_PROGRAM=ninja
 
       - name: Build
         working-directory: port
-        run: cmake --build --preset clangcl-debug
+        run: cmake --build --preset ${{ matrix.preset }}
 
       - name: Unit tests
-        run: ctest --test-dir port/build/clangcl-debug --output-on-failure -L unit --no-tests=error
+        run: ctest --test-dir port/build/${{ matrix.preset }} --output-on-failure -L unit --no-tests=error
 
       - name: Playthrough tiers (uncapped)
-        run: ctest --test-dir port/build/clangcl-debug --output-on-failure -L playthrough --no-tests=error
+        run: ctest --test-dir port/build/${{ matrix.preset }} --output-on-failure -L playthrough --no-tests=error
 
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: tier-logs-clangcl-${{ env.TERRITORY }}-${{ env.VERSION }}
-          path: port/build/clangcl-debug/tier-logs/
-          if-no-files-found: ignore
-          retention-days: 7
-
-  # clang-cl again, targeting x86_64-pc-windows-msvc (M9): the same tree as
-  # a true 64-bit exe (SBSP_PC64 - 4-byte pointer fields kept in the
-  # file-overlay structs, a 16-aligned heap).  Same labels as clangcl;
-  # advisory like it.
-  clangcl-x64:
-    needs: data
-    runs-on: windows-latest
-    timeout-minutes: 40
-    continue-on-error: true
-    defaults:
-      run:
-        shell: pwsh
-    env:
-      SDL_VIDEODRIVER: dummy
-      SDL_AUDIODRIVER: dummy
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/download-artifact@v8
-        with:
-          name: sbsp-data-${{ env.TERRITORY }}-${{ env.VERSION }}
-          path: out/
-
-      - name: Toolchain versions
-        run: |
-          & "C:\Program Files\LLVM\bin\clang-cl.exe" --version
-          cmake --version
-          ninja --version
-
-      - name: Configure (clang-cl, x86_64-pc-windows-msvc)
-        working-directory: port
-        run: cmake --preset clangcl-x64-debug -DCMAKE_MAKE_PROGRAM=ninja
-
-      - name: Build
-        working-directory: port
-        run: cmake --build --preset clangcl-x64-debug
-
-      - name: Unit tests
-        run: ctest --test-dir port/build/clangcl-x64-debug --output-on-failure -L unit --no-tests=error
-
-      - name: Playthrough tiers (uncapped)
-        run: ctest --test-dir port/build/clangcl-x64-debug --output-on-failure -L playthrough --no-tests=error
-
-      - uses: actions/upload-artifact@v7
-        if: failure()
-        with:
-          name: tier-logs-clangcl-x64-${{ env.TERRITORY }}-${{ env.VERSION }}
-          path: port/build/clangcl-x64-debug/tier-logs/
+          name: tier-logs-${{ matrix.preset }}-${{ env.TERRITORY }}-${{ env.VERSION }}
+          path: port/build/${{ matrix.preset }}/tier-logs/
           if-no-files-found: ignore
           retention-days: 7
 

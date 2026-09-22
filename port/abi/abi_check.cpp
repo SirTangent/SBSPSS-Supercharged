@@ -9,12 +9,12 @@
 	with the game's own flags and include path, so it measures what the game
 	measures, and fails the build instead.
 
-	gnu++98: no static_assert - a negative array size is the error.
+	ABI_CHECK (abi_check.h, beside dstructs.h) is shared with the one overlay
+	struct that lives outside dstructs.h, textdbase.cpp's TransHeader.
 */
 #include "system\global.h"
 #include <dstructs.h>
-
-#define ABI_CHECK(name, cond)	typedef char abi_check_##name[(cond) ? 1 : -1]
+#include <abi_check.h>
 
 ABI_CHECK(sLayerShadeHdr,	sizeof(sLayerShadeHdr)	== 24);
 ABI_CHECK(sLevelHdr,		sizeof(sLevelHdr)		== 80);

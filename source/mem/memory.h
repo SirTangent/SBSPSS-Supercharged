@@ -35,10 +35,12 @@
 #endif
 #define	MEM_ROUND(n)	(((n)+(MEM_ALIGN-1))&~(u32)(MEM_ALIGN-1))
 
-// The length word MemAllocate wrote at the block base, reached from the
-// pointer it handed back.  MemFree walks back in bytes; anything else reading
-// the length must do the same, because stepping back a count of u32s is only
-// the same address while MEM_ALIGN is 4.
+// The header MemAllocate puts in front of the pointer it hands back: the
+// length word (MEM_ALIGN bytes) and, in DEBUG, the head guards.  One
+// definition for all three readers - MemAllocate sizing the block, MemFree
+// walking back to the length word, dumpDebugMem (__DEBUG_MEM__) reading it -
+// so they cannot drift.  Walked in bytes: stepping back a count of u32s is
+// only the same address while MEM_ALIGN is 4.
 //
 // These live here rather than in memory.cpp deliberately: that file's line
 // numbering is load-bearing.  The PS1 build bakes __LINE__ into its ASSERTs
