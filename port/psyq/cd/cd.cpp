@@ -460,7 +460,7 @@ extern "C" int CdSetDebug(int level)
 	clears it at both ends of a movie (source/fmv/fmv.cpp:186,267); the
 	engine holds the stream in place while it is NULL.  CdReadCallback stays
 	registration-only (M7).  */
-static PortCdCB g_readCallback;
+static CdlCB g_readCallback;	/* registration-only; a real CdlCB (psxboot.cpp) */
 PortCdCB g_cdReadyCallback;		/* read by xa_stream.cpp */
 
 /*	xa_stream.cpp binds the stream file lazily through this: TRACK1.IXA's
@@ -499,13 +499,16 @@ extern "C" int CdRead2(long mode)
 	return StrStream_Start(mode);
 }
 
-/*	The two registration seams convert between libcd's CdlCB and the handler's
-	real (int, u_char *) signature - the one place the cast belongs, so no
-	call site can get it wrong on x64 (see PortCdCB in xa_stream.h).  */
+/*	CdReadyCallback is the seam that converts between libcd's CdlCB and the
+	handler's real (int, u_char *) signature - the one place the cast
+	belongs, so no call site can get it wrong on x64 (see PortCdCB in
+	xa_stream.h).  CdReadCallback's only registrant, PsxBoot/psxboot.cpp's
+	cdread_callback(u_char, u_char *), is a genuine CdlCB, so that one is
+	stored as libcd types it and would be fired that way.  */
 extern "C" CdlCB CdReadCallback(CdlCB func)
 {
-	CdlCB old = (CdlCB)g_readCallback;
-	g_readCallback = (PortCdCB)func;
+	CdlCB old = g_readCallback;
+	g_readCallback = func;
 	PSYQ_STUB_ONCE();	/* registered but not yet fired (M7) */
 	return old;
 }

@@ -5,13 +5,13 @@
 	value for which the OR is harmless and SetSp ignores it.
 
 	EnterCriticalSection/ExitCriticalSection disable PS1 interrupts; the pump
-	model is single-threaded so they are no-ops.  (The Win32 functions of the
-	same name are stdcall and take a parameter - different decorated symbols
-	on i686, so no collision.  x64 decorates nothing, so there the PSY-Q one
-	carries the psyq_sdk_ name the game reaches it by; this is shim code and
-	does not get port/include/libapi.h's SBSP_PC64 rename, so it spells the
-	symbol out.  Both conditions mean "the 64-bit build" - SBSP_PC64 is set
-	exactly when CMAKE_SIZEOF_VOID_P is 8.)
+	model is single-threaded so they are no-ops.  The PSY-Q
+	EnterCriticalSection shares its name with a Win32 function - distinct
+	decorated symbols on i686 (kernel32's is stdcall, _EnterCriticalSection@4),
+	one and the same symbol on x64, where the static CRT drags kernel32's
+	import member in.  port/include/libapi.h renames the PSY-Q one to
+	psyq_sdk_EnterCriticalSection for the game on every PC build; this is
+	shim code that does not see that shadow, so it defines the name directly.
 
 	The event/root-counter set drives system/clickcount.cpp's RCnt2 timer
 	for real since M2: OpenEvent(RCntCNT2) registers the handler, SetRCnt
@@ -53,11 +53,7 @@ extern "C" {
 long GetSp(void)					{ return 0; }
 long SetSp(long newSp)				{ (void)newSp; return 0; }
 
-#ifdef _WIN64
 void psyq_sdk_EnterCriticalSection(void)	{ }
-#else
-void EnterCriticalSection(void)		{ }
-#endif
 void ExitCriticalSection(void)		{ }
 
 long OpenEvent(unsigned long desc, long spec, long mode, long (*func)())

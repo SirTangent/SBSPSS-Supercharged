@@ -449,8 +449,14 @@ needed (#32).  The 32-bit PC builds are unchanged too: their
     `relocate()` fixes up with `(u32)ptr+(u32)this`.  `TRANS_PTR` /
     `TRANS_RELOC` are defined in a block above the struct (the originals
     off x64, `FPTR<char>` and `.set((char*)this+raw())` on it) and the two
-    lines use them.  The block adds lines above the file's ASSERTs:
-    `#line 49` arm.
+    lines use them.  The block adds lines above the file's ASSERTs, whose
+    `__LINE__` the PlayStation build bakes into Spongey.cpe, so the off-x64
+    arm ends in a `#line` that restores the original numbering - gated on
+    the MIPS compiler alone (`mips` / `__mips__`, as `vsprintf.h`), since
+    the 32-bit PC builds carry no byte-identity contract and want true
+    line numbers in their ASSERT messages and PDBs.  The file's
+    `ABI_CHECK` on `TransHeader` (`abi_check.h`, shared with
+    `port/abi/abi_check.cpp`) sits at the very end for the same reason.
 33. **`source/system/vsprintf.h`, `vsprintf.cpp` (varargs)** - the
     hand-rolled `__va_start` / `__va_arg` ("stdarg defs from MSVC", 1999)
     walk the stack from `&v`, the i386 convention; x64 passes the first
@@ -460,8 +466,11 @@ needed (#32).  The 32-bit PC builds are unchanged too: their
     `PSX_NO_ASM` must not switch it on a PlayStation).  With real `va_arg`
     a `short` must be fetched as the `int` it was promoted to
     (`__va_arg_short` / `_ushort`; the originals on MIPS), and `%p` goes
-    through `uintptr_t` (`__va_arg_ptr`; prints the low 32 bits -
-    `number()` takes a `long`).  Only `__writeDbgMessage` uses any of it.
+    through `uintptr_t` (`__va_arg_ptr`), which `number()` carries whole:
+    its `num_t` is `long long` under `_WIN64`, where `long` is 32 bits, so
+    a 64-bit address prints in full (16 hex digits).  Off `_WIN64` `num_t`
+    is the `long` the 1999 code named.  Only `__writeDbgMessage` uses any
+    of it.
 34. **`source/mem/memory.h`, `memory.cpp` (heap alignment)** -
     `MemAllocate` rounded every block to 4 bytes behind a 4-byte length
     header, so every `new`ed object sat on a 4-byte boundary: wrong for
@@ -766,12 +775,14 @@ error: `EnterCriticalSection`.  The PSY-Q function (libapi: disable
 interrupts, no arguments) and the Win32 one never met on i686, where
 kernel32's is stdcall and decorated `_EnterCriticalSection@4`; x64 has one
 calling convention and no decoration, and the static CRT drags kernel32's
-import member in, so lld-link saw the symbol twice.  Under `_WIN64` the
+import member in, so lld-link saw the symbol twice.  The
 `port/include/libapi.h` shadow renames the PSY-Q one to
-`psyq_sdk_EnterCriticalSection` - declaration and callers alike, the
-`rename` / `_get_errno` trick without the `#undef` - and
-`api/libapi_stubs.cpp` defines it under that name.  The i686 builds are
-untouched.
+`psyq_sdk_EnterCriticalSection` on every PC build - declaration and
+callers alike, the `rename` / `_get_errno` trick without the `#undef` -
+and `api/libapi_stubs.cpp` defines it under that name.  The rename is
+unconditional rather than keyed on `_WIN64` or `SBSP_PC64`, so the
+declaration and the definition can never disagree on the predicate; on
+i686, where the two symbols never collided, it is merely harmless.
 
 **The CD ready callback** was the one behavioural x64 bug, found by the
 A/B rather than the compiler: on the `gameover_continue` route the x64
@@ -802,8 +813,9 @@ x64 build that lost `SBSP_PC64`, or a new raw pointer member in
 `dstructs.h`, fails to compile instead of reading every file at the wrong
 offsets.
 
-**CI.**  A `clangcl-x64` job (advisory, like `clangcl`): configure, build,
-`ctest -L unit`, `ctest -L playthrough`.
+**CI.**  The `clangcl` job is a two-entry matrix, `clangcl-debug` and
+`clangcl-x64-debug` (both advisory): configure, build, `ctest -L unit`,
+`ctest -L playthrough`.
 
 ### x64 A/B (M9 PR 2)
 

@@ -427,9 +427,9 @@ char	*Addr = (char*)-1;
 u32		Len = MEM_ROUND(TLen);
 int		BestNode,FirstNode;
 
-		Len += MEM_ALIGN;			//add on 4 to store Addr !
+		Len += MEM_BLOCK_HDR;		//length word + head guards (mem/memory.h)
 #ifdef	USE_MEM_GUARDS
-		Len+=(MEM_GUARD_SIZE*2);
+		Len+=MEM_GUARD_SIZE;		//tail guards
 #endif	/* USE_MEM_GUARDS */
 
 // Find First (and possably only)
@@ -502,10 +502,10 @@ char	*Addr = (char*)Address;
 
 // If file from Databank, dont try and clear it (simple!!)
 		if (CFileIO::IsFromDataBank(Address)) return;
-#ifdef	USE_MEM_GUARDS
-		Addr-=MEM_GUARD_SIZE;
-#endif	/* USE_MEM_GUARDS */
-		Addr -= MEM_ALIGN;
+		/*	back over the head guards and the length word by the one header
+			size, MEM_BLOCK_HDR (mem/memory.h), that MemAllocate sized and
+			dumpDebugMem reads through - so the three cannot drift  */
+		Addr -= MEM_BLOCK_HDR;
 		Len = *(u32*)Addr;
 		
 #ifdef	USE_MEM_GUARDS
