@@ -38,6 +38,10 @@
 #include "pad\pads.h"
 #endif
 
+#ifndef __PAD_PADICON_H__
+#include "pad\padicon.h"
+#endif
+
 #ifndef __GAME_GAME_H__
 #include "game\game.h"
 #endif
@@ -685,6 +689,7 @@ void	CSaveScene::renderButtonPrompts()
 int	INSTRUCTIONS_Y_POS=185;
 int INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT=10;
 int INSTRUCTIONS_BUTTON_Y_OFFSET=4;
+int INSTRUCTIONS_KEYCAP_Y_OFFSET=2;		// PC key caps, tuned by eye like the glyph (github issue #43)
 
 	if(m_mode==MODE__CONFIRMSAVE)
 	{
@@ -696,17 +701,17 @@ int INSTRUCTIONS_BUTTON_Y_OFFSET=4;
 	}
 
 
-	fh1=m_spriteBank->getFrameHeader(FRM__BUTX);
+	fh1=m_spriteBank->getFrameHeader(CPadIcon::getFrame(PAD_CROSS));
 	width=fh1->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_fontBank->getStringWidth(STR__FRONTEND__CROSS_TO_SELECT);
 	x=128-(width/2);
-	m_spriteBank->printFT4(fh1,x,y+INSTRUCTIONS_BUTTON_Y_OFFSET,0,0,0);
+	m_spriteBank->printFT4(fh1,x,y+CPadIcon::getYOffset(PAD_CROSS,INSTRUCTIONS_BUTTON_Y_OFFSET,INSTRUCTIONS_KEYCAP_Y_OFFSET),0,0,0);
 	x+=fh1->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT;
 	m_fontBank->print(x,y,STR__FRONTEND__CROSS_TO_SELECT);
 
-	fh1=m_spriteBank->getFrameHeader(FRM__BUTT);
+	fh1=m_spriteBank->getFrameHeader(CPadIcon::getFrame(PAD_TRIANGLE));
 	width=fh1->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_fontBank->getStringWidth(STR__FRONTEND__TRIANGLE_TO_GO_BACK);
 	x=256+128-(width/2);
-	m_spriteBank->printFT4(fh1,x,y+INSTRUCTIONS_BUTTON_Y_OFFSET,0,0,0);
+	m_spriteBank->printFT4(fh1,x,y+CPadIcon::getYOffset(PAD_TRIANGLE,INSTRUCTIONS_BUTTON_Y_OFFSET,INSTRUCTIONS_KEYCAP_Y_OFFSET),0,0,0);
 	x+=fh1->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT;
 	m_fontBank->print(x,y,STR__FRONTEND__TRIANGLE_TO_GO_BACK);
 }

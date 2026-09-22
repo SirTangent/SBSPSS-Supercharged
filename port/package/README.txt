@@ -38,6 +38,10 @@ Keyboard (defaults; change them in sbsp.ini):
 Any XInput or DualShock-style gamepad works as-is (D-pad, face buttons,
 shoulders/triggers, Start/Back) including vibration.
 
+The key-cap icons in the game's button prompts are by Blubrry (ItsBlubrry),
+https://itsblubrry.itch.io/basic-keyboard-controller-glyphs, used with
+permission.
+
 The game pauses by itself while another window has the focus and carries on
 when you come back.
 

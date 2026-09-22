@@ -332,12 +332,22 @@ void FontBank::setSMode( int _sMode )
   ---------------------------------------------------------------------- */
 int FontBank::getCharWidth( char _char )
 {
+	/*	fontTab is a 256-entry table and its upper half is live: 0x91/0x92 (the
+		Windows-1252 quotes the dialogue text really uses for its apostrophes)
+		map to the ' glyph, and 0xC0-0xFF carry the accented EUR characters.
+		_char is a plain char, which is SIGNED on x86 - so 0x92 indexed
+		fontTab[-110], a read from BEFORE the table.  Whatever junk sat there
+		was then used as a sprite frame number, and getFrameHeader() of a junk
+		frame is a garbage quad: a wide blank gap if the link layout was kind
+		(github issue #24), a screen-high slab sampling the framebuffer if it
+		was not (which is how issue #43's extra sprites made it visible).
+		Every lookup in this file goes through (u8) for that reason.  */
 	int	size;
 
 	if( _char!=' ' )
 	{
-		if( m_fontData->fontTab[_char]==-1 ) _char=1;		// Error - Chartacter does not eixst!
-		size=m_spriteBank.getFrameWidth( m_fontData->fontTab[_char] );
+		if( m_fontData->fontTab[(u8)_char]==-1 ) _char=1;		// Error - Chartacter does not eixst!
+		size=m_spriteBank.getFrameWidth( m_fontData->fontTab[(u8)_char] );
 	}
 	else
 	{
@@ -415,8 +425,8 @@ int FontBank::printChar( char _char,int _x,int _y )
 {
 	if (_char!=' ')
 	{
-		if( m_fontData->fontTab[_char]==-1 ) _char=1;		// Error - Chartacter does not eixst!
-		POLY_FT4 *Ft4=m_spriteBank.printFT4(m_fontData->fontTab[_char],_x,_y,0,0,m_ot);
+		if( m_fontData->fontTab[(u8)_char]==-1 ) _char=1;		// Error - Chartacter does not eixst!
+		POLY_FT4 *Ft4=m_spriteBank.printFT4(m_fontData->fontTab[(u8)_char],_x,_y,0,0,m_ot);
 		setRGB0(Ft4,m_r,m_g,m_b);
 		setShadeTex(Ft4,0);
 
@@ -508,9 +518,9 @@ int ScalableFontBank::printChar( char _char,int _x,int _y )
 		sFrameHdr	*fh;
 		POLY_FT4	*Ft4;
 
-		if( m_fontData->fontTab[_char]==-1 ) _char=1;		// Error - Chartacter does not eixst!
+		if( m_fontData->fontTab[(u8)_char]==-1 ) _char=1;		// Error - Chartacter does not eixst!
 
-		fh=m_spriteBank.getFrameHeader(m_fontData->fontTab[_char]);
+		fh=m_spriteBank.getFrameHeader(m_fontData->fontTab[(u8)_char]);
 		_x+=((fh->W*m_fontScale)>>9)-(fh->W/2);
 		_y-=((fh->H*m_fontScale)>>9)-(fh->H/2);
 

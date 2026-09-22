@@ -59,6 +59,7 @@ static const IniKey kKeys[] =
 	{ "key_r1",              "SBSP_KEY_R1",              "W",        NULL },
 	{ "key_l2",              "SBSP_KEY_L2",              "E",        NULL },
 	{ "key_r2",              "SBSP_KEY_R2",              "R",        "(Alt is reserved for host shortcuts and never reaches the game)" },
+	{ "prompt_icons",        "SBSP_PROMPT_ICONS",        "auto",     "icons in the button prompts: auto = follow the device in use, keys = always key caps, pad = always the PS1 glyphs" },
 	{ "pad_deadzone",        "SBSP_PAD_DEADZONE",        "15",       "analog stick dead zone, percent of full travel (0 = raw)" },
 	{ "rumble",              "SBSP_RUMBLE",              "1",        "1 = forward the game's vibration to the gamepad, 0 = never rumble" },
 	{ "pause_on_focus_loss", "SBSP_PAUSE_ON_FOCUS_LOSS", "1",        "1 = freeze the game (and its audio) while another window has the focus" },

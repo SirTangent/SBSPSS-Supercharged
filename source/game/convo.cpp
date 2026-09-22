@@ -42,6 +42,10 @@
 #include "pad\pads.h"
 #endif
 
+#ifndef __PAD_PADICON_H__
+#include "pad\padicon.h"
+#endif
+
 #ifndef __LEVEL_LEVEL_H__
 #include "level\level.h"
 #endif
@@ -659,13 +663,20 @@ void CConversation::renderText()
 	}
 
 	// Render up/down button hints
+	/*	The down hint sits one icon to the right of the up hint - measured,
+		not the old hardcoded 20, because the PC key caps are not all 18px
+		wide (github issue #43).  It is measured whether or not the up hint
+		is drawn, so the down arrow does not jump about as the page
+		changes.  */
+	int upFrame=CPadIcon::getFrame(PAD_UP);
+	int downXOfs=s_sprites->getFrameWidth(upFrame)+TEXTBOX_BUTTONS_ICON_GAP;
 	if(s_textPageOffset!=0)
 	{
-		s_sprites->printFT4(FRM__BUTU,clipTextRegion.x+TEXTBOX_BUTTONS_XOFF,TEXTBOX_Y+TEXTBOX_BUTTONS_YOFF,0,0,0);
+		s_sprites->printFT4(upFrame,clipTextRegion.x+TEXTBOX_BUTTONS_XOFF,TEXTBOX_Y+CPadIcon::getYOffset(PAD_UP,TEXTBOX_BUTTONS_YOFF,TEXTBOX_KEYCAP_YOFF),0,0,0);
 	}
 	if(s_textPageOffset<s_maxTextPageOffset)
 	{
-		s_sprites->printFT4(FRM__BUTD,clipTextRegion.x+TEXTBOX_BUTTONS_XOFF+TEXTBOX_BUTTONS_GAP,TEXTBOX_Y+TEXTBOX_BUTTONS_YOFF,0,0,0);
+		s_sprites->printFT4(CPadIcon::getFrame(PAD_DOWN),clipTextRegion.x+TEXTBOX_BUTTONS_XOFF+downXOfs,TEXTBOX_Y+CPadIcon::getYOffset(PAD_DOWN,TEXTBOX_BUTTONS_YOFF,TEXTBOX_KEYCAP_YOFF),0,0,0);
 	}
 
 	// Render X button hint
@@ -678,7 +689,7 @@ void CConversation::renderText()
 	{
 		xofs=clipTextRegion.x+TEXTBOX_BUTTONS_XOFF+TEXTBOX_WIDTH_FOR_NARRATOR-TEXTBOX_XBUTTON_XOFFSET;
 	}
-	s_sprites->printFT4(FRM__BUTX,xofs,TEXTBOX_Y+TEXTBOX_BUTTONS_YOFF,0,0,0);
+	s_sprites->printFT4(CPadIcon::getFrame(PAD_CROSS),xofs,TEXTBOX_Y+CPadIcon::getYOffset(PAD_CROSS,TEXTBOX_BUTTONS_YOFF,TEXTBOX_KEYCAP_YOFF),0,0,0);
 }
 
 
