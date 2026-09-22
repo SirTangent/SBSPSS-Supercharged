@@ -187,8 +187,8 @@ void exc_c(void)
 	static int	s_padDelay=50;
 
 	PadInit(0);
-	s_viewSp=(int *)reg_lst[OFS_SP];
-	s_viewPc=(int *)reg_lst[OFS_EPC];
+	s_viewSp=(int *)(size_t)reg_lst[OFS_SP];
+	s_viewPc=(int *)(size_t)reg_lst[OFS_EPC];
 
 	while(1)
 	{
@@ -214,8 +214,8 @@ void exc_c(void)
 				if(pad&PADR2)	s_viewPc+=8;
 				if(pad&PADstart)
 				{
-					s_viewSp=(int *)reg_lst[OFS_SP];
-					s_viewPc=(int *)reg_lst[OFS_EPC];
+					s_viewSp=(int *)(size_t)reg_lst[OFS_SP];
+					s_viewPc=(int *)(size_t)reg_lst[OFS_EPC];
 				}
 			}
 		}
@@ -299,7 +299,7 @@ static void printAdr(int *_adr)
 	int		chk,dummy_mem,error;
 	char	textBuf[64];
 
-	chk=(int)_adr;
+	chk=(int)(size_t)_adr;
 	dummy_mem=chk&0xf0000000;
 	chk&=0x0ffffffc;
 	error=1;
@@ -307,11 +307,11 @@ static void printAdr(int *_adr)
 		error=0;
 	if(chk>0x1f800000&&chk<0x1f800400)
 		error=0;
-	_adr=(int *)(chk|dummy_mem);
+	_adr=(int *)(size_t)(chk|dummy_mem);
 	if(error==0)
-		sprintf(textBuf,"%08x=%08x",(int)(_adr),*_adr);
+		sprintf(textBuf,"%08x=%08x",(int)(size_t)(_adr),*_adr);
 	else
-		sprintf(textBuf,"%08x=XXXXXXXX",(int)(_adr));
+		sprintf(textBuf,"%08x=XXXXXXXX",(int)(size_t)(_adr));
 	print(textBuf);
 }
 
@@ -364,7 +364,7 @@ static void displayCause()
 
 	excFont->setColour(255,0,0);
 
-	exc=(int*)reg_lst[OFS_EPC];
+	exc=(int*)(size_t)reg_lst[OFS_EPC];
 	sprintf(textBuf,"%s",s_exceptionText[reg_lst[OFS_CA]>>2&0x1f]);
 	print(textBuf);
 
@@ -376,7 +376,7 @@ static void displayCause()
 			print(textBuf);
 	}
 	
-	sprintf(textBuf,"\nPC=%08x",(int)exc);
+	sprintf(textBuf,"\nPC=%08x",(int)(size_t)exc);
 	print(textBuf);
 	
 	if((reg_lst[OFS_CA]&0x80000000)==0x80000000)
@@ -432,7 +432,7 @@ static void displayDump()
 	for(int i=0;i<10;i++)
 	{
 		// SP
-		if(sp==(int*)reg_lst[OFS_SP])
+		if(sp==(int*)(size_t)reg_lst[OFS_SP])
 		{
 			print(">");
 		}
@@ -445,7 +445,7 @@ static void displayDump()
 		sp+=8;
 
 		// PC
-		if(pc==(int*)reg_lst[OFS_EPC])
+		if(pc==(int*)(size_t)reg_lst[OFS_EPC])
 		{
 			print(">");
 		}

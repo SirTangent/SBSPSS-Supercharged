@@ -152,6 +152,9 @@ void deliverNext(void)
 		fprintf(stderr, "[xa] terminator sector %ld (chan %d) delivered\n",
 				thisLBA - g_startLBA, (sec[10] | (sec[11] << 8)) >> 10 & 31);
 
+	/*	g_cdReadyCallback is a PortCdCB - (int, u_char *), the signature the
+		handler really has rather than the CdlCB it is registered as; the why
+		is in xa_stream.h.  */
 	static u_char result[8];
 	g_cdReadyCallback(CdlDataReady, result);
 	g_stagedValid = 0;						/* served only during the callback */

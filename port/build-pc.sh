@@ -1,9 +1,10 @@
 #!/bin/bash
 # Configure + build the PC (Win32) port: every preset by default.
 #
-#   port/build-pc.sh [<preset>|usa|eur|clangcl|all] [extra ninja args...]
-#   port/build-pc.sh test [usa|eur|clangcl]  build, then ctest -L unit and -L playthrough on each tree
-#   port/build-pc.sh soak [usa|eur]          build, then the full Tier 1 + Tier 2 sweep on each tree
+#   port/build-pc.sh [<preset>|usa|eur|clangcl|clangcl64|all] [extra ninja args...]
+#   port/build-pc.sh test [usa|eur|clangcl|clangcl64]  build, then ctest -L unit and -L playthrough on each tree
+#   port/build-pc.sh soak [usa|eur|clangcl|clangcl64]  build, then the full Tier 1 + Tier 2 sweep on each tree
+#   port/build-pc.sh parity64 [debug|final]  build clang-cl x86 + x64, then the x64 A/B (streams, cross replay, cards)
 #
 # Presets (port/CMakePresets.json): debug, final (USA; usa-debug / usa-final
 # are accepted aliases) and eur-debug, eur-final (EUR, PAL 50Hz); `usa` /
@@ -19,6 +20,9 @@
 # needs LLVM + Visual Studio's x86 build tools, not MSYS2 - only its ninja
 # is borrowed).  They are kept out of `all`: the MinGW exes are the ones
 # that ship.
+#
+# clangcl-x64-debug / clangcl-x64-final (`clangcl64` = both) are clang-cl
+# again, targeting x86_64 (M9); also kept out of `all`.
 #
 # SBSP_CODEVIEW=1 in the environment configures the MinGW trees with
 # -DSBSP_CODEVIEW=ON (a .pdb beside every exe, for Visual Studio / WinDbg).
@@ -40,7 +44,7 @@ shift 2>/dev/null || true
 
 usage()
 {
-    echo "usage: port/build-pc.sh [debug|final|usa-debug|usa-final|eur-debug|eur-final|clangcl-debug|clangcl-final|usa|eur|clangcl|all|test [usa|eur|clangcl]|soak [usa|eur]] [ninja args]" >&2
+    echo "usage: port/build-pc.sh [debug|final|usa-debug|usa-final|eur-debug|eur-final|clangcl-debug|clangcl-final|clangcl-x64-debug|clangcl-x64-final|usa|eur|clangcl|clangcl64|all|test [usa|eur|clangcl|clangcl64]|soak [usa|eur|clangcl|clangcl64]|parity64 [debug|final]] [ninja args]" >&2
     exit 1
 }
 
@@ -52,8 +56,9 @@ presets_for()
         usa)  echo "debug final" ;;
         eur)  echo "eur-debug eur-final" ;;
         clangcl) echo "clangcl-debug clangcl-final" ;;
+        clangcl64) echo "clangcl-x64-debug clangcl-x64-final" ;;
         all|"") echo "debug final eur-debug eur-final" ;;
-        debug|final|eur-debug|eur-final|clangcl-debug|clangcl-final) echo "$w" ;;
+        debug|final|eur-debug|eur-final|clangcl-debug|clangcl-final|clangcl-x64-debug|clangcl-x64-final) echo "$w" ;;
         usa-debug) echo "debug" ;;      # the build-data.sh spelling, same tree
         usa-final) echo "final" ;;
         *) usage ;;
@@ -121,6 +126,36 @@ soak_one()
         --selftest --tier1 --tier2 --logs "build/$preset/soak-logs"
 }
 
+# The x64 A/B (M9): the 32-bit clang-cl exe plays every Tier 1 route and
+# Tier 2 level and keeps its logs, recordings and memory cards; the x64 exe
+# must then (1) produce the same [scene]/[frame] streams playing the same
+# tiers itself and (2) replay the 32-bit recordings without a desync, to the
+# same streams and byte-identical cards.
+#
+# Every leg runs even if an earlier one fails, and the combined result is the
+# exit status: leg 3 is the only thing that exercises the cross-exe replay and
+# the card compare, so a known divergence in leg 2 - FINAL has one, see
+# conv_pc.md - must not be what stops it from ever being reached.
+parity64()
+{
+    v="$1"
+    d="build/parity64-$v"
+    rc=0
+    rm -rf "$d"
+    echo "=== parity64 ($v): x86 baseline ==="
+    # --no-replay: the baseline's own determinism replay is already a ctest,
+    # and the recording leg 3 needs is written by the first pass regardless.
+    python3 tests/run_tier.py --exe "build/clangcl-$v/sbsp.exe" --tier1 --tier2 \
+        --no-replay --logs "$d/L32" --keep-artifacts "$d/A32" || rc=1
+    echo "=== parity64 ($v): x64, same tiers ==="
+    python3 tests/run_tier.py --exe "build/clangcl-x64-$v/sbsp.exe" --tier1 --tier2 \
+        --logs "$d/L64" --compare-frames "$d/L32" || rc=1
+    echo "=== parity64 ($v): x64 replays the x86 recordings ==="
+    python3 tests/run_tier.py --exe "build/clangcl-x64-$v/sbsp.exe" --tier1 \
+        --logs "$d/L64x" --compare-frames "$d/L32" --replay-from "$d/A32" || rc=1
+    return $rc
+}
+
 # presets_for runs in a command substitution, so its usage exit must be
 # re-checked here or a bad word would silently build nothing.
 case "$what" in
@@ -133,6 +168,16 @@ case "$what" in
         list=$(presets_for "${1:-all}") || exit 1
         for p in $list; do build_one "$p"; done
         for p in $list; do soak_one "$p"; done
+        ;;
+    parity64)
+        # DEBUG by default: it is the variant the A/B is green on.  FINAL has
+        # a known 39-frame divergence (campaign 6858-6897, a #39 gate-2
+        # matter), so `parity64 final` is expected to report a failure.
+        v=$(echo "${1:-debug}" | tr '[:upper:]' '[:lower:]')
+        case "$v" in debug|final) ;; *) usage ;; esac
+        build_one "clangcl-$v"
+        build_one "clangcl-x64-$v"
+        parity64 "$v"
         ;;
     *)
         list=$(presets_for "$what") || exit 1

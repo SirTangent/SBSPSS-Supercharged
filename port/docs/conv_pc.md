@@ -414,6 +414,91 @@ after it).  The guard is `port/build-psx.cmd` + a SHA-256 compare of
     `SBSP_LANGUAGE` (precedence: argument > environment > ini); nothing
     else changes here.
 
+## Game-source changes (M9)
+
+The x64 PC build (`SBSP_PC64`, clang-cl `x86_64-pc-windows-msvc`).  Same
+rule as ever - the PlayStation build stays hash-identical - met here
+mostly by *same-line* edits through macros whose non-x64 expansion is the
+original token sequence, so no line moves and only one `#line` arm was
+needed (#32).  The 32-bit PC builds are unchanged too: their
+`[scene]`/`[frame]` streams before and after this batch are identical.
+
+31. **`tools/Data/include/dstructs.h`, new `tools/Data/include/fptr.h`,
+    `source/utils/utils.h` (`RELOC_PTR`), `source/level/level.cpp`,
+    `source/level/layerback.cpp`, `source/gfx/actor.cpp`** - the pointer
+    fields of the file-overlay structs.  MkLevel / MkActor `fwrite`
+    `sLevelHdr`, `sLayerShadeHdr`, `sSpriteAnimBank`, `sSpriteAnim` and
+    `sSpriteFrameGfx` whole, each pointer member holding a 4-byte file
+    offset that the loader relocates in place
+    (`X->F=(T*)MakePtr(Base,(int)X->F)`).  The tools are prebuilt 32-bit
+    binaries, so the format is fixed: the 14 members are now declared
+    `DPTR(T) name;` - `T *` everywhere except under `SBSP_PC64`, where it is
+    `FPTR<T>`, a POD holding the 32-bit *address* (not an arena offset:
+    every loaded file lives in the arena, which sits below 1GB, so the
+    address zero-extends back exactly and 0 stays NULL - `actor.cpp` tests
+    `PAKSpr` for a blank frame before relocating it).  One conversion
+    operator, to `T*`, carries every read site (`[]`, `+`, `!`, `if()`,
+    copies to raw pointers, arguments) through the built-in operators.  The
+    14 relocation lines became `RELOC_PTR(X->F,T,Base);`, which expands to
+    the original expression off x64 and to `.set(...raw())` on it;
+    `actor.cpp`'s `(u32*)Actor->ActorGfx->Palette` became
+    `(u32*)(u8*)...` (a C-cast to an unrelated pointer type cannot go
+    through the conversion operator; a no-op elsewhere).
+32. **`source/locale/textdbase.cpp` (`TransHeader`)** - the one overlay
+    struct outside `dstructs.h`: a count and a table of `char *` that
+    `relocate()` fixes up with `(u32)ptr+(u32)this`.  `TRANS_PTR` /
+    `TRANS_RELOC` are defined in a block above the struct (the originals
+    off x64, `FPTR<char>` and `.set((char*)this+raw())` on it) and the two
+    lines use them.  The block adds lines above the file's ASSERTs, whose
+    `__LINE__` the PlayStation build bakes into Spongey.cpe, so the off-x64
+    arm ends in a `#line` that restores the original numbering - gated on
+    the MIPS compiler alone (`mips` / `__mips__`, as `vsprintf.h`), since
+    the 32-bit PC builds carry no byte-identity contract and want true
+    line numbers in their ASSERT messages and PDBs.  The file's
+    `ABI_CHECK` on `TransHeader` (`abi_check.h`, shared with
+    `port/abi/abi_check.cpp`) sits at the very end for the same reason.
+33. **`source/system/vsprintf.h`, `vsprintf.cpp` (varargs)** - the
+    hand-rolled `__va_start` / `__va_arg` ("stdarg defs from MSVC", 1999)
+    walk the stack from `&v`, the i386 convention; x64 passes the first
+    four arguments in registers.  Any non-MIPS compiler now gets
+    `<stdarg.h>` behind the same names (gated on the compiler's `mips`
+    predefines rather than `PSX_MIPS_ASM`: it is an ABI matter, and
+    `PSX_NO_ASM` must not switch it on a PlayStation).  With real `va_arg`
+    a `short` must be fetched as the `int` it was promoted to
+    (`__va_arg_short` / `_ushort`; the originals on MIPS), and `%p` goes
+    through `uintptr_t` (`__va_arg_ptr`), which `number()` carries whole:
+    its `num_t` is `long long` under `_WIN64`, where `long` is 32 bits, so
+    a 64-bit address prints in full (16 hex digits).  Off `_WIN64` `num_t`
+    is the `long` the 1999 code named.  Only `__writeDbgMessage` uses any
+    of it.
+34. **`source/mem/memory.h`, `memory.cpp` (heap alignment)** -
+    `MemAllocate` rounded every block to 4 bytes behind a 4-byte length
+    header, so every `new`ed object sat on a 4-byte boundary: wrong for
+    8-byte pointers, and clang assumes `operator new` returns 16-aligned
+    storage on x64.  `MEM_ALIGN` (4; 16 under `SBSP_PC64`) is now the
+    rounding *and* the header size, `MEM_ROUND()` replaces the three
+    `(TLen+3)&0xfffffffc`, and the DEBUG guards are `MEM_NUM_GUARDS` ints
+    (2; 4 on x64, so header + head guard is still a multiple of 16).  The
+    arena base is 16MB-aligned and every length carved from it is a
+    multiple of `MEM_ALIGN`, so alignment holds by induction.  Off x64
+    every expression folds to the constant it replaced - which is also why
+    the 32-bit `RamUsed` numbers (`[summary]`, `# epoch ram=` markers,
+    route ceilings) did not move.  On x64 they are larger (DEBUG campaign
+    `peak_ram` 1,319,248 against 1,287,020) and still far under the
+    ceilings.
+35. **`source/gfx/prim.cpp:45`, `source/system/except.cpp` (pointer/int
+    casts)** - the only sites the x64 compile flagged
+    (`-Wpointer-to-int-cast` / `-Wint-to-pointer-cast` are deliberately
+    not on the suppression list): `(int)ptr` became `(int)(size_t)ptr` and
+    `(int *)i` became `(int *)(size_t)i`, the `prim.h` spelling.  Identical
+    code on a 32-bit target.  `PrimDisplay`'s overflow test still compares
+    truncated addresses, which is exact below 2GB; `except.cpp` is the
+    PlayStation exception screen (a MIPS register dump) and is never
+    entered on PC.  Comment only, same line count: `gfx/prim.h`'s
+    portable-branch NOTE now states the real prim-tag constraint (issue
+    #14) - 24 bits reach 16MB, so the OT and its prims must share one
+    16MB-aligned window, whatever the pointer width.
+
 ### EUR build (M8 PR 2)
 
 `port/CMakePresets.json` has `eur-debug` / `eur-final` beside the USA
@@ -658,6 +743,136 @@ today's windows-latest), no MSYS2 at all,
 and runs both labels - `continue-on-error` while the toolchain is young.
 The MSYS2 SDL3 URL pin stays (the mirror still serves the file); the
 durable escape from the shrinking mingw32 index is the clang-cl route.
+
+### x64 build (M9 PR 1)
+
+The shim-side half of the x64 exe; the game-source half is entries #31-#35
+above.
+
+**Toolchain.**  `cmake/clangcl-toolchain.cmake` takes `SBSP_ARCH` (`x86`
+default, `x64`): it picks `CMAKE_SYSTEM_PROCESSOR`, the target triple
+(`i686-` / `x86_64-pc-windows-msvc`) and the leaf of the three lld-link
+`/libpath:` directories.  The variable is listed in
+`CMAKE_TRY_COMPILE_PLATFORM_VARIABLES` - the toolchain file is re-read
+inside every `try_compile` project, which does not otherwise see the cache
+and would have probed the compiler as x86.  Inside a vcvars prompt of the
+other architecture the configure stops (`VSCMD_ARG_TGT_ARCH`) rather than
+link against that prompt's `LIB`.  Presets `clangcl-x64-debug` /
+`clangcl-x64-final`; `build-pc.sh clangcl64` (build, `test`, `soak`).
+`deps_vc.cmake` needed nothing: the SDL3 VC package carries `lib/x64` and
+its config picks by pointer size, and the Vulkan headers have no
+architecture.  The `/alternatename` alias for `SinTable` is the same
+string on x64: MSVC mangles a global array as a pointer to its element
+type, and that outermost pointer carries no `E` (`__ptr64`) qualifier.
+
+**`SBSP_PC64`** is defined for the game target (and `abi/abi_check.cpp`)
+when `CMAKE_SIZEOF_VOID_P` is 8, never for the shim, the data tools or the
+PlayStation build.
+
+**The shim on x64** built with 0 warnings as it stood - it was written
+against `uintptr_t` / `size_t` / `ptrdiff_t` throughout - and hit one link
+error: `EnterCriticalSection`.  The PSY-Q function (libapi: disable
+interrupts, no arguments) and the Win32 one never met on i686, where
+kernel32's is stdcall and decorated `_EnterCriticalSection@4`; x64 has one
+calling convention and no decoration, and the static CRT drags kernel32's
+import member in, so lld-link saw the symbol twice.  The
+`port/include/libapi.h` shadow renames the PSY-Q one to
+`psyq_sdk_EnterCriticalSection` on every PC build - declaration and
+callers alike, the `rename` / `_get_errno` trick without the `#undef` -
+and `api/libapi_stubs.cpp` defines it under that name.  The rename is
+unconditional rather than keyed on `_WIN64` or `SBSP_PC64`, so the
+declaration and the definition can never disagree on the predicate; on
+i686, where the two symbols never collided, it is merely harmless.
+
+**The CD ready callback** was the one behavioural x64 bug, found by the
+A/B rather than the compiler: on the `gameover_continue` route the x64
+exe never left the Continue screen.  libcd types the callback
+`void (*CdlCB)(u_char, u_char *)`, but the game's handler is
+`XACDReadyCallback(int Intr, u8 *)` cast to it (`sound/cdxa.cpp`) and
+switches on all 32 bits of `Intr`.  MIPS and i686 hand a `u_char` over as
+a full zero-extended word; the x64 ABI leaves the upper bits of the
+register undefined, so the handler missed `CdlDataReady`, never saw the
+ID-352 terminator, and the speech "played" forever.  `cd/xa_stream.cpp`
+now calls the handler as `(int, u_char *)`.  `CdlCB` is the only SDK
+callback type with a sub-`int` parameter that the shim invokes.
+
+**Arena.**  `api/arena.cpp` keeps its 16MB-aligned probe below 1GB, which
+a 64-bit process satisfies as easily as a 32-bit one - so the 24-bit prim
+tags (`gfx/prim.h`, `gpu/gp0.cpp`'s `window | addr24`) needed nothing.
+What x64 loses is the "any base" fallback: `VirtualAlloc(NULL)` returns a
+base above 4GB there, which neither the prim tags nor the `FPTR` fields
+(#31) survive, so the x64 build aborts with a message instead.
+`host/fptr_fail.cpp` is where an `FPTR::set()` of a pointer above 4GB
+lands (`[shim] FPTR: ...`, exit 11).
+
+**`abi/abi_check.cpp`** joins the game library on every PC build:
+negative-array-size checks (gnu++98 has no `static_assert`) that the five
+pointer-bearing overlay structs and the pointer-free ones around them
+still have their on-disc sizes, compiled with the game's own flags.  An
+x64 build that lost `SBSP_PC64`, or a new raw pointer member in
+`dstructs.h`, fails to compile instead of reading every file at the wrong
+offsets.
+
+**CI.**  The `clangcl` job is a two-entry matrix, `clangcl-debug` and
+`clangcl-x64-debug` (both advisory): configure, build, `ctest -L unit`,
+`ctest -L playthrough`.
+
+### x64 A/B (M9 PR 2)
+
+No game-source change.  The x64 exe is proven against the 32-bit one by
+three oracles, `port/build-pc.sh parity64 [final|debug]`:
+
+1. **Streams** - `run_tier.py --compare-frames` (M8 PR 5): every Tier 1
+   route and Tier 2 level, `[scene]` + `[frame]` CRC lines identical.
+2. **Cross-exe replay** - `--keep-artifacts DIR` makes the first exe keep
+   each passing route's `--record-pad` recording; `--replay-from DIR`
+   makes the second exe replay those instead of playing the routes.  The
+   recording's `# epoch` markers carry the display CRC every 300 vblanks
+   and the game checks them itself (`[replay] desync`, exit 13).  They
+   also carry `RamUsed`, which is *not* comparable across ABIs (bigger
+   objects, 16-byte heap granularity): recordings now start with
+   `# abi ptr=<4|8>` (absent = 4), and `host/input.cpp` skips the ram half
+   of the check - only that - when the recording's pointer size is not the
+   exe's, saying so once (`[input] cross-ABI recording ...`).
+3. **Memory card** - the `card0.mcd` a route leaves is kept beside its
+   recording and the cross replay's must be byte-identical (the same-exe
+   replay of a plain Tier 1 run now compares cards too).  The save structs
+   are all `char` (`memcard/saveload.h`, `game/gameslot.h`), so this holds
+   by construction; the check is there for uninitialised bytes.
+
+Result (USA, seed 1, clang-cl): DEBUG x64 = x86 on all 9 routes + 25
+levels (163,000 `[frame]` lines), cross replay clean in both directions,
+cards identical.  FINAL the same except 39 frames of the campaign route
+(6858-6897) where the **32-bit** clang-cl FINAL exe omits one sprite at
+the screen edge that x64 FINAL, MinGW FINAL and both DEBUG builds draw -
+a latent compiler-dependent read in the game, not an x64 matter, left
+for the cross-toolchain work (issue #39) together with the frames on
+which MinGW and clang-cl differ whatever the pointer size (campaign
+463-512 in both variants; Tier 2 level 24 from frame 306 in DEBUG).
+
+### x64 in the tester zip (M9 PR 3)
+
+No game-source change.  `port/package.py --x64` adds the clang-cl x86_64
+exes to the zip *beside* the 32-bit MinGW pair rather than instead of
+them: `sbsp64.exe` (from `build/clangcl-x64-final`), `sbsp64-debug.exe`
+(`clangcl-x64-debug`) and one `SDL3.dll` - the first non-static file in the
+package, because the official SDL VC package has no static library.  The
+MinGW exes are static and never look at it, so the x64 DLL can sit in the
+same folder; what must never happen is an exe or DLL of the wrong
+architecture getting in from a stale tree, so every PE file's machine
+word is checked against what its name promises (`pe_machine`).  USA only:
+there are no clang-cl EUR presets, and `--territory eur --x64` says so.
+Without `--x64` the zip is what it was.
+
+The four exes share `data\`, `sbsp.ini` and `saves\card0.mcd` - everything
+is found beside the exe (`cd.cpp`, `hostpath.cpp`) and the save format has
+no pointer-size dependence (the A/B above compares cards byte for byte) -
+so a tester can move one campaign between them.  `run-test-session.cmd
+x64 [final]` records a session on the 64-bit pair; `session.pad`'s
+`# abi ptr=8` line says which build made it.  Verified by unpacking the
+zip into a scratch directory and booting all four exes from there
+headlessly: each finds `data\` beside itself and they agree on the frame
+CRC.
 
 ## Game-source changes (keyboard prompt icons, issue #43)
 

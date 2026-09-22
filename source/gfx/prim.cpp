@@ -42,7 +42,7 @@ void	PrimInit()
 void	PrimDisplay()
 {
 	while(DrawSync(1));
-	if ((int)CurrPrim>=(int)EndPrim)
+	if ((int)(size_t)CurrPrim>=(int)(size_t)EndPrim)
 	{
 		ASSERT(!"PRIM OVERFLOW");
 	}

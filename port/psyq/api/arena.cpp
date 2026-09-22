@@ -9,8 +9,9 @@
 	The PC shim reserves the arena with VirtualAlloc at a preferred base
 	inside the low 16MB: GPU prim tags are 24-bit addresses, and M2's OT
 	walker reconstructs them as arenaBase | (tag & 0xFFFFFF), which needs the
-	arena inside one 16MB-aligned window.  If the preferred base is taken we
-	fall back to any base (harmless for M1's headless file I/O; M2 asserts).
+	arena inside one 16MB-aligned window.  If the preferred base is taken the
+	32-bit build falls back to any base (harmless for M1's headless file I/O;
+	M2 asserts); the x64 build aborts, see below.
 
 	Also home of the 1KB scratchpad buffer standing in for the PS1's fast RAM
 	at 0x1f800000 (see SCRATCH_RAM in source/system/global.h).
@@ -53,7 +54,10 @@ struct ArenaBoot
 		for (u32 cand = 0x01000000; cand < 0x40000000 && !base; cand += 0x01000000)
 			base = VirtualAlloc((void *)(uintptr_t)cand, ARENA_SIZE,
 								MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-		if (!base)
+		/*	x64 (M9) has no "any base" fallback: besides the prim tags, the
+			loaded files' 4-byte pointer fields hold arena addresses, and
+			VirtualAlloc(NULL) hands a 64-bit process a base above 4GB.  */
+		if (!base && sizeof(void *) == 4)
 		{
 			base = VirtualAlloc(NULL, ARENA_SIZE,
 								MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
@@ -62,7 +66,15 @@ struct ArenaBoot
 		}
 		if (!base)
 		{
-			fprintf(stderr, "[shim] arena: VirtualAlloc failed, aborting\n");
+			/*	Two different failures reach here: on 32-bit the any-base
+				fallback above has failed too, so there is no contiguous
+				window left at all; on x64 only the aligned probe ran.  */
+			if (sizeof(void *) == 4)
+				fprintf(stderr, "[shim] arena: no %uMB of address space free at "
+								"any base, aborting\n", (unsigned)(ARENA_SIZE >> 20));
+			else
+				fprintf(stderr, "[shim] arena: no %uMB block free at a 16MB-aligned "
+								"base below 1GB, aborting\n", (unsigned)(ARENA_SIZE >> 20));
 			Port_Exit(PORT_EXIT_FAULT);
 		}
 

@@ -22,8 +22,8 @@ CLayerBack::CLayerBack(sLevelHdr *LevelHdr,sLayerHdr *Hdr) : CLayerTile(LevelHdr
 {
 		Data=(sLayerShadeHdr*)MakePtr(Hdr,sizeof(sLayerHdr));
 
-		Data->GfxList=(sLayerShadeBackGfx*)MakePtr(Hdr,(int)Data->GfxList);
-		Data->TypeList=(sLayerShadeBackGfxType*)MakePtr(Hdr,(int)Data->TypeList);
+		RELOC_PTR(Data->GfxList,sLayerShadeBackGfx,Hdr);
+		RELOC_PTR(Data->TypeList,sLayerShadeBackGfxType,Hdr);
 		ASSERT(Data->BandCount<=LAYER_SHADE_RGB_MAX);
 		BandCount=Data->BandCount-1;
 }

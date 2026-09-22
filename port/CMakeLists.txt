@@ -13,6 +13,10 @@
 # else is shared, so a shim change that only builds on one of them shows up
 # in CI (the clangcl job) rather than on a tester's machine.
 #
+# clang-cl also builds x64 (M9, -DSBSP_ARCH=x64 -> x86_64-pc-windows-msvc,
+# presets clangcl-x64-*).  The game target gets SBSP_PC64 there - see
+# SBSP_GAME_DEFINES below and port/docs/conv_pc.md, "x64 (M9)".
+#
 cmake_minimum_required(VERSION 3.28)
 project(sbspss LANGUAGES C CXX)
 
@@ -169,6 +173,12 @@ if(SBSP_MSVC)
     # user pick the spelling first
     list(APPEND SBSP_GAME_DEFINES "_CRT_NOEXCEPT=throw()")
 endif()
+if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+    # x64 (M9): the file-overlay structs keep their 4-byte pointer fields
+    # (tools/Data/include/fptr.h), the heap aligns to 16 (source/mem/memory.h).
+    # Game code only - the data tools and the PlayStation build never see it.
+    list(APPEND SBSP_GAME_DEFINES SBSP_PC64)
+endif()
 
 set(SBSP_GAME_CXX_FLAGS
     ${SBSP_GAME_DIALECT}
@@ -223,7 +233,9 @@ endfunction()
 # Game code (unmodified PS1 sources)
 # ---------------------------------------------------------------------------
 if(SBSP_BUILD_GAME)
-    add_library(sbsp_game STATIC ${SBSP_GAME_SOURCES})
+    # abi/abi_check.cpp: compile-time size checks of the file-overlay structs,
+    # seen exactly as the game sees them (hence here, not in the shim glob)
+    add_library(sbsp_game STATIC ${SBSP_GAME_SOURCES} abi/abi_check.cpp)
     sbsp_game_flavour(sbsp_game)
 
     # system/main.cpp compiles like everything else but is kept out of the

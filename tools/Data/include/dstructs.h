@@ -5,6 +5,19 @@
 #ifndef		__DATA_STRUCTS_HEADER__
 #define		__DATA_STRUCTS_HEADER__
 
+//***************************************************************************
+// Pointer fields of the file-overlay structs.  The files hold 4 bytes each
+// (an offset the loader relocates in place), so where a pointer is wider
+// than that - the x64 PC build, SBSP_PC64 - the field is a 4-byte FPTR<T>.
+// Everywhere else (PlayStation, 32-bit PC, the data tools) it is the plain
+// pointer it always was.
+#if defined(SBSP_PC64)
+#include "fptr.h"
+#define	DPTR(T)	FPTR< T >
+#else
+#define	DPTR(T)	T *
+#endif
+
 
 //***************************************************************************
 // Taken from Map editor  layerdef.h
@@ -217,8 +230,8 @@ struct	sLayerShadeHdr
 	u16						BandCount;
 	u16						GfxCount;
 	u8						RGB[4][3];
-	sLayerShadeBackGfxType	*TypeList;
-	sLayerShadeBackGfx		*GfxList;
+	DPTR(sLayerShadeBackGfxType)	TypeList;
+	DPTR(sLayerShadeBackGfx)		GfxList;
 };
 
 //---------------------------------------------------------------------------
@@ -254,13 +267,13 @@ struct	sLevelHdr
 
 	u16			PlayerStartX,PlayerStartY;
 
-	sElem2d		*ElemBank2d;
-	sElem3d		*ElemBank3d;
-	sTri		*TriList;
-	sQuad		*QuadList;
-	sVtx		*VtxList;
-	u16			*VtxIdxList;
-	sModel		*ModelList;
+	DPTR(sElem2d)		ElemBank2d;
+	DPTR(sElem3d)		ElemBank3d;
+	DPTR(sTri)		TriList;
+	DPTR(sQuad)		QuadList;
+	DPTR(sVtx)		VtxList;
+	DPTR(u16)			VtxIdxList;
+	DPTR(sModel)		ModelList;
 };
 
 //***************************************************************************
@@ -269,7 +282,7 @@ struct	sLevelHdr
 // Actors
 struct	sSpriteFrameGfx
 {
-		u8			*PAKSpr;			// 4	Needs to be u32, so might as well make it a ptr
+		DPTR(u8)			PAKSpr;			// 4	Needs to be u32, so might as well make it a ptr
 		s8			AspectX0,AspectX1;	// 2	Aspect correction value 
 		u8			W,H;				// 2
 		u8			W0,W1;				// 2	Need these for rotating :o(
@@ -287,7 +300,7 @@ struct	sSpriteAnim
 {
 	u16				FrameCount;	// 2
 	u16				Pad;
-	sSpriteFrame	*Anim;		// 4
+	DPTR(sSpriteFrame)	Anim;		// 4
 };
 
 struct	sSpriteAnimBank
@@ -297,9 +310,9 @@ struct	sSpriteAnimBank
 	u16					FrameCount;		// 2
 	u8					MaxW,MaxH;		// 2
 
-	u8					*Palette;		// 4
-	sSpriteAnim			*AnimList;		// 4
-	sSpriteFrameGfx		*FrameList;		// 4
+	DPTR(u8)					Palette;		// 4
+	DPTR(sSpriteAnim)			AnimList;		// 4
+	DPTR(sSpriteFrameGfx)		FrameList;		// 4
 };
 
 

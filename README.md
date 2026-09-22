@@ -18,10 +18,10 @@ In line with the overall project purpose, you can build the game executable usin
 ## Prerequisites
 | Requirement | Notes |
 |---|---|
-| Windows 10 or 11, 64-bit | The game itself is a 32-bit executable; it runs fine on 64-bit Windows using WoW64 translation. |
+| Windows 10 or 11, 64-bit | The shipping game is a 32-bit executable; it runs fine on 64-bit Windows using WoW64 translation. (A 64-bit build exists too, section 4.) |
 | Git with Git LFS | Install [Git for Windows](https://git-scm.com/install/windows), then `git lfs install` once. |
 | MSYS2, installed at `C:\msys64` | Needed to substitute parts of the 1999 cygwin toolchain. Download from <https://www.msys2.org>. The default install path matters as `port/CMakePresets.json` hard-codes `C:/msys64/mingw32/bin/ninja.exe`. If you must install elsewhere, edit that line and set `MSYS2_WIN` (Windows path) before running the `.cmd` scripts. |
-| *Optional:* LLVM + Visual Studio 2022/2026 C++ x86 build tools | Only for the `clangcl-*` presets (section 4): [LLVM](https://releases.llvm.org) at `C:\Program Files\LLVM` (or the "C++ Clang tools for Windows" VS component) plus the MSVC x86 build tools and a Windows 10/11 SDK. Everything else (SDL3, Vulkan headers) is fetched by CMake. |
+| *Optional:* LLVM + Visual Studio 2022/2026 C++ x64/x86 build tools | Only for the `clangcl-*` presets (section 4): [LLVM](https://releases.llvm.org) at `C:\Program Files\LLVM` (or the "C++ Clang tools for Windows" VS component) plus the MSVC x64/x86 build tools and a Windows 10/11 SDK. Everything else (SDL3, Vulkan headers) is fetched by CMake. |
 
 Just a note, your GPU must support Vulkan. Most modern systems do.
 
@@ -154,6 +154,19 @@ headers into `port\build\deps\`. `port\build-pc.cmd test clangcl` runs
 the same tests. The MinGW executables remain the ones that ship; CI builds
 the clang-cl variant as an advisory job.
 
+The same toolchain also builds a true 64-bit executable
+(`x86_64-pc-windows-msvc`; it needs the MSVC x64 build tools):
+
+```bat
+port\build-pc.cmd clangcl-x64-debug
+```
+
+`clangcl64` names the debug + final pair, for `test` and `soak` too. The
+game data is unchanged - the 4-byte pointer fields in the level and actor
+files are read through a 4-byte pointer type (`port/docs/conv_pc.md`,
+"Game-source changes (M9)"), and the 64-bit exe renders the same frames as
+the 32-bit one.
+
 ## 5. Run
 
 Run from the **repository root**, because the game resolves its data
@@ -194,7 +207,11 @@ it says - real localization is issue #37.)
 **Tester zip.** `port\package.cmd [--territory usa|eur]` (or `python port\package.py`) bundles the
 FINAL and DEBUG executables, the data, a `saves\` folder, a README and
 `run-test-session.cmd` (a recorded, logged play session) into
-`port\build\sbsp-<territory>-<date>.zip`.
+`port\build\sbsp-<territory>-<date>.zip`. Add `--x64` (USA, after
+`port\build-pc.cmd clangcl64`) to include the 64-bit executables as
+`sbsp64.exe` / `sbsp64-debug.exe` with their `SDL3.dll`; they share the data,
+settings and memory card with the 32-bit ones, and
+`run-test-session.cmd x64` records a session on them.
 
 **Skipping to a level** while testing:
 

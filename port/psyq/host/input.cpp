@@ -119,6 +119,11 @@ static EpochCheck	*g_epochs;
 static int			g_epochCount, g_epochCap;
 static int			g_scriptParsed;
 static int			g_desyncs;
+/*	Pointer size of the exe that made the recording (`# abi ptr=N`, written
+	by --record-pad since M9; absent = 4, every older recording is 32-bit).
+	RamUsed depends on it - x64 objects are bigger and the heap aligns to 16 -
+	so a recording replayed across ABIs compares the display CRC alone.  */
+static int			g_recordingPtr = 4;
 
 static void addEntry(const PadEntry &e)
 {
@@ -252,10 +257,25 @@ static void padFileParse(void)
 		if (*s == '#')
 		{
 			EpochCheck ep = {};
+			int ptr;
 			if (sscanf(s, "# epoch %lu ram=%lu crc=%x", &ep.vblank, &ep.ram, &ep.crc) == 3)
 			{
 				ep.line = line;
 				addEpoch(ep);
+			}
+			else if (sscanf(s, "# abi ptr=%d", &ptr) == 1)
+			{
+				/*	4 and 8 are the only pointer sizes this port builds for.
+					Anything else - a truncated or hand-edited recording -
+					would silently drop the RamUsed half of every epoch check
+					(see g_recordingPtr), so a genuine same-ABI heap
+					divergence would replay clean.  Refuse it instead.  */
+				if (ptr != 4 && ptr != 8)
+				{
+					fclose(f);
+					padFileFail(path, line, "bad `# abi ptr=' (expected 4 or 8)");
+				}
+				g_recordingPtr = ptr;
 			}
 			continue;
 		}
@@ -285,6 +305,9 @@ static void padFileParse(void)
 	fclose(f);
 	fprintf(stderr, "[input] SBSP_PAD_FILE %s: %d entries, %d epoch checks\n",
 			path, entries, g_epochCount);
+	if (g_epochCount && g_recordingPtr != (int)sizeof(void *))
+		fprintf(stderr, "[input] cross-ABI recording (ptr=%d, this exe %d): epoch ram not compared\n",
+				g_recordingPtr, (int)sizeof(void *));
 }
 
 static void scriptsParse(void)
@@ -353,6 +376,8 @@ static void epochCheck(unsigned long vblank)
 		const PortGameGlobals *g = Port_GameGlobals();
 		unsigned long ram = g->ramUsed ? *g->ramUsed : 0;
 		uint32_t      crc = GPU_DisplayCRC32(NULL);
+		if (g_recordingPtr != (int)sizeof(void *))
+			ram = ep.ram;				/* not comparable across ABIs, see g_recordingPtr */
 		if (ram != ep.ram || crc != ep.crc)
 		{
 			g_desyncs++;
@@ -404,7 +429,8 @@ static void recordFrame(unsigned long vblank, unsigned mask)
 			if (g_rec)
 				fprintf(g_rec, "# recorded by sbsp --record-pad (mask: START=0800 SELECT=0100 "
 							   "UP=1000 RIGHT=2000 DOWN=4000 LEFT=8000 CROSS=0040 "
-							   "CIRCLE=0020 SQUARE=0080 TRIANGLE=0010 L1=0004 R1=0008 L2=0001 R2=0002)\n");
+							   "CIRCLE=0020 SQUARE=0080 TRIANGLE=0010 L1=0004 R1=0008 L2=0001 R2=0002)\n"
+							   "# abi ptr=%d\n", (int)sizeof(void *));
 			else
 				fprintf(stderr, "[input] SBSP_RECORD_PAD: cannot write %s\n", path);
 		}
