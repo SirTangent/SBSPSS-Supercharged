@@ -47,6 +47,7 @@
 /*----------------------------------------------------------------------
 	Tyepdefs && Defines
 	------------------- */
+#include "abi_check.h"
 #if defined(SBSP_PC64)
 // x64 PC: the string table is 4-byte pointer fields in the file (conv_pc.md #32)
 #include "fptr.h"
@@ -55,7 +56,9 @@
 #else
 #define	TRANS_PTR				char *
 #define	TRANS_RELOC(p,base)		(p)=(char *)((u32)(p)+(u32)(base))
-#line 49	// keep the PS1 build's __LINE__ (ASSERTs below) byte-identical
+#if defined(mips) || defined(__mips__)
+#line 48	// PS1 only: keep its __LINE__ (ASSERTs below) byte-identical
+#endif
 #endif
 
 /*----------------------------------------------------------------------
@@ -272,11 +275,11 @@ static void dumpDatabase(void)
 /*	TransHeader is overlaid on translations/<lang>.dat exactly as the structs
 	in dstructs.h are overlaid on the level and actor files, and TRANS_PTR is
 	a hand-rolled parallel of their DPTR.  port/abi/abi_check.cpp cannot guard
-	it - the struct is file-local - so the same negative-array check lives
-	here.  Kept at the end of the file: the #line 49 above fixes the PS1
-	build's __LINE__ for the ASSERTs, and inserting anything above it would
-	move them.  */
-typedef char abi_check_TransHeader[(sizeof(TransHeader) == 8) ? 1 : -1];
+	it - the struct is file-local - so its ABI_CHECK (abi_check.h) is made
+	here.  Kept at the end of the file: the #line 48 above fixes the PS1
+	build's __LINE__ for the ASSERTs, and inserting anything between it and
+	them would move them.  */
+ABI_CHECK(TransHeader, sizeof(TransHeader) == 8);
 
 
 /*===========================================================================
