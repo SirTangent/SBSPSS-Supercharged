@@ -252,6 +252,8 @@ UI_GFX_FONT_IN :=			$(foreach FILE,$(UI_GFX_FONT),$(UI_FONT_DIR)/$(FILE).bmp)
 UI_GFX_NONTRANS :=			
 UI_GFX_NONTRANS_IN :=		$(foreach FILE,$(UI_GFX_NONTRANS),$(UI_GFX_DIR)/$(FILE))
 
+# The +key*.bmp caps are Blubrry's keyboard glyphs, used with permission
+# (see CREDITS.md); the PC build draws them in place of the +but* glyphs.
 UI_GFX_TRANS :=				+bambootopleft.bmp +bamboobotleft.bmp +bambootopright.bmp +bamboobotright.bmp \
 							+bamboohorizontal.bmp +bamboovertical.bmp \
 							+slider_marker.bmp \
