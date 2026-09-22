@@ -127,6 +127,7 @@ private:
 		OPTIONS_INSTRUCTIONS_GAP_BETWEEN_BUTTONS=5,
 		OPTIONS_INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT=10,
 		OPTIONS_INSTRUCTIONS_BUTTON_Y_OFFSET=4,
+		OPTIONS_INSTRUCTIONS_KEYCAP_Y_OFFSET=2,	// PC key caps, tuned by eye like the glyph (github issue #43)
 	};
 
 	typedef struct
@@ -172,6 +173,14 @@ private:
 	int											m_controlIcons[CONTROL_COUNT];
 	static CGUISpriteReadout::SpriteReadoutData	s_controlReadoutSprites[ICON_COUNT];
 	static ButtonToIconMap						s_controlMap[ICON_COUNT];
+
+	/*	Re-resolve the controls readout's icons against the device the
+		player is on (github issue #43); 1 if any of them moved.  The
+		readouts themselves are kept so think() can tell them to pick the
+		new frames up.  */
+	static int									refreshIcons();
+	void										placeControlReadouts();
+	class CGUISpriteReadout						*m_controlReadouts[CONTROL_COUNT];
 
 	class FontBank								*m_fontBank;
 	class SpriteBank							*m_spriteBank;

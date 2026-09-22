@@ -1,6 +1,6 @@
 # Game translation-unit manifest, generated from the *_src lists in makefile.gaz
 # by port/cmake/gen_game_sources.sh - regenerate with that script, do not edit
-# by hand.  288 TUs: all but system/main.cpp in the static lib (main is split
+# by hand.  289 TUs: all but system/main.cpp in the static lib (main is split
 # out so test exes can supply their own main()).
 # Dead .cpp files under source/ are deliberately absent - do NOT glob.
 
@@ -145,6 +145,7 @@ set(SBSP_GAME_SOURCES
     ${SBSP_ROOT}/source/memcard/md5.cpp
     ${SBSP_ROOT}/source/memcard/memcard.cpp
     ${SBSP_ROOT}/source/memcard/saveload.cpp
+    ${SBSP_ROOT}/source/pad/padicon.cpp
     ${SBSP_ROOT}/source/pad/pads.cpp
     ${SBSP_ROOT}/source/pad/vibe.cpp
     ${SBSP_ROOT}/source/paul/animtest.cpp

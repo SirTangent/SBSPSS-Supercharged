@@ -25,6 +25,9 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "system/types.h"
+#include "system/asmport.h"		/* PORT_CAP_* - the prompt-icon contract */
+
 extern unsigned char *Port_PadBuffer[2];		/* pads_shim.cpp */
 extern unsigned char *Port_PadMotor[2];
 extern "C" void	Port_InputHandleEvent(const void *ev);
@@ -32,6 +35,8 @@ extern "C" void	Port_InputFrame(unsigned long vblank);
 extern "C" void	Port_InputReloadSettings(void);		/* M8 shell: re-read SBSP_PAD_DEADZONE / SBSP_RUMBLE / SBSP_KEY_* */
 extern "C" int	Port_InputBindKeys(void);
 extern "C" int	Port_InputKeyFor(const char *button);
+extern "C" int	Port_InputPromptCap(const char *button);	/* issue #43 */
+extern "C" int	Port_InputPadActive(void);
 extern "C" void	PadInitDirect(unsigned char *pad1, unsigned char *pad2);
 extern "C" int	PadSetAct(int port, unsigned char *data, int len);
 
@@ -266,6 +271,51 @@ int main(void)
 	_putenv("SBSP_KEY_L1=");
 	Port_InputBindKeys();
 
+	/*	-------- prompt icons (issue #43): which key cap the game draws
+		beside a prompt, or PORT_CAP_NONE for "keep the PS1 glyph".
+
+		A gamepad is attached at this point, and a plug-in claims the
+		prompts, so auto mode has to be answering for the pad.  */
+	check(Port_InputPadActive() == 1, "a connected pad owns the prompts");
+	check(Port_InputPromptCap("cross") == PORT_CAP_NONE, "pad active: the PS1 glyph, not a key cap");
+
+	_putenv("SBSP_PROMPT_ICONS=keys");
+	Port_InputReloadSettings();
+	check(Port_InputPadActive() == 0, "prompt_icons=keys pins the key caps");
+	check(Port_InputPromptCap("cross")    == PORT_CAP_Z,     "cross -> Z cap");
+	check(Port_InputPromptCap("circle")   == PORT_CAP_X,     "circle -> X cap");
+	check(Port_InputPromptCap("square")   == PORT_CAP_A,     "square -> A cap");
+	check(Port_InputPromptCap("triangle") == PORT_CAP_S,     "triangle -> S cap");
+	check(Port_InputPromptCap("up")       == PORT_CAP_UP,    "up -> up-arrow cap");
+	check(Port_InputPromptCap("down")     == PORT_CAP_DOWN,  "down -> down-arrow cap");
+	check(Port_InputPromptCap("start")    == PORT_CAP_ENTER, "start -> Enter cap");
+	check(Port_InputPromptCap("select")   == PORT_CAP_RSHIFT,"select -> Right Shift cap");
+	check(Port_InputPromptCap("l2")       == PORT_CAP_E,     "l2 -> E cap");
+	check(Port_InputPromptCap("nope")     == PORT_CAP_NONE,  "unknown button name");
+
+	/*	a rebind follows the key...  */
+	_putenv("SBSP_KEY_CROSS=Q");
+	Port_InputBindKeys();
+	check(Port_InputPromptCap("cross") == PORT_CAP_Q, "a rebind moves the cap with it");
+	/*	...until it lands on a key the art set has no cap for, where the
+		PS1 glyph is the honest answer rather than a wrong letter  */
+	_putenv("SBSP_KEY_CROSS=Space");
+	Port_InputBindKeys();
+	check(Port_InputPromptCap("cross") == PORT_CAP_NONE, "no cap art for Space: fall back to the glyph");
+	_putenv("SBSP_KEY_CROSS=");
+	Port_InputBindKeys();
+
+	_putenv("SBSP_PROMPT_ICONS=pad");
+	Port_InputReloadSettings();
+	check(Port_InputPadActive() == 1, "prompt_icons=pad pins the glyphs");
+	check(Port_InputPromptCap("cross") == PORT_CAP_NONE, "prompt_icons=pad: no key caps");
+
+	_putenv("SBSP_PROMPT_ICONS=nonsense");
+	Port_InputReloadSettings();
+	check(Port_InputPadActive() == 1, "a bad prompt_icons falls back to auto (pad still attached)");
+	_putenv("SBSP_PROMPT_ICONS=");
+	Port_InputReloadSettings();
+
 	/*	-------- rumble: PadSetAct bytes -> SDL_RumbleGamepad  */
 	static unsigned char motor[2];		/* [0] small on/off, [1] big 0-255 */
 	PadSetAct(0, motor, 2);
@@ -357,6 +407,10 @@ int main(void)
 	Port_InputFrame(vblank++);
 	check(packetMask(pad0) == 0, "packet idle after disconnect");
 	check(pad0[6] == 0x80, "sticks centred after disconnect");
+
+	/*	unplugging hands the prompts back to the keyboard (issue #43)  */
+	check(Port_InputPadActive() == 0, "prompts return to the keyboard on unplug");
+	check(Port_InputPromptCap("cross") == PORT_CAP_Z, "and the cap comes back with them");
 
 	motor[1] = 255;
 	before = g_rumbleCalls;

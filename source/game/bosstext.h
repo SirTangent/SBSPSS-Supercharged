@@ -63,6 +63,7 @@ private:
 		INSTRUCTIONS_Y_POS=213,
 		INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT=-15,		// Eh!? (pkg)
 		INSTRUCTIONS_BUTTON_Y_OFFSET=4,
+		INSTRUCTIONS_KEYCAP_Y_OFFSET=2,		// PC key caps, tuned by eye like the glyph (github issue #43)
 	};
 
 	class FontBank			*m_fontBank;

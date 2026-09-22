@@ -251,6 +251,7 @@ memcard_src :=		md5 \
 					saveload
 
 pad_src :=			pads \
+					padicon \
 					vibe
 
 paul_src :=			paul \

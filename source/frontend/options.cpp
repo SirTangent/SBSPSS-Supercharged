@@ -62,6 +62,10 @@
 #include "pad\pads.h"
 #endif
 
+#ifndef __PAD_PADICON_H__
+#include "pad\padicon.h"
+#endif
+
 #ifndef __VID_HEADER_
 #include "system\vid.h"
 #endif
@@ -143,6 +147,11 @@ int CFrontEndOptions::s_buttonOrder[]=
 	CPadConfig::PAD_CFG_WEAPONCHANGE,
 };
 
+/*	The icon the controls readout draws for each ICON_*.  CGUISpriteReadout
+	scans this while the m_value column ascends, so it has to stay in
+	ICON_* order.  The frames here are only the PS1 defaults: refreshIcons()
+	rewrites the column on entry to the options screen so the readout shows
+	the keys a PC player is actually pressing (github issue #43).  */
 CGUISpriteReadout::SpriteReadoutData	CFrontEndOptions::s_controlReadoutSprites[]=
 {
 	{	ICON_UP,FRM__BUTU		},
@@ -153,6 +162,12 @@ CGUISpriteReadout::SpriteReadoutData	CFrontEndOptions::s_controlReadoutSprites[]
 	{	ICON_CIRCLE,FRM__BUTC	},
 	{	ICON_SQUARE,FRM__BUTS	},
 	{	ICON_TRIANGLE,FRM__BUTT	},
+};
+
+/*	The pad button each of those rows describes, same order.  */
+static const int	s_controlReadoutButtons[]=
+{
+	PAD_UP,PAD_DOWN,PAD_LEFT,PAD_RIGHT,PAD_CROSS,PAD_CIRCLE,PAD_SQUARE,PAD_TRIANGLE,
 };
 
 CFrontEndOptions::ButtonToIconMap	CFrontEndOptions::s_controlMap[]=
@@ -254,6 +269,59 @@ static void paulColourSpaceToRGB(int _hue,int _brightness,int *_rgb)
 }
 
 /*----------------------------------------------------------------------
+	Function:	CFrontEndOptions::refreshIcons
+	Purpose:	Point the controls readout at the icons for whatever the
+				player is holding - key caps on PC, the PS1 glyphs on a
+				gamepad (github issue #43).
+	Params:
+	Returns:	1 if any icon moved
+  ---------------------------------------------------------------------- */
+int CFrontEndOptions::refreshIcons()
+{
+	int	changed=0;
+
+	for(int i=0;i<ICON_COUNT;i++)
+	{
+		int	frame=CPadIcon::getFrame(s_controlReadoutButtons[i]);
+		if(s_controlReadoutSprites[i].m_frame!=frame)
+		{
+			s_controlReadoutSprites[i].m_frame=frame;
+			changed=1;
+		}
+	}
+	return changed;
+}
+
+
+/*----------------------------------------------------------------------
+	Function:	CFrontEndOptions::placeControlReadouts
+	Purpose:	Sit each controls readout on its text's centre line.  The
+				readout centres its sprite in a 15px row, which is right for
+				the 11px PS1 glyph, but the row's text hangs a little below
+				the row's middle and a 14px key cap fills the row from the
+				top - so a cap reads as high against its label.  Nudge the
+				row down for a cap, leave it alone for a glyph.
+	Params:
+	Returns:
+  ---------------------------------------------------------------------- */
+void CFrontEndOptions::placeControlReadouts()
+{
+	const int	CAP_ROW_NUDGE=2;
+
+	for(int i=0;i<CONTROL_COUNT;i++)
+	{
+		if(m_controlReadouts[i])
+		{
+			int	frame=s_controlReadoutSprites[m_controlIcons[i]].m_frame;
+			int	nudge=CPadIcon::isKeyCap(frame)?CAP_ROW_NUDGE:0;
+			m_controlReadouts[i]->setObjectXYWH((i/4)*176,((i%4)*15)+nudge,26,15);
+			m_controlReadouts[i]->setReadoutData(s_controlReadoutSprites);
+		}
+	}
+}
+
+
+/*----------------------------------------------------------------------
 	Function:
 	Purpose:
 	Params:
@@ -265,6 +333,13 @@ void CFrontEndOptions::init()
 	CGUIGroupFrame		*fr;
 	CGUITextBox			*tb;
 	CGUISpriteReadout	*sr;
+	int					nReadout=0;		// fills m_controlReadouts as they are built
+
+	refreshIcons();
+	for(i=0;i<CONTROL_COUNT;i++)
+	{
+		m_controlReadouts[i]=0;
+	}
 
 
 	m_background=new ("Options Background") CScrollyBackground();
@@ -321,6 +396,7 @@ void CFrontEndOptions::init()
 		sr->setObjectXYWH(0,0,26,15);	//176
 		sr->setReadoutTarget(&m_controlIcons[CONTROL_UP]);
 		sr->setReadoutData(s_controlReadoutSprites);
+		m_controlReadouts[nReadout++]=sr;
 		tb=new ("textbox") CGUITextBox();
 		tb->init(fr);
 		tb->setObjectXYWH(26,0,150,15);
@@ -330,6 +406,7 @@ void CFrontEndOptions::init()
 		sr->setObjectXYWH(0,15,26,15);
 		sr->setReadoutTarget(&m_controlIcons[CONTROL_DOWN]);
 		sr->setReadoutData(s_controlReadoutSprites);
+		m_controlReadouts[nReadout++]=sr;
 		tb=new ("textbox") CGUITextBox();
 		tb->init(fr);
 		tb->setObjectXYWH(26,15,150,15);
@@ -339,6 +416,7 @@ void CFrontEndOptions::init()
 		sr->setObjectXYWH(0,30,26,15);
 		sr->setReadoutTarget(&m_controlIcons[CONTROL_LEFT]);
 		sr->setReadoutData(s_controlReadoutSprites);
+		m_controlReadouts[nReadout++]=sr;
 		tb=new ("textbox") CGUITextBox();
 		tb->init(fr);
 		tb->setObjectXYWH(26,30,150,15);
@@ -348,6 +426,7 @@ void CFrontEndOptions::init()
 		sr->setObjectXYWH(0,45,26,15);
 		sr->setReadoutTarget(&m_controlIcons[CONTROL_RIGHT]);
 		sr->setReadoutData(s_controlReadoutSprites);
+		m_controlReadouts[nReadout++]=sr;
 		tb=new ("textbox") CGUITextBox();
 		tb->init(fr);
 		tb->setObjectXYWH(26,45,150,15);
@@ -357,6 +436,7 @@ void CFrontEndOptions::init()
 		sr->setObjectXYWH(176,0,26,15);
 		sr->setReadoutTarget(&m_controlIcons[CONTROL_JUMP]);
 		sr->setReadoutData(s_controlReadoutSprites);
+		m_controlReadouts[nReadout++]=sr;
 		tb=new ("textbox") CGUITextBox();
 		tb->init(fr);
 		tb->setObjectXYWH(176+26,0,150,15);
@@ -366,6 +446,7 @@ void CFrontEndOptions::init()
 		sr->setObjectXYWH(176,15,26,15);
 		sr->setReadoutTarget(&m_controlIcons[CONTROL_FIRE]);
 		sr->setReadoutData(s_controlReadoutSprites);
+		m_controlReadouts[nReadout++]=sr;
 		tb=new ("textbox") CGUITextBox();
 		tb->init(fr);
 		tb->setObjectXYWH(176+26,15,150,15);
@@ -375,6 +456,7 @@ void CFrontEndOptions::init()
 		sr->setObjectXYWH(176,30,26,15);
 		sr->setReadoutTarget(&m_controlIcons[CONTROL_CATCH]);
 		sr->setReadoutData(s_controlReadoutSprites);
+		m_controlReadouts[nReadout++]=sr;
 		tb=new ("textbox") CGUITextBox();
 		tb->init(fr);
 		tb->setObjectXYWH(176+26,30,150,15);
@@ -384,6 +466,7 @@ void CFrontEndOptions::init()
 		sr->setObjectXYWH(176,45,26,15);
 		sr->setReadoutTarget(&m_controlIcons[CONTROL_WEAPONCHANGE]);
 		sr->setReadoutData(s_controlReadoutSprites);
+		m_controlReadouts[nReadout++]=sr;
 		tb=new ("textbox") CGUITextBox();
 		tb->init(fr);
 		tb->setObjectXYWH(176+26,45,150,15);
@@ -878,6 +961,18 @@ void CFrontEndOptions::think(int _frames)
 			}
 		}
 	}
+
+	/*	The icons follow the device the player is using, which can change
+		while this very screen is open - pick up a pad half way through
+		reading the controls and the whole page should answer for the pad
+		(github issue #43).  The footer resolves per frame and needs
+		nothing; the readout caches its frame and only recalculates when
+		its ICON_* changes, which a device switch does not touch, so it has
+		to be told.  Every frame rather than only when refreshIcons() saw a
+		change: a control style change moves rows between icons too, and
+		re-placing eight readouts is a handful of stores.  */
+	refreshIcons();
+	placeControlReadouts();
 }
 
 /*----------------------------------------------------------------------
@@ -1031,33 +1126,33 @@ void	CFrontEndOptions::renderButtonPrompts()
 
 	if(renderCross)
 	{
-		fh1=m_spriteBank->getFrameHeader(FRM__BUTX);
+		fh1=m_spriteBank->getFrameHeader(CPadIcon::getFrame(PAD_CROSS));
 		width=fh1->W+OPTIONS_INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_fontBank->getStringWidth(STR__FRONTEND__CROSS_TO_SELECT);
 		x=128-(width/2);
-		m_spriteBank->printFT4(fh1,x,OPTIONS_INSTRUCTIONS_Y_POS+OPTIONS_INSTRUCTIONS_BUTTON_Y_OFFSET,0,0,0);
+		m_spriteBank->printFT4(fh1,x,OPTIONS_INSTRUCTIONS_Y_POS+CPadIcon::getYOffset(PAD_CROSS,OPTIONS_INSTRUCTIONS_BUTTON_Y_OFFSET,OPTIONS_INSTRUCTIONS_KEYCAP_Y_OFFSET),0,0,0);
 		x+=fh1->W+OPTIONS_INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT;
 		m_fontBank->print(x,OPTIONS_INSTRUCTIONS_Y_POS,STR__FRONTEND__CROSS_TO_SELECT);
 	}
 
 	if(renderArrows)
 	{
-		fh1=m_spriteBank->getFrameHeader(FRM__BUTL);
-		fh2=m_spriteBank->getFrameHeader(FRM__BUTR);
+		fh1=m_spriteBank->getFrameHeader(CPadIcon::getFrame(PAD_LEFT));
+		fh2=m_spriteBank->getFrameHeader(CPadIcon::getFrame(PAD_RIGHT));
 		width=fh1->W+OPTIONS_INSTRUCTIONS_GAP_BETWEEN_BUTTONS+fh2->W+OPTIONS_INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_fontBank->getStringWidth(STR__FRONTEND__ARROWS_TO_ADJUST);
 		x=128-(width/2);
-		m_spriteBank->printFT4(fh1,x,OPTIONS_INSTRUCTIONS_Y_POS+OPTIONS_INSTRUCTIONS_BUTTON_Y_OFFSET,0,0,0);
+		m_spriteBank->printFT4(fh1,x,OPTIONS_INSTRUCTIONS_Y_POS+CPadIcon::getYOffset(PAD_LEFT,OPTIONS_INSTRUCTIONS_BUTTON_Y_OFFSET,OPTIONS_INSTRUCTIONS_KEYCAP_Y_OFFSET),0,0,0);
 		x+=fh1->W+OPTIONS_INSTRUCTIONS_GAP_BETWEEN_BUTTONS;
-		m_spriteBank->printFT4(fh2,x,OPTIONS_INSTRUCTIONS_Y_POS+OPTIONS_INSTRUCTIONS_BUTTON_Y_OFFSET,0,0,0);
+		m_spriteBank->printFT4(fh2,x,OPTIONS_INSTRUCTIONS_Y_POS+CPadIcon::getYOffset(PAD_RIGHT,OPTIONS_INSTRUCTIONS_BUTTON_Y_OFFSET,OPTIONS_INSTRUCTIONS_KEYCAP_Y_OFFSET),0,0,0);
 		x+=fh2->W+OPTIONS_INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT;
 		m_fontBank->print(x,OPTIONS_INSTRUCTIONS_Y_POS,STR__FRONTEND__ARROWS_TO_ADJUST);
 	}
 
 	if(renderTriangle)
 	{
-		fh1=m_spriteBank->getFrameHeader(FRM__BUTT);
+		fh1=m_spriteBank->getFrameHeader(CPadIcon::getFrame(PAD_TRIANGLE));
 		width=fh1->W+OPTIONS_INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_fontBank->getStringWidth(STR__FRONTEND__TRIANGLE_TO_GO_BACK);
 		x=256+128-(width/2);
-		m_spriteBank->printFT4(fh1,x,OPTIONS_INSTRUCTIONS_Y_POS+OPTIONS_INSTRUCTIONS_BUTTON_Y_OFFSET,0,0,0);
+		m_spriteBank->printFT4(fh1,x,OPTIONS_INSTRUCTIONS_Y_POS+CPadIcon::getYOffset(PAD_TRIANGLE,OPTIONS_INSTRUCTIONS_BUTTON_Y_OFFSET,OPTIONS_INSTRUCTIONS_KEYCAP_Y_OFFSET),0,0,0);
 		x+=fh1->W+OPTIONS_INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT;
 		m_fontBank->print(x,OPTIONS_INSTRUCTIONS_Y_POS,STR__FRONTEND__TRIANGLE_TO_GO_BACK);
 	}
