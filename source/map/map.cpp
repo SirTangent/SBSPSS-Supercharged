@@ -26,6 +26,10 @@
 #include "pad\pads.h"
 #endif
 
+#ifndef __PAD_PADICON_H__
+#include "pad\padicon.h"
+#endif
+
 #ifndef __PRIM_HEADER__
 #include "gfx\prim.h"
 #endif
@@ -410,18 +414,18 @@ void CMapScene::renderInstructions()
 	}
 	
 	y+=MAP_INSTRUCTIONS_Y_SPACE_BETWEEN_LINES;
-	fh1=sb->getFrameHeader(FRM__BUTX);
+	fh1=sb->getFrameHeader(CPadIcon::getFrame(PAD_CROSS));
 	width=fh1->W+MAP_INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_font->getStringWidth(xText);
 	x=256-(width/2);
-	sb->printFT4(fh1,x,y+MAP_INSTRUCTIONS_BUTTON_Y_OFFSET,0,0,0);
+	sb->printFT4(fh1,x,y+CPadIcon::getYOffset(PAD_CROSS,MAP_INSTRUCTIONS_BUTTON_Y_OFFSET,MAP_INSTRUCTIONS_KEYCAP_Y_OFFSET),0,0,0);
 	x+=fh1->W+MAP_INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT;
 	m_font->print(x,y,xText);
 
 	y+=MAP_INSTRUCTIONS_Y_SPACE_BETWEEN_LINES;
-	fh1=sb->getFrameHeader(FRM__BUTT);
+	fh1=sb->getFrameHeader(CPadIcon::getFrame(PAD_TRIANGLE));
 	width=fh1->W+MAP_INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_font->getStringWidth(STR__MAP_SCREEN__TRIANGLE_TO_SAVE);
 	x=256-(width/2);
-	sb->printFT4(fh1,x,y+MAP_INSTRUCTIONS_BUTTON_Y_OFFSET,0,0,0);
+	sb->printFT4(fh1,x,y+CPadIcon::getYOffset(PAD_TRIANGLE,MAP_INSTRUCTIONS_BUTTON_Y_OFFSET,MAP_INSTRUCTIONS_KEYCAP_Y_OFFSET),0,0,0);
 	x+=fh1->W+MAP_INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT;
 	m_font->print(x,y,STR__MAP_SCREEN__TRIANGLE_TO_SAVE);
 }

@@ -252,11 +252,17 @@ UI_GFX_FONT_IN :=			$(foreach FILE,$(UI_GFX_FONT),$(UI_FONT_DIR)/$(FILE).bmp)
 UI_GFX_NONTRANS :=			
 UI_GFX_NONTRANS_IN :=		$(foreach FILE,$(UI_GFX_NONTRANS),$(UI_GFX_DIR)/$(FILE))
 
+# The +key*.bmp caps are Blubrry's keyboard glyphs, used with permission
+# (see CREDITS.md); the PC build draws them in place of the +but* glyphs.
 UI_GFX_TRANS :=				+bambootopleft.bmp +bamboobotleft.bmp +bambootopright.bmp +bamboobotright.bmp \
 							+bamboohorizontal.bmp +bamboovertical.bmp \
 							+slider_marker.bmp \
 							+butU.bmp +butD.bmp +butL.bmp +butR.bmp \
 							+butC.bmp +butS.bmp +butX.bmp +butT.bmp \
+							+keyZ.bmp +keyX.bmp +keyA.bmp +keyS.bmp \
+							+keyQ.bmp +keyW.bmp +keyE.bmp +keyR.bmp \
+							+keyUp.bmp +keyDown.bmp +keyLeft.bmp +keyRight.bmp \
+							+keyEnter.bmp +keyRShift.bmp \
 							+mappointer.bmp +speechbubblecorner.bmp \
 							faces/mr_krabs.bmp faces/patrick.bmp faces/plankton.bmp \
 							faces/sandy.bmp faces/spongebob.bmp faces/squidward.bmp \
@@ -405,6 +411,18 @@ $(SPRITES_TEX_OUT) : $(SPRITES_ALL_DEP)
 		@$(PARKGRAB) -b+ $(SPRITES_ALL_IN) -t:12,4,1 -l:$(SPRITES_OUT_DIR)/sprites.lbm -o:$(SPRITES_TEX_OUT)
 		@$(MV) -f $(SPRITES_OUT_DIR)/sprites.h $(SPRITES_HDR_OUT)
 		@$(ECHO) Sprites Made
+
+#	Sprites.h is written by the rule above as a side effect (parkgrab emits it
+#	beside the texture, and the rule moves it into $(INC_DIR)), so it has no
+#	rule of its own.  Give it one - an empty recipe, since the .Spr rule does
+#	the work - so that targets which consume the header can name it as a
+#	prerequisite.  The levels must: MkLevel resolves each level's sprite
+#	references against this header and bakes the frame numbers into the .lvl
+#	(build/mklevel.pl).  Without the dependency a from-scratch build can run
+#	MkLevel before the header exists at all, and an incremental build never
+#	rebuilds a level after the sprite bank changes - either way the level
+#	draws the wrong sprites (github issue #43).
+$(SPRITES_HDR_OUT) : $(SPRITES_TEX_OUT) ;
 
 GRAF_DIRS_TO_MAKE	+=		$(SPRITES_OUT_DIR)
 GFX_DATA_OUT		+=		$(SPRITES_TEX_OUT)

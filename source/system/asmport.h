@@ -66,6 +66,31 @@ int		Port_AutoplaySpatulasAll(void);
 int		Port_AutoplayLives(void);
 int		Port_AutoplayContinues(void);
 int		Port_AutoplayDie(int playerIsDead);
+
+/*	Button prompts (issue #43).  Every "press this to do that" line in the
+	game draws a pad icon beside it; on PC the PS1 glyph is a lie for a
+	player on the keyboard, who has no way to know that [] means A.  The
+	prompt layer (pad/padicon.cpp) asks the shim which key is bound to a
+	pad button RIGHT NOW and draws that key's cap instead.
+
+	The shim answers with a cap id rather than an SDL scancode so the
+	scancode table stays beside the binding table it has to track, and game
+	code needs no SDL.  PORT_CAP_NONE means "draw the PS1 glyph": it is
+	what a gamepad player gets, what `prompt_icons = pad` pins, and what a
+	key rebound to something with no cap art falls back to.
+*/
+enum
+{
+	PORT_CAP_NONE=0,
+	PORT_CAP_A, PORT_CAP_S, PORT_CAP_X, PORT_CAP_Z,
+	PORT_CAP_Q, PORT_CAP_W, PORT_CAP_E, PORT_CAP_R,
+	PORT_CAP_UP, PORT_CAP_DOWN, PORT_CAP_LEFT, PORT_CAP_RIGHT,
+	PORT_CAP_ENTER, PORT_CAP_RSHIFT,
+	PORT_CAP__COUNT
+};
+int		Port_InputPromptCap(const char *button);	/* pad/padicon.cpp */
+int		Port_InputPadActive(void);
+int		Port_InputKeyFor(const char *button);
 }
 #endif
 
