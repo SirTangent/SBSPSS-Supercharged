@@ -76,6 +76,7 @@ private:
 		TEXTBOX_FONT_NUM_LINES_IN_BOX=2,
 		TEXTBOX_BUTTONS_XOFF=0,
 		TEXTBOX_BUTTONS_YOFF=TEXTBOX_HEIGHT+6,
+		TEXTBOX_KEYCAP_YOFF=TEXTBOX_HEIGHT+6,	// PC key caps, tuned by eye like the glyph (github issue #43)
 		/*	Was TEXTBOX_BUTTONS_GAP=20, the up icon's 18px plus 2 of air.
 			The gap is now added to the icon's measured width so the PC key
 			caps can be any size (github issue #43).  */

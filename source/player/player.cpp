@@ -3287,6 +3287,7 @@ void CPlayer::getPlayerNormalCollisionSize(int *_x,int *_y,int *_w,int *_h)
 const int	PromptIconX=32;
 const int	PromptTextXOfs=20;
 const int	PromptTextYOfs=-4;
+const int	PromptKeyCapYOfs=-2;	// PC key caps sit up a little from where the glyph goes (github issue #43)
 const int	PromptY=(INGAME_SCREENH-32);
 /*	Was PromptXGap=20, hardcoded against the 18px PS1 glyphs.  The key caps
 	the PC build draws instead are not all 18px wide, so the step is the
@@ -3454,10 +3455,10 @@ int			MaxTLen=0;
 				if (Icon[i]!=-1)
 				{
 					//Icon
-					Ft4=sb->printFT4(Icon[i],X,Y,0,0,0); setSemiTrans(Ft4,1); Ft4->tpage|=PromptTMode<<5; setRGB0(Ft4,PromptRGB,PromptRGB,PromptRGB);
+					Ft4=sb->printFT4(Icon[i],X,Y+CPadIcon::getFrameYOffset(Icon[i],0,PromptKeyCapYOfs),0,0,0); setSemiTrans(Ft4,1); Ft4->tpage|=PromptTMode<<5; setRGB0(Ft4,PromptRGB,PromptRGB,PromptRGB);
 					//Icon Mask	- to aid alpha fade
 					int	Col=(PromptRGB*3)/2;
-					Ft4=sb->printFT4(Icon[i],X,Y,0,0,0); setSemiTrans(Ft4,1); Ft4->tpage|=2<<5;			setRGB0(Ft4,Col,Col,Col);
+					Ft4=sb->printFT4(Icon[i],X,Y+CPadIcon::getFrameYOffset(Icon[i],0,PromptKeyCapYOfs),0,0,0); setSemiTrans(Ft4,1); Ft4->tpage|=2<<5;			setRGB0(Ft4,Col,Col,Col);
 					X+=sb->getFrameWidth(Icon[i])+PromptIconGap;
 				}
 			}

@@ -362,9 +362,9 @@ void CFrontEndStart::drawInstructions()
 	fh2=sb->getFrameHeader(CPadIcon::getFrame(PAD_RIGHT));
 	width=fh1->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS+fh2->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_font->getStringWidth(STR__SLOT_SELECT_SCREEN__LEFT_RIGHT_TO_SELECT_SLOT);
 	x=256-(width/2);
-	sb->printFT4(fh1,x,y+INSTRUCTIONS_BUTTON_Y_OFFSET,0,0,0);
+	sb->printFT4(fh1,x,y+CPadIcon::getYOffset(PAD_LEFT,INSTRUCTIONS_BUTTON_Y_OFFSET,INSTRUCTIONS_KEYCAP_Y_OFFSET),0,0,0);
 	x+=fh1->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS;
-	sb->printFT4(fh2,x,y+INSTRUCTIONS_BUTTON_Y_OFFSET,0,0,0);
+	sb->printFT4(fh2,x,y+CPadIcon::getYOffset(PAD_RIGHT,INSTRUCTIONS_BUTTON_Y_OFFSET,INSTRUCTIONS_KEYCAP_Y_OFFSET),0,0,0);
 	x+=fh2->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT;
 	m_font->print(x,y,STR__SLOT_SELECT_SCREEN__LEFT_RIGHT_TO_SELECT_SLOT);
 
@@ -373,7 +373,7 @@ void CFrontEndStart::drawInstructions()
 	fh1=sb->getFrameHeader(CPadIcon::getFrame(PAD_CROSS));
 	width=fh1->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_font->getStringWidth(text);
 	x=256-(width/2);
-	sb->printFT4(fh1,x,y+INSTRUCTIONS_BUTTON_Y_OFFSET,0,0,0);
+	sb->printFT4(fh1,x,y+CPadIcon::getYOffset(PAD_CROSS,INSTRUCTIONS_BUTTON_Y_OFFSET,INSTRUCTIONS_KEYCAP_Y_OFFSET),0,0,0);
 	x+=fh1->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT;
 	m_font->print(x,y,text);
 
@@ -383,7 +383,7 @@ void CFrontEndStart::drawInstructions()
 	x=256-(width/2);
 	if(slotInUse)
 	{
-		sb->printFT4(fh1,x,y+INSTRUCTIONS_BUTTON_Y_OFFSET,0,0,0);
+		sb->printFT4(fh1,x,y+CPadIcon::getYOffset(PAD_CIRCLE,INSTRUCTIONS_BUTTON_Y_OFFSET,INSTRUCTIONS_KEYCAP_Y_OFFSET),0,0,0);
 	}
 	x+=fh1->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT;
 	if(slotInUse)
@@ -395,7 +395,7 @@ void CFrontEndStart::drawInstructions()
 	fh1=sb->getFrameHeader(CPadIcon::getFrame(PAD_TRIANGLE));
 	width=fh1->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_font->getStringWidth(STR__SLOT_SELECT_SCREEN__TRIANGLE_TO_EXIT);
 	x=256-(width/2);
-	sb->printFT4(fh1,x,y+INSTRUCTIONS_BUTTON_Y_OFFSET,0,0,0);
+	sb->printFT4(fh1,x,y+CPadIcon::getYOffset(PAD_TRIANGLE,INSTRUCTIONS_BUTTON_Y_OFFSET,INSTRUCTIONS_KEYCAP_Y_OFFSET),0,0,0);
 	x+=fh1->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT;
 	m_font->print(x,y,STR__SLOT_SELECT_SCREEN__TRIANGLE_TO_EXIT);
 }

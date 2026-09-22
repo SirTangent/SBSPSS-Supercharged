@@ -672,11 +672,11 @@ void CConversation::renderText()
 	int downXOfs=s_sprites->getFrameWidth(upFrame)+TEXTBOX_BUTTONS_ICON_GAP;
 	if(s_textPageOffset!=0)
 	{
-		s_sprites->printFT4(upFrame,clipTextRegion.x+TEXTBOX_BUTTONS_XOFF,TEXTBOX_Y+TEXTBOX_BUTTONS_YOFF,0,0,0);
+		s_sprites->printFT4(upFrame,clipTextRegion.x+TEXTBOX_BUTTONS_XOFF,TEXTBOX_Y+CPadIcon::getYOffset(PAD_UP,TEXTBOX_BUTTONS_YOFF,TEXTBOX_KEYCAP_YOFF),0,0,0);
 	}
 	if(s_textPageOffset<s_maxTextPageOffset)
 	{
-		s_sprites->printFT4(CPadIcon::getFrame(PAD_DOWN),clipTextRegion.x+TEXTBOX_BUTTONS_XOFF+downXOfs,TEXTBOX_Y+TEXTBOX_BUTTONS_YOFF,0,0,0);
+		s_sprites->printFT4(CPadIcon::getFrame(PAD_DOWN),clipTextRegion.x+TEXTBOX_BUTTONS_XOFF+downXOfs,TEXTBOX_Y+CPadIcon::getYOffset(PAD_DOWN,TEXTBOX_BUTTONS_YOFF,TEXTBOX_KEYCAP_YOFF),0,0,0);
 	}
 
 	// Render X button hint
@@ -689,7 +689,7 @@ void CConversation::renderText()
 	{
 		xofs=clipTextRegion.x+TEXTBOX_BUTTONS_XOFF+TEXTBOX_WIDTH_FOR_NARRATOR-TEXTBOX_XBUTTON_XOFFSET;
 	}
-	s_sprites->printFT4(CPadIcon::getFrame(PAD_CROSS),xofs,TEXTBOX_Y+TEXTBOX_BUTTONS_YOFF,0,0,0);
+	s_sprites->printFT4(CPadIcon::getFrame(PAD_CROSS),xofs,TEXTBOX_Y+CPadIcon::getYOffset(PAD_CROSS,TEXTBOX_BUTTONS_YOFF,TEXTBOX_KEYCAP_YOFF),0,0,0);
 }
 
 

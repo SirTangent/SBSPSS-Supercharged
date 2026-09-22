@@ -285,14 +285,14 @@ void	CBossText::render()
 	}
 	width=fh1->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_fontBank->getStringWidth(text);
 	x=128-(width/2);
-	sb->printFT4(fh1,x,INSTRUCTIONS_Y_POS+INSTRUCTIONS_BUTTON_Y_OFFSET+s_bossTextYOffset,0,0,0);
+	sb->printFT4(fh1,x,INSTRUCTIONS_Y_POS+CPadIcon::getYOffset(PAD_UP,INSTRUCTIONS_BUTTON_Y_OFFSET,INSTRUCTIONS_KEYCAP_Y_OFFSET)+s_bossTextYOffset,0,0,0);
 	x+=fh1->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT;
 	m_fontBank->print(x,INSTRUCTIONS_Y_POS+s_bossTextYOffset,text);
 
 	fh1=sb->getFrameHeader(CPadIcon::getFrame(PAD_CROSS));
 	width=fh1->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_fontBank->getStringWidth(STR__BOSS__CONTINUE);
 	x=256+128-(width/2);
-	sb->printFT4(fh1,x,INSTRUCTIONS_Y_POS+INSTRUCTIONS_BUTTON_Y_OFFSET+s_bossTextYOffset,0,0,0);
+	sb->printFT4(fh1,x,INSTRUCTIONS_Y_POS+CPadIcon::getYOffset(PAD_CROSS,INSTRUCTIONS_BUTTON_Y_OFFSET,INSTRUCTIONS_KEYCAP_Y_OFFSET)+s_bossTextYOffset,0,0,0);
 	x+=fh1->W+INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT;
 	m_fontBank->print(x,INSTRUCTIONS_Y_POS+s_bossTextYOffset,STR__BOSS__CONTINUE);
 

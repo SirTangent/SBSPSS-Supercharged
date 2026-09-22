@@ -294,6 +294,34 @@ int CFrontEndOptions::refreshIcons()
 
 
 /*----------------------------------------------------------------------
+	Function:	CFrontEndOptions::placeControlReadouts
+	Purpose:	Sit each controls readout on its text's centre line.  The
+				readout centres its sprite in a 15px row, which is right for
+				the 11px PS1 glyph, but the row's text hangs a little below
+				the row's middle and a 14px key cap fills the row from the
+				top - so a cap reads as high against its label.  Nudge the
+				row down for a cap, leave it alone for a glyph.
+	Params:
+	Returns:
+  ---------------------------------------------------------------------- */
+void CFrontEndOptions::placeControlReadouts()
+{
+	const int	CAP_ROW_NUDGE=2;
+
+	for(int i=0;i<CONTROL_COUNT;i++)
+	{
+		if(m_controlReadouts[i])
+		{
+			int	frame=s_controlReadoutSprites[m_controlIcons[i]].m_frame;
+			int	nudge=CPadIcon::isKeyCap(frame)?CAP_ROW_NUDGE:0;
+			m_controlReadouts[i]->setObjectXYWH((i/4)*176,((i%4)*15)+nudge,26,15);
+			m_controlReadouts[i]->setReadoutData(s_controlReadoutSprites);
+		}
+	}
+}
+
+
+/*----------------------------------------------------------------------
 	Function:
 	Purpose:
 	Params:
@@ -940,17 +968,11 @@ void CFrontEndOptions::think(int _frames)
 		(github issue #43).  The footer resolves per frame and needs
 		nothing; the readout caches its frame and only recalculates when
 		its ICON_* changes, which a device switch does not touch, so it has
-		to be told.  */
-	if(refreshIcons())
-	{
-		for(i=0;i<CONTROL_COUNT;i++)
-		{
-			if(m_controlReadouts[i])
-			{
-				m_controlReadouts[i]->setReadoutData(s_controlReadoutSprites);
-			}
-		}
-	}
+		to be told.  Every frame rather than only when refreshIcons() saw a
+		change: a control style change moves rows between icons too, and
+		re-placing eight readouts is a handful of stores.  */
+	refreshIcons();
+	placeControlReadouts();
 }
 
 /*----------------------------------------------------------------------
@@ -1107,7 +1129,7 @@ void	CFrontEndOptions::renderButtonPrompts()
 		fh1=m_spriteBank->getFrameHeader(CPadIcon::getFrame(PAD_CROSS));
 		width=fh1->W+OPTIONS_INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_fontBank->getStringWidth(STR__FRONTEND__CROSS_TO_SELECT);
 		x=128-(width/2);
-		m_spriteBank->printFT4(fh1,x,OPTIONS_INSTRUCTIONS_Y_POS+OPTIONS_INSTRUCTIONS_BUTTON_Y_OFFSET,0,0,0);
+		m_spriteBank->printFT4(fh1,x,OPTIONS_INSTRUCTIONS_Y_POS+CPadIcon::getYOffset(PAD_CROSS,OPTIONS_INSTRUCTIONS_BUTTON_Y_OFFSET,OPTIONS_INSTRUCTIONS_KEYCAP_Y_OFFSET),0,0,0);
 		x+=fh1->W+OPTIONS_INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT;
 		m_fontBank->print(x,OPTIONS_INSTRUCTIONS_Y_POS,STR__FRONTEND__CROSS_TO_SELECT);
 	}
@@ -1118,9 +1140,9 @@ void	CFrontEndOptions::renderButtonPrompts()
 		fh2=m_spriteBank->getFrameHeader(CPadIcon::getFrame(PAD_RIGHT));
 		width=fh1->W+OPTIONS_INSTRUCTIONS_GAP_BETWEEN_BUTTONS+fh2->W+OPTIONS_INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_fontBank->getStringWidth(STR__FRONTEND__ARROWS_TO_ADJUST);
 		x=128-(width/2);
-		m_spriteBank->printFT4(fh1,x,OPTIONS_INSTRUCTIONS_Y_POS+OPTIONS_INSTRUCTIONS_BUTTON_Y_OFFSET,0,0,0);
+		m_spriteBank->printFT4(fh1,x,OPTIONS_INSTRUCTIONS_Y_POS+CPadIcon::getYOffset(PAD_LEFT,OPTIONS_INSTRUCTIONS_BUTTON_Y_OFFSET,OPTIONS_INSTRUCTIONS_KEYCAP_Y_OFFSET),0,0,0);
 		x+=fh1->W+OPTIONS_INSTRUCTIONS_GAP_BETWEEN_BUTTONS;
-		m_spriteBank->printFT4(fh2,x,OPTIONS_INSTRUCTIONS_Y_POS+OPTIONS_INSTRUCTIONS_BUTTON_Y_OFFSET,0,0,0);
+		m_spriteBank->printFT4(fh2,x,OPTIONS_INSTRUCTIONS_Y_POS+CPadIcon::getYOffset(PAD_RIGHT,OPTIONS_INSTRUCTIONS_BUTTON_Y_OFFSET,OPTIONS_INSTRUCTIONS_KEYCAP_Y_OFFSET),0,0,0);
 		x+=fh2->W+OPTIONS_INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT;
 		m_fontBank->print(x,OPTIONS_INSTRUCTIONS_Y_POS,STR__FRONTEND__ARROWS_TO_ADJUST);
 	}
@@ -1130,7 +1152,7 @@ void	CFrontEndOptions::renderButtonPrompts()
 		fh1=m_spriteBank->getFrameHeader(CPadIcon::getFrame(PAD_TRIANGLE));
 		width=fh1->W+OPTIONS_INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_fontBank->getStringWidth(STR__FRONTEND__TRIANGLE_TO_GO_BACK);
 		x=256+128-(width/2);
-		m_spriteBank->printFT4(fh1,x,OPTIONS_INSTRUCTIONS_Y_POS+OPTIONS_INSTRUCTIONS_BUTTON_Y_OFFSET,0,0,0);
+		m_spriteBank->printFT4(fh1,x,OPTIONS_INSTRUCTIONS_Y_POS+CPadIcon::getYOffset(PAD_TRIANGLE,OPTIONS_INSTRUCTIONS_BUTTON_Y_OFFSET,OPTIONS_INSTRUCTIONS_KEYCAP_Y_OFFSET),0,0,0);
 		x+=fh1->W+OPTIONS_INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT;
 		m_fontBank->print(x,OPTIONS_INSTRUCTIONS_Y_POS,STR__FRONTEND__TRIANGLE_TO_GO_BACK);
 	}

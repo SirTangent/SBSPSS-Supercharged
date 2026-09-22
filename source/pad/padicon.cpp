@@ -146,5 +146,27 @@ int	CPadIcon::getFrame(int _padButton)
 }
 
 
+/*----------------------------------------------------------------------
+	Function:	CPadIcon::isKeyCap
+	Purpose:	Whether a frame is one of the key caps rather than a PS1
+				glyph, for the sites that place the two differently.
+	Params:		_frame - a frame getFrame() answered with
+	Returns:	1 for a key cap, 0 for anything else
+  ---------------------------------------------------------------------- */
+int	CPadIcon::isKeyCap(int _frame)
+{
+#ifndef	PSX_MIPS_ASM
+	for(int i=PORT_CAP_NONE+1;i<PORT_CAP__COUNT;i++)
+	{
+		if(s_capFrame[i]==_frame)
+		{
+			return 1;
+		}
+	}
+#endif
+	return 0;
+}
+
+
 /*===========================================================================
  end */

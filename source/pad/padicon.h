@@ -61,6 +61,24 @@ public:
 	/*	The PS1 glyph for a button, ignoring the keyboard entirely.  For
 		the places that want the hardware icon as such.  */
 	static int		getPsxFrame(int _padButton);
+
+	/*	Every prompt site sits its icon a few pixels below its text, by an
+		offset that was tuned by eye for the 11px PS1 glyph.  The 14px key
+		caps want their own: not one correction for all of them, because
+		each screen's font, outline and leading put the text somewhere
+		different, so the caps were tuned screen by screen just as the
+		glyphs were.  A site keeps both offsets side by side and asks here
+		which applies to the icon it is about to draw.  The glyph offset is
+		the answer for a glyph, so the PS1 build and a gamepad player see
+		no change.  */
+	static int		getYOffset(int _padButton,int _glyphYOffset,int _capYOffset)
+					{ return getFrameYOffset(getFrame(_padButton),_glyphYOffset,_capYOffset); }
+	static int		getFrameYOffset(int _frame,int _glyphYOffset,int _capYOffset)
+					{ return isKeyCap(_frame)?_capYOffset:_glyphYOffset; }
+
+	/*	Whether a frame getFrame() answered with is one of the key caps
+		rather than a PS1 glyph.  */
+	static int		isKeyCap(int _frame);
 };
 
 

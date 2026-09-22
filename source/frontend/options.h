@@ -127,6 +127,7 @@ private:
 		OPTIONS_INSTRUCTIONS_GAP_BETWEEN_BUTTONS=5,
 		OPTIONS_INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT=10,
 		OPTIONS_INSTRUCTIONS_BUTTON_Y_OFFSET=4,
+		OPTIONS_INSTRUCTIONS_KEYCAP_Y_OFFSET=2,	// PC key caps, tuned by eye like the glyph (github issue #43)
 	};
 
 	typedef struct
@@ -178,6 +179,7 @@ private:
 		readouts themselves are kept so think() can tell them to pick the
 		new frames up.  */
 	static int									refreshIcons();
+	void										placeControlReadouts();
 	class CGUISpriteReadout						*m_controlReadouts[CONTROL_COUNT];
 
 	class FontBank								*m_fontBank;

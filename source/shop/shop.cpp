@@ -539,10 +539,9 @@ void CShopScene::renderUi()
 	fh1=sb->getFrameHeader(CPadIcon::getFrame(PAD_LEFT));
 	fh2=sb->getFrameHeader(CPadIcon::getFrame(PAD_RIGHT));
 	x-=SHOP_SPACE_BETWEEN_INSTRUCTIONS_AND_BUTTONS+fh2->W;
-	y+=SHOP_Y_BUTTON_OFFSET_FORM_TOP_OF_TEXT;
-	sb->printFT4(fh2,x,y,0,0,0);
+	sb->printFT4(fh2,x,y+CPadIcon::getYOffset(PAD_RIGHT,SHOP_Y_BUTTON_OFFSET_FORM_TOP_OF_TEXT,SHOP_Y_KEYCAP_OFFSET_FORM_TOP_OF_TEXT),0,0,0);
 	x-=SHOP_GAP_BETWEEN_INSTRUCTION_BUTTONS+fh1->W;
-	sb->printFT4(fh1,x,y,0,0,0);
+	sb->printFT4(fh1,x,y+CPadIcon::getYOffset(PAD_LEFT,SHOP_Y_BUTTON_OFFSET_FORM_TOP_OF_TEXT,SHOP_Y_KEYCAP_OFFSET_FORM_TOP_OF_TEXT),0,0,0);
 	maxInstructionsWidth=xbase+SHOP_MAIN_UI_Y-x;
 
 	x=xbase+instructionsXBase;
@@ -554,16 +553,14 @@ void CShopScene::renderUi()
 		arrow left over from the line above) was invisible while every
 		icon was 18px wide; the PC key caps are not (github issue #43).  */
 	x-=SHOP_SPACE_BETWEEN_INSTRUCTIONS_AND_BUTTONS+fh1->W;
-	y+=SHOP_Y_BUTTON_OFFSET_FORM_TOP_OF_TEXT;
-	sb->printFT4(fh1,x-1,y,0,0,0);
+	sb->printFT4(fh1,x-1,y+CPadIcon::getYOffset(PAD_CROSS,SHOP_Y_BUTTON_OFFSET_FORM_TOP_OF_TEXT,SHOP_Y_KEYCAP_OFFSET_FORM_TOP_OF_TEXT),0,0,0);
 
 	x=xbase+instructionsXBase;
 	y=ybase+SHOP_INSTRUCTIONS_Y_BASE+(SHOP_Y_GAP_BETWEEN_INSTRUCTION_LINES*2);
 	m_font->print(x,y,STR__SHOP_SCREEN__TRIANGLE_TO_EXIT);
 	fh1=sb->getFrameHeader(CPadIcon::getFrame(PAD_TRIANGLE));
 	x-=SHOP_SPACE_BETWEEN_INSTRUCTIONS_AND_BUTTONS+fh1->W;	/* see above */
-	y+=SHOP_Y_BUTTON_OFFSET_FORM_TOP_OF_TEXT;
-	sb->printFT4(fh1,x-1,y,0,0,0);
+	sb->printFT4(fh1,x-1,y+CPadIcon::getYOffset(PAD_TRIANGLE,SHOP_Y_BUTTON_OFFSET_FORM_TOP_OF_TEXT,SHOP_Y_KEYCAP_OFFSET_FORM_TOP_OF_TEXT),0,0,0);
 
 	// Item price
 	int		x1,x2;
