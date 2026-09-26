@@ -12,8 +12,10 @@
 	                    bonus level; 6-N also addresses bonus level N).
 	                    N: raw LvlTable index 0..24.
 	                    Env equivalent: SBSP_BOOT_LEVEL (same formats).
-	  --seed <n>        fixed setRndSeed value instead of the boot tick count
-	                    (Port_BootSeed hook, M8).  Env: SBSP_SEED.
+	  --seed <n>        fixed setRndSeed value (host/seed.cpp; without it the
+	                    shim takes a replayed recording's `# seed`, else the
+	                    boot tick count, and --record-pad writes the result
+	                    down).  Env: SBSP_SEED.
 	  --invincible      SBSP_INVINCIBLE=1: the DEBUG pause menu's
 	                    invincibleSponge, set at Port_RegisterGameGlobals (M8).
 	  --language <l>    text language for the boot-time
@@ -75,8 +77,6 @@
 #include "compiler.h"		/* PORT_EARLY_CTOR */
 
 static int	g_bootLevel = -1;		/* -1 = normal boot (frontend) */
-static long	g_seed;
-static int	g_seedSet;
 static int	g_language = -1;		/* -1 = the game's default (ENGLISH) */
 
 /*	--language / SBSP_LANGUAGE value -> TranslationDatabase::loadLanguage()
@@ -117,17 +117,22 @@ static int parseLevel(const char *s)
 	return (a >= 0 && a <= 24) ? (int)a : -1;
 }
 
-static void parseSeed(const char *s, const char *what)
+/*	host/seed.cpp owns the seed (input.cpp's recorder needs it, and this TU
+	is not in the shim archive - see port/CMakeLists.txt psyq_args); this
+	only hands an explicit value over.  Returns 1 when it did.  */
+extern "C" void Port_SeedExplicit(long seed);
+
+static int parseSeed(const char *s, const char *what)
 {
 	char *end;
 	long v = strtol(s, &end, 0);
 	if (end == s || *end)
 	{
 		fprintf(stderr, "[args] bad %s '%s' - using the boot tick count\n", what, s);
-		return;
+		return 0;
 	}
-	g_seed = v;
-	g_seedSet = 1;
+	Port_SeedExplicit(v);
+	return 1;
 }
 
 /*	A language name (case-insensitive) or its textdbase.h enum index -
@@ -173,6 +178,7 @@ static void usage(void)
 		"  --level C-L | N       boot straight into a level (chapter 1-5,\n"
 		"                        level 1-5; L=5 = bonus; or LvlTable index 0-24)\n"
 		"  --seed <n>            fixed random seed        (SBSP_SEED)\n"
+		"                        (default: a replayed recording's # seed, else the boot tick)\n"
 		"  --invincible          player takes no damage   (SBSP_INVINCIBLE=1)\n"
 		"  --language <l>        boot text language       (SBSP_LANGUAGE)\n"
 		"                        a name or its locale/textdbase.h enum index:\n"
@@ -187,7 +193,8 @@ static void usage(void)
 		"                        DOWN=4000 LEFT=8000 CROSS=0040 CIRCLE=0020 SQUARE=0080\n"
 		"                        TRIANGLE=0010 L1=0004 R1=0008 L2=0001 R2=0002\n"
 		"  --record-pad <path>   write the applied input  (SBSP_RECORD_PAD)\n"
-		"                        in --pad-file form, with # epoch desync markers\n"
+		"                        in --pad-file form, with # seed / # pace / # prompt\n"
+		"                        header lines and # epoch desync markers\n"
 		"  --frame-crc           [frame] <vbl> crc= line  (SBSP_FRAME_CRC=1)\n"
 		"  --dump-frames <list>  BMP dump vblanks         (SBSP_DUMP_FRAMES)\n"
 		"  --dump-dir <path>     where dumps go           (SBSP_DUMP_DIR)\n"
@@ -202,7 +209,7 @@ static void usage(void)
 		"  --assert-continue     log asserts, keep going  (SBSP_ASSERT_CONTINUE=1)\n"
 		"  --mem-log             RamUsed high-water log   (SBSP_MEM_LOG=1)\n"
 		"Settings (sbsp.ini beside the exe, written with defaults on first run;\n"
-		"argument > environment > ini):\n"
+		"argument > environment > ini; a scripted run reads only an explicit --ini):\n"
 		"  --ini <path>          settings file            (SBSP_INI)\n"
 		"  --window WxH|fullscreen  window size / borderless fullscreen (SBSP_WINDOW)\n"
 		"  --scale fit|integer|stretch  viewport scaling  (SBSP_SCALE)\n"
@@ -260,8 +267,11 @@ extern "C" int Port_HarnessRun(void);
 	(--level/--seed/--language) read their variables after this returns.
 	Location: --ini / SBSP_INI, else <exe dir>\sbsp.ini - where a tester
 	will look, and what makes an unpacked folder self-contained.  Defaults
-	are written there on the first run, but only for an interactive one: a
-	scripted run must leave no files behind.  */
+	are written there on the first run, but only for an interactive one.
+	A scripted run (Port_HarnessRun) takes only an explicit --ini: what it
+	draws must not depend on the key bindings, language or prompt icons in
+	whatever file sits beside the exe it was pointed at (issue #58), and it
+	must leave no files behind.  */
 static void loadIni(void)
 {
 	char exeDir[512], path[600];
@@ -273,6 +283,8 @@ static void loadIni(void)
 			fprintf(stderr, "[ini] cannot open %s\n", explicitPath);
 		return;
 	}
+	if (Port_HarnessRun())
+		return;					/* a scripted run: built-in defaults, no file read or written */
 
 	if (!Port_ExeDir(exeDir, sizeof(exeDir)))
 		return;					/* no path to ourselves: built-in defaults */
@@ -280,8 +292,6 @@ static void loadIni(void)
 
 	if (Port_IniLoad(path) >= 0)
 		return;
-	if (Port_HarnessRun())
-		return;					/* a scripted run leaves no files behind */
 	if (Port_IniWriteDefaults(path))
 		Port_IniLoad(path);
 	else
@@ -321,7 +331,7 @@ PORT_EARLY_CTOR(parseArgs)
 		{ "--assert-continue", "SBSP_ASSERT_CONTINUE=1" },	/* M8 shell: argv twins of */
 		{ "--mem-log",         "SBSP_MEM_LOG=1"         },	/* the env-only harness knobs */
 	};
-	int levelFromArg = 0, languageFromArg = 0;
+	int levelFromArg = 0, seedFromArg = 0, languageFromArg = 0;
 
 	if (uncappedRequested(__argc, __argv))
 	{
@@ -362,7 +372,7 @@ PORT_EARLY_CTOR(parseArgs)
 				fprintf(stderr, "[args] bad --level '%s' - booting normally\n", v);
 		}
 		if (!matched && (v = argValue("--seed", &i, __argc, __argv, &matched)) != NULL)
-			parseSeed(v, "--seed");
+			seedFromArg = parseSeed(v, "--seed");
 		if (!matched && (v = argValue("--language", &i, __argc, __argv, &matched)) != NULL)
 		{
 			parseLanguage(v, "--language");
@@ -408,7 +418,7 @@ PORT_EARLY_CTOR(parseArgs)
 			fprintf(stderr, "[args] bad SBSP_BOOT_LEVEL '%s' - booting normally\n", e);
 	}
 	e = getenv("SBSP_SEED");
-	if (!g_seedSet && e && *e)
+	if (!seedFromArg && e && *e)
 		parseSeed(e, "SBSP_SEED");
 	e = getenv("SBSP_LANGUAGE");
 	if (!languageFromArg && e && *e)
@@ -426,15 +436,6 @@ PORT_EARLY_CTOR(parseArgs)
 extern "C" int Port_BootLevel(void)
 {
 	return g_bootLevel;
-}
-
-/*	Hook read by system/main.cpp's InitSystem: 1 and the seed when --seed /
-	SBSP_SEED was given, else 0 (the game keeps setRndSeed(VidGetTickCount())).  */
-extern "C" int Port_BootSeed(long *seed)
-{
-	if (g_seedSet)
-		*seed = g_seed;
-	return g_seedSet;
 }
 
 /*	Hook read by system/main.cpp's InitSystem (M8 EUR): the language enum

@@ -20,7 +20,8 @@ are fully static, no DLLs):
       README.txt               controls, settings, what to send back
       data/                    BIGLUMP.BIN TRACK1.IXA THQ.STR CLIMAX.STR INTRO.STR DEMO.STR
       saves/                   empty; the exe finds it beside itself and keeps
-                               card0.mcd and sbsp.ini there (portable)
+                               card0.mcd there (portable; sbsp.ini is written
+                               beside the exe)
 
 The exe locates data/ and saves/ next to itself (port/psyq/cd/cd.cpp,
 host/hostpath.cpp), so the folder can live anywhere and needs no

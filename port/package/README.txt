@@ -65,6 +65,9 @@ game.  The options:
   key_up=Up ... key_r2=R     the keyboard bindings (key names as Windows
                              shows them: Space, Return, Right Shift, F1,
                              Keypad 0, ...)
+  prompt_icons=auto          the icons in button prompts: auto = the device
+                             you are using, keys = always key caps, pad =
+                             always PlayStation buttons
   pad_deadzone=15            analog stick dead zone, percent
   rumble=1                   0 = never vibrate
   pause_on_focus_loss=1      0 = keep running in the background
@@ -82,10 +85,12 @@ and "sbsp.exe --help" lists everything.
 Test sessions
 -------------
 Run run-test-session.cmd (double-click it) instead of the exe.  It starts
-sbsp-debug.exe, records everything you press, keeps the logs, and copies
-your memory card before and after.  Play as you normally would; save in the
-game whenever you like - the card in saves\ is yours and persists between
-sessions, so a long play-through can be split over several sessions.
+sbsp-debug.exe, records everything you press (buttons and stick, on either
+device), keeps the logs, and copies your memory card before and after and
+your settings after.  Play as you normally would; save in the game whenever
+you like - the card in saves\ is yours and persists between sessions, so a
+long play-through can be split over several sessions.  We can replay a
+session exactly on another build from what the folder holds.
 
 When you close the game the script prints the exit code and the summary
 line, and names the folder it made under sessions\.  Zip that folder and

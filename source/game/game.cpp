@@ -605,8 +605,8 @@ void CGameScene::think_playing(int _frames)
 			gameSlot->setSpatulaCollectedCount(chapter-1,level-1,m_player->getSpatulasHeld(),getTotalSpatCountForThisLevel());
 		}
 #if !defined(PSX_MIPS_ASM)
-		// PC: SBSP_AUTOPLAY spatulas=all - slot bookkeeping only (conv_pc.md #28)
-		if(Port_AutoplaySpatulasAll())
+		// PC: SBSP_AUTOPLAY spatulas=all - slot bookkeeping only; a bonus level has no spatula slot (conv_pc.md #28)
+		if(Port_AutoplaySpatulasAll()&&level!=5)
 		{
 			gameSlot->setSpatulaCollectedCount(chapter-1,level-1,getTotalSpatCountForThisLevel(),getTotalSpatCountForThisLevel());
 		}

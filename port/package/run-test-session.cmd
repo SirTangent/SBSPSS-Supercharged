@@ -11,11 +11,23 @@ rem
 rem Everything the session produces lands in sessions\<date-time>\ :
 rem   card-before.mcd / card-after.mcd   the memory card around the session
 rem   session.pad                        the input recording (--record-pad,
-rem                                      replayable with --pad-file)
+rem                                      replayable with --pad-file): every
+rem                                      button and stick move, the seed, and
+rem                                      which prompt icons were on screen
+rem   sbsp.ini                           the settings the session ran with
+rem                                      (key bindings, language: a replay
+rem                                      passes them with --ini)
 rem   stdout.txt / stderr.txt            the game's and the shim's logs, kept
 rem                                      apart (they must not be merged: the
 rem                                      shim's tagged lines are in stderr)
 rem When you are done, zip that folder and send it with your notes.
+rem
+rem To replay one (developers): put card-before.mcd in an empty folder as
+rem card0.mcd, then
+rem   sbsp-debug.exe --pad-file <session>\session.pad --ini <session>\sbsp.ini
+rem                  --save-dir <that folder> --no-audio
+rem capped like the session was (see port/docs/conv_pc.md, "Replaying a
+rem tester session").
 setlocal
 cd /d "%~dp0"
 
@@ -48,6 +60,8 @@ rem (absolute path: cmd does not always search the current directory)
 set "CODE=%ERRORLEVEL%"
 
 if exist saves\card0.mcd copy /y saves\card0.mcd "%SESSION%\card-after.mcd" >nul
+rem (after the game: a first run writes sbsp.ini on the way out)
+if exist sbsp.ini copy /y sbsp.ini "%SESSION%\sbsp.ini" >nul
 echo.
 echo Exit code %CODE%   (0 clean, 10 assert, 11 crash, 12 watchdog, 13 replay)
 findstr /b /c:"[summary]" "%SESSION%\stderr.txt"

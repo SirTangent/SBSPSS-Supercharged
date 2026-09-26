@@ -269,12 +269,13 @@ set(SBSP_SHIM_FLAGS ${SBSP_WARN_ALL} ${SBSP_DEBUG_FLAGS} ${SBSP_OPT_FLAGS})
 
 # Argument parsing is kept OUT of the shim archive and linked as objects, for
 # the same reason main.cpp is split out of the game lib above: its entire job
-# is an early constructor and it exports only Port_BootLevel, which only
-# system/main.cpp calls.  Inside a static archive the linker drops the member
-# from every executable that does not reference that one symbol - which is how
-# `sbsp_headless --data-dir <path>` came to be silently ignored.  It needs no
-# shim headers (stdio/stdlib/string + host/compiler.h beside it), so it
-# carries no include set.
+# is an early constructor and it exports only Port_BootLevel and Port_Language,
+# which only system/main.cpp calls.  Inside a static archive the linker drops
+# the member from every executable that does not reference those symbols -
+# which is how `sbsp_headless --data-dir <path>` came to be silently ignored.
+# It needs no shim headers (stdio/stdlib/string + host/compiler.h beside it),
+# so it carries no include set.  The seed is NOT here: host/seed.cpp is a shim
+# member because the pad recorder (host/input.cpp) needs it (issue #58).
 list(REMOVE_ITEM SBSP_SHIM_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/psyq/host/args.cpp)
 add_library(psyq_args OBJECT psyq/host/args.cpp)
 target_compile_features(psyq_args PRIVATE cxx_std_17)
@@ -335,11 +336,13 @@ if(SBSP_BUILD_GAME)
         psyq_shim
     )
     add_test(NAME sbsp_headless COMMAND sbsp_headless WORKING_DIRECTORY ${SBSP_ROOT})
-    # a private save dir: without one the M8 shell would write its first-run
-    # sbsp.ini into the developer's real %APPDATA%\SBSPSS (an interactive
-    # run's default location)
+    # A private save dir: without one the M8 shell would put card0.mcd in the
+    # developer's real %APPDATA%\SBSPSS (an interactive run's default), and a
+    # private ini path: this is an interactive run as far as args.cpp can
+    # tell, and without one it would write a first-run sbsp.ini beside the
+    # exe in the build tree (an explicit SBSP_INI is never created).
     set_tests_properties(sbsp_headless PROPERTIES LABELS unit
-        ENVIRONMENT "SBSP_SAVE_DIR=${CMAKE_CURRENT_BINARY_DIR}/headless_save")
+        ENVIRONMENT "SBSP_SAVE_DIR=${CMAKE_CURRENT_BINARY_DIR}/headless_save;SBSP_INI=${CMAKE_CURRENT_BINARY_DIR}/headless_save/sbsp.ini")
 endif()
 
 # Unit tests that exercise the shim directly (no game code): C++17, linked
@@ -376,6 +379,7 @@ sbsp_shim_test(adpcm_test)      # SPU ADPCM decoder golden vectors (M5)
 sbsp_shim_test(spu_test)        # SPU voice mixer: gaussian/ADSR/pan (M5)
 sbsp_shim_test(xm_test)         # XMPlayer: PXM parse vs .xm, VAB upload (M5)
 sbsp_shim_test(pad_test)        # SDL virtual gamepad: mapping + rumble (M6, #21)
+sbsp_shim_test(replay_test)     # pad recording -> replay round trip: stick, held-across-scene, seed, prompts (#58)
 sbsp_shim_test(mcrd_test)       # memory-card image FS + libmcrd protocol (M6)
 sbsp_shim_test(xa_test)         # XA-ADPCM decoder + stream engine (M6)
 sbsp_shim_test(mdec_test)       # MDEC: dequant, IDCT, yuv, DecDCTin/out (M7)

@@ -327,7 +327,12 @@ after it).  The guard is `port/build-psx.cmd` + a SHA-256 compare of
     `InitSystem()`'s `setRndSeed(VidGetTickCount())` gains a
     `!PSX_MIPS_ASM` arm that takes `Port_BootSeed()` (`--seed` /
     `SBSP_SEED`) when one was given - the `Port_BootLevel` pattern
-    (entry #16).
+    (entry #16).  Since issue #58 the hook always answers, from
+    `host/seed.cpp`: `--seed`/`SBSP_SEED`, else a replayed recording's
+    `# seed`, else the boot tick - decided once, so the `--record-pad`
+    header (which may ask first, the boot pumps before line 210) and the
+    game agree, and a replay without `--seed` runs the same RNG stream as
+    the session it replays.  The game arm is unchanged.
 
 27. **`source/system/asmport.h` (scratchpad guard bytes)** - the PC-only
     `PORT_Scratchpad` declaration grows by `PORT_SCRATCHPAD_GUARD` (16)
@@ -358,7 +363,13 @@ after it).  The guard is `port/build-psx.cmd` + a SHA-256 compare of
     - the level-finished block, after the hi-spatula-count check:
       `spatulas=all` records every spatula in the save slot
       (`setSpatulaCollectedCount(total,total)`) - slot bookkeeping only,
-      the player's carried count is untouched.
+      the player's carried count is untouched.  Levels 1-4 only (issue
+      #58): a bonus level has no spatula slot, its index
+      `(chapter-1)*4+4` is the next chapter's first level - and chapter
+      5's runs off the 20-byte array into the kelp-token flags - and the
+      `ASSERT(_level<=NUM_LEVELS_WITH_SPATULAS)` is off by one, so
+      nothing else would have said.  Retail never gets there: kelp
+      tokens go through `collectKelpToken`, not `addSpatula`.
     - `think_playing()`, after the timer block: `die=N` calls the public
       `CPlayer::dieYouPorousFreak()` when the shim's
       `Port_AutoplayDie(m_player->isDead())` says so - one death per
@@ -593,10 +604,14 @@ argument pass and reads `SBSP_BOOT_LEVEL/SEED/LANGUAGE` after that.  The
 key set is a whitelist shared with the default writer - the harness
 switches (`SBSP_UNCAPPED`, `SBSP_EXIT_AFTER`, `SBSP_PAD_FILE`...) have no
 ini spelling, so a stray line can never turn an interactive run into a
-scripted one.  Defaults are written only for an interactive run
-(`Port_HarnessRun`), so the harness leaves no files behind; its temp
-`--save-dir` keeps the card out of the developer's own
-(`sbsp_headless` gets a private `SBSP_SAVE_DIR` for that).  Argument twins: `--ini`,
+scripted one.  A scripted run (`Port_HarnessRun`) reads only an explicit
+`--ini` and writes nothing - since issue #58 not even the file beside the
+exe is loaded for it, so a harness run's key caps, language and prompt
+icons cannot depend on the tree it runs from (`run_tier.py` treats an
+`[ini] loaded` line as a failure); its temp `--save-dir` keeps the card
+out of the developer's own (`sbsp_headless`, an interactive run as far as
+`args.cpp` can tell, gets a private `SBSP_SAVE_DIR` and `SBSP_INI` for
+that).  Argument twins: `--ini`,
 `--window`, `--scale`, `--vsync`, `--volume`, `--set key=value`; the
 env-only `SBSP_ASSERT_CONTINUE` / `SBSP_MEM_LOG` gained `--assert-continue`
 / `--mem-log`.  Keys: `window` (`WxH` | `fullscreen`), `scale`, `vsync`,
@@ -658,7 +673,10 @@ preflights the two exes and the six data files (LFS-pointer and
 `run-test-session.cmd` under `port/build/package/` and zips them.  The
 session script snapshots the card, runs `sbsp-debug.exe --record-pad
 --assert-continue --mem-log` with stdout and stderr in separate files (the
-harness rule), and prints the exit code and `[summary]`.
+harness rule), copies `sbsp.ini` into the session folder once the game has
+exited (a first run writes it on the way out; a replay passes it with
+`--ini` - see "Replaying a tester session"), and prints the exit code and
+`[summary]`.
 
 ### CI + clang-cl (M8 PR 4)
 
@@ -833,7 +851,10 @@ three oracles, `port/build-pc.sh parity64 [final|debug]`:
    objects, 16-byte heap granularity): recordings now start with
    `# abi ptr=<4|8>` (absent = 4), and `host/input.cpp` skips the ram half
    of the check - only that - when the recording's pointer size is not the
-   exe's, saying so once (`[input] cross-ABI recording ...`).
+   exe's, saying so once (`[input] cross-ABI recording ...`).  Since
+   issue #58 the header goes on with `# seed` and `# pace`, and `# prompt`
+   lines mark the prompt-icon device switches ("Replaying a tester
+   session", below).
 3. **Memory card** - the `card0.mcd` a route leaves is kept beside its
    recording and the cross replay's must be byte-identical (the same-exe
    replay of a plain Tier 1 run now compares cards too).  The save structs
@@ -873,6 +894,41 @@ x64 [final]` records a session on the 64-bit pair; `session.pad`'s
 zip into a scratch directory and booting all four exes from there
 headlessly: each finds `data\` beside itself and they agree on the frame
 CRC.
+
+### Replaying a tester session (issue #58)
+
+No game-source change beyond the one-token bonus-level guard in entry #28.
+A `run-test-session.cmd` session now replays.  `session.pad` carries the
+left stick (folded into the mask by the game's own `Pad2Digital` rule,
+`host/input.cpp stickFold`, so the grammar is unchanged), a button still
+held when a scene opens (pressed again in the new scene's terms, since a
+scene open releases every entry on replay), the seed (`# seed`,
+`host/seed.cpp`), the pacing (`# pace capped|uncapped`) and every
+prompt-icon device switch (`# prompt <vblank> pad|keys`); the session
+folder also gets the tester's `sbsp.ini`.  A scripted run - `--pad-file`
+or `--pad-script` - ignores the live keyboard and pad entirely (mask,
+sticks and prompt device), reads only an explicit `--ini`, and
+`run_tier.py` drops every inherited `SBSP_*` variable, so the harness and
+a replay are a function of the exe, the data and the arguments alone.
+When the first gamepad goes away the next one still plugged in is adopted
+(SDL announces a pad once).  Older exes read the new `#` lines as
+comments; this exe reads older recordings unchanged.
+
+    sbsp-debug.exe --pad-file <s>\session.pad --ini <s>\sbsp.ini --save-dir <dir> --no-audio
+
+with `<dir>` holding `card-before.mcd` renamed `card0.mcd`.  Capped, like
+the session: a paced CD read costs wall-clock time (`cd/cd.cpp`, 150
+sectors/s), which is vblanks on a capped run and nothing on an uncapped one
+(`--uncapped` forces `SBSP_CD_PACE=0`), so an uncapped replay lands every
+post-load `Scene#n+off` early - the `# pace` mismatch is reported once, and
+the `# epoch` checks are the oracle either way.  Two limits remain: a
+capped replay's loads take *about* as long as the session's, not exactly,
+and dropped frames on the recording machine (`getFramesSinceLast() > 1`)
+are not captured at all.  Making the CD clock count emulated vblanks under
+`--uncapped` (2.5 sectors per vblank) would remove the first; that is
+follow-up work for #55.  `replay_test` records a scripted session with a
+virtual pad and requires the replay's own recording to be byte-identical;
+`pad_test` covers the stick fold and the second-pad adoption.
 
 ## Game-source changes (keyboard prompt icons, issue #43)
 
@@ -939,9 +995,12 @@ run time through `sbsp.ini`.
 
 52. **`port/psyq/host/ini.cpp`, `port/psyq/host/args.cpp`** — `prompt_icons`
     (`SBSP_PROMPT_ICONS`) `auto|keys|pad`.  `auto` follows the device in use.
-    A recorded playthrough wants `keys`: without it the icons, and so the
-    frame CRC, would depend on whether the machine happened to have a pad
-    plugged in.
+    In a scripted run (`--pad-file` / `--pad-script`) it follows the
+    recording's `# prompt` marks instead - key caps when there are none -
+    so a replay draws what the recording drew and a harness run draws the
+    same on every machine, plugged-in pad or not (issue #58; the earlier
+    advice to pin `keys` for a recording is obsolete, and pinning it for a
+    replay only forces a difference from the recording, which is said once).
 
 53. **`source/gfx/font.cpp`** (github issue #24) — every `fontTab[_char]`
     lookup now indexes through `(u8)`.  `fontTab` is a 256-entry table whose
