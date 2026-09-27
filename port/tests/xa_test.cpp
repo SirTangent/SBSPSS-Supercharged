@@ -303,6 +303,48 @@ static void mixSliceTest(void)
 }
 
 /*****************************************************************************/
+/*	Full-swing CD input: alternating +-30000 steps the resampler's taps by
+	60000, and at 18.9kHz the phase reaches 37800, so the interpolation
+	product is ~2.27e9 - past a 32-bit `long`, which is what Windows has on
+	both ABIs.  Interpolating between the two can never leave [-30000,
+	30000]; a wrapped product lands far outside and clips.  */
+static void cdSwingTest(void)
+{
+	Spu_Lock();
+	memset(g_spuVoice, 0, sizeof(SpuVoiceState) * SPU_NVOICES);
+	g_spuMasterVolL = g_spuMasterVolR = 0x3FFF;
+	g_spuCdVolL = g_spuCdVolR = 0x7FFF;
+	g_spuCdMixOn = 1;
+	Spu_Unlock();
+	Spu_SetCdAtv(128, 0, 0, 128);
+	Spu_CdInClear();
+
+	static int16_t mono[XA_SECTOR_SAMPLES];
+	for (int i = 0; i < XA_SECTOR_SAMPLES; i++)
+		mono[i] = (i & 1) ? -30000 : 30000;
+	Spu_CdInPush(mono, XA_SECTOR_SAMPLES);
+
+	static int16_t outBuf[4096 * 2];
+	Spu_RenderFrames(outBuf, 4096);		/* ~1756 of the 4032 source frames */
+	int worst = 0;
+	for (int i = 0; i < 4096 * 2; i++)
+	{
+		int a = outBuf[i] < 0 ? -outBuf[i] : outBuf[i];
+		if (a > worst)
+			worst = a;
+	}
+	check(worst <= 30000, "CD slice: full-swing input interpolates without wrapping");
+	if (worst > 30000)
+		std::printf("  (peak |out| %d)\n", worst);
+
+	Spu_Lock();
+	g_spuCdMixOn = 0;
+	g_spuCdVolL = g_spuCdVolR = 0;
+	Spu_Unlock();
+	Spu_CdInClear();
+}
+
+/*****************************************************************************/
 /*	Stereo CD slice (M7): distinct L/R constants at 37.8kHz through a CROSS
 	ATV matrix must come out swapped, with the same vol arithmetic.  */
 static void stereoMixSliceTest(void)
@@ -596,6 +638,7 @@ int main(void)
 
 	streamEngineTests();
 	mixSliceTest();
+	cdSwingTest();
 	stereoMixSliceTest();
 
 	if (g_failures)
