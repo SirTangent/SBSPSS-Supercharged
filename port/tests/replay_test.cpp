@@ -10,8 +10,8 @@
 	    scene's terms (a scene open releases every entry on replay)
 	  - the header: `# seed` when the recording was given one (host/seed.cpp
 	    - a replay without --seed then runs the same RNG; with none given the
-	    game seeds itself identically every boot), `# pace`, and the
-	    `# prompt` device switches
+	    game seeds itself identically every boot), `# pace`, `# loads`
+	    (issue #67), and the `# prompt` device switches
 	  - a scripted run ignores the live devices: the replaying process holds
 	    SQUARE and the stick hard left the whole time, and none of it may
 	    reach the packet, the prompts or the recording
@@ -109,7 +109,7 @@ static void clearEnv(void)
 		"SBSP_FRAME_CRC", "SBSP_EXIT_AFTER", "SBSP_SELFTEST", "SBSP_DUMP_FRAMES",
 		"SBSP_DUMP_DIR", "SBSP_SEED", "SBSP_PROMPT_ICONS", "SBSP_PAD_DEADZONE",
 		"SBSP_MEM_LOG", "SBSP_PACE_LOG", "SBSP_RUMBLE", "SBSP_PAD_SCRIPT",
-		"SBSP_PAD_FILE", "SBSP_RECORD_PAD",
+		"SBSP_PAD_FILE", "SBSP_RECORD_PAD", "SBSP_CD_PACE",
 	};
 	for (const char *v : vars)
 		setEnv(v, "");
@@ -273,6 +273,7 @@ static void checkRecording(const char *path)
 		{ abi,                              false },
 		{ "# seed 4242",                    false },	/* the recording was given one */
 		{ "# pace uncapped",                false },
+		{ "# loads paced",                  false },	/* uncapped no longer means instant loads (#67) */
 		{ "# prompt 1 pad",                 false },	/* a pad plugged in before the first frame */
 		{ "# scene FrontEnd#1 vblank=10",   false },
 		{ "FrontEnd#1+10:0040",             false },	/* CROSS from vblank 20 */

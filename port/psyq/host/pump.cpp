@@ -57,9 +57,10 @@ static void clockInit(void)
 	wait.  (Firing on EVERY pump instead made a frame cost as many vblanks
 	as it pumps - 5 - and the simulation diverged from a capped run.)  The
 	single-fire block, backlog rebase and re-entrancy guard in Port_Pump are
-	untouched: the target never gets more than one ahead.  With
-	--no-cd-pace and --no-audio this removes every wall-clock input, so two
-	runs with the same --seed are bit-identical.  */
+	untouched: the target never gets more than one ahead.  With --no-audio
+	this removes every wall-clock input - a paced CD load counts emulated
+	vblanks too (cd/cd.cpp, issue #67) - so two runs with the same --seed
+	are bit-identical, with paced loads or with --no-cd-pace.  */
 static unsigned long	g_uncappedTarget;
 
 extern "C" int Port_Uncapped(void)

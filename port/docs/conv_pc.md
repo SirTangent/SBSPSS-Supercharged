@@ -661,7 +661,8 @@ catch-up burst; the audio device is paused across the edge
 watchdog thread resets its stall count while `Port_Paused()`, and
 `[summary]` gains `paused=<seconds>`.  The M3 invariants (one vblank per
 pump, no nesting, backlog rebased not skipped, `Port_NowSeconds` off the
-fixed origin) are untouched; CD deadlines clamp to now on the next read.
+fixed origin) are untouched.  A paced CD read counts emulated vblanks
+(issue #67), so it waits out a pause with the game.
 
 **Input / audio knobs.**  The keyboard map is now one table in
 `input.cpp` (`Port_InputBindKeys` from `SBSP_KEY_<BUTTON>` via
@@ -930,23 +931,22 @@ When the first gamepad goes away the next one still plugged in is adopted
 (SDL announces a pad once).  Older exes read the new `#` lines as
 comments; this exe reads older recordings unchanged.
 
-    sbsp-debug.exe --pad-file <s>\session.pad --ini <s>\sbsp.ini --save-dir <dir> --no-audio
+    sbsp-debug.exe --pad-file <s>\session.pad --ini <s>\sbsp.ini --save-dir <dir> --uncapped --no-audio --exit-after <n> --frame-crc
 
-with `<dir>` holding `card-before.mcd` renamed `card0.mcd`.  Capped, like
-the session: a paced CD read costs wall-clock time (`cd/cd.cpp`, 150
-sectors/s), which is vblanks on a capped run and nothing on an uncapped one
-(`--uncapped` forces `SBSP_CD_PACE=0`), so an uncapped replay lands every
-post-load `Scene#n+off` early - the `# pace` mismatch is reported once, and
-the `# epoch` checks are the oracle either way.  Two limits remain: a
-capped replay's loads take *about* as long as the session's, not exactly,
-and dropped frames on the recording machine (`getFramesSinceLast() > 1`)
-are not captured at all.  Measured on one machine, record and replay both
-capped with pacing on: the level load took 249 vblanks recording and 248
-replaying on two levels out of three, which shifts every later frame by one
-and fails every epoch; the third matched exactly, as did all three with
-`--no-cd-pace`.  Making the CD clock count emulated vblanks (2.5 sectors per
-vblank, whatever the wall clock does) would remove the first limit; that
-is follow-up work for #55.  `replay_test` records a scripted session with a
+with `<dir>` holding `card-before.mcd` renamed `card0.mcd`, and `<n>` the
+`vblanks=` of the session's `[summary]` (closing the window is not
+recorded, so `--exit-after` stands in for it).  Since issue #67 a paced
+load costs the same emulated vblanks capped or uncapped (see "Replay
+judging" below).  What a replay cannot reproduce are the vblanks a capped
+run fires while behind the wall clock - through the boot stall, or a
+dropped frame on the recording machine (`getFramesSinceLast() > 1`).
+Before #67 a
+capped replay's loads took *about* as long as the session's, not exactly -
+measured on one machine, record and replay both capped with pacing on, the
+level load took 249 vblanks recording and 248 replaying on two levels out
+of three, which shifted every later frame by one and failed every epoch;
+the third matched exactly, as did all three with `--no-cd-pace`.
+`replay_test` records a scripted session with a
 virtual pad and requires the replay's own recording to be byte-identical;
 `pad_test` covers the stick fold and the second-pad adoption.
 
@@ -964,6 +964,63 @@ fail on every level.  `long` is 32 bits on both Windows ABIs, so `rng`, like
 `crc`, is compared across them (only `ram` is not); an epoch without it -
 an older recording - skips it.  `replay_test` replays with the wrong seed
 against a constant picture and RamUsed and requires the desync.
+
+### Replay judging (issue #67)
+
+No game-source change: `cd/cd.cpp`, `cd/xa_stream.cpp`, `host/args.cpp`,
+`host/input.cpp`, `host/pump.cpp`, the tests and the docs.
+
+**Loads cost emulated vblanks.**  `CdRead` still copies its sectors at
+once; what changed is how long `CdReadSync` then reports "still reading".
+It used to be a wall-clock deadline (`Port_NowSeconds() + sectors/150`), so
+how many vblanks fired during a capped load was scheduling jitter - the
+249 against 248 above - and an uncapped run could not pace at all
+(`--uncapped` forced `SBSP_CD_PACE=0`).  Now `Port_CdDataVblank`, ticked
+from `Port_CdVblank` beside the XA and STR clocks, counts the drive's
+sectors in the XA engine's units: +150 per emulated vblank, one sector per
+`hz`, so 2.5 sectors per NTSC vblank and exactly 3 per PAL one.  An idle
+drive banks at most one vblank (2 sectors NTSC, 3 PAL), so the loader's
+one-sector tail reads finish inside the frame, as on the PlayStation.
+After one idle vblank the bank is the same however long the drive sat, so
+a read's cost is a function of the vblank and read sequence alone:
+
+| sectors | 1 | 2 | 3 | 4 | 30 | 150 |
+|---|---|---|---|---|---|---|
+| 60 Hz | 0 | 0 | 1 | 1 | 11 | 59 |
+| 50 Hz | 0 | 0 | 0 | 1 | | 49 |
+
+A real double-speed drive takes 60 and 50 vblanks for 150 sectors.
+`cdpace_test` pins the table, two reads chained before a wait, a long idle
+stretch, and a wall-clock sleep in the middle of a read (the old deadline
+would have expired in it).
+
+**Look before waiting.**  `CdReadSync` used to pump first and compare
+after.  In a capped run that pump could fire a vblank after the one that
+completed the read and before the game saw it complete, and StopLoad's
+`while(LoadTime) VSync(0)` then waits for the loading icon to wrap, so a
+one-vblank slip there can cost up to 59 more.  A paced `CdReadSync` now
+returns at once when nothing is pending, and otherwise takes exactly one
+`Port_PumpIdle` step per call: one vblank per call uncapped, one per
+wall-clock vblank capped, and either way the read completes on the same
+emulated vblank.  `--no-cd-pace` keeps the old single pump.
+
+**`--uncapped` keeps pacing.**  `args.cpp` no longer puts `SBSP_CD_PACE=0`
+beside `SBSP_UNCAPPED=1` (`--uncapped` is now a plain switch), and a paced
+load lasts as long in both.  What a capped run still has and an uncapped
+one does not are the vblanks it fires at non-waiting pumps while behind
+the wall clock: the boot stall (the first present, about 150 ms) costs 5
+of them on the machine #67 was measured on, and StopLoad's wait for the
+loading icon to wrap carries the offset into every later frame.  The
+`# pace` mismatch line now says that.  `# pace
+uncapped` no longer implies instant loads, so a recording also says which
+it had (`# loads paced|instant`, after `# pace`); instant against paced
+drifts after every load and is reported once.  `run_tier.py` keeps
+`--no-cd-pace` in its determinism set, so every `--compare-frames`
+baseline and `--replay-from` artifact stays valid; its `--selftest` adds
+two paced runs of 1-1 that must agree frame for frame and open the level
+later than an instant run does (vblank 244 against 60 on the USA debug
+exe).  With `--no-audio` an uncapped run has no wall-clock input left,
+paced loads or not.
 
 ## Game-source changes (keyboard prompt icons, issue #43)
 

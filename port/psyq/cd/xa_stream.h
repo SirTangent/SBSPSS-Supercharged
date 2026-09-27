@@ -20,6 +20,8 @@ void XaStream_Serve(uint32_t *madr, int sizeWords);	/* CdGetSector body */
 
 /*	once per emulated vblank, from Port_Pump  */
 extern "C" void Port_CdVblank(int vblankHz);
+/*	the CdRead data clock (cd.cpp, issue #67), ticked by Port_CdVblank  */
+extern "C" void Port_CdDataVblank(int vblankHz);
 
 /*	The CD ready callback, typed the way the game actually defines it.
 	libcd.h's CdlCB types the first argument u_char, but the one handler the

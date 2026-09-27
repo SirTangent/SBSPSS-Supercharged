@@ -56,8 +56,11 @@
 	and a header: the exe's pointer size (`# abi`), the seed when one was
 	given (`# seed`, adopted by a replay that has no --seed; without one the
 	game seeds itself the same way every boot - host/seed.cpp) and
-	its pacing (`# pace`; a mismatch is reported once, because load
-	durations then differ and every offset after a load drifts).  An epoch
+	its pacing (`# pace capped|uncapped`, `# loads paced|instant`).  A load
+	costs the same emulated vblanks capped or uncapped (cd/cd.cpp, issue
+	#67); instant loads (--no-cd-pace) against paced ones do not agree,
+	and every offset after a load drifts.  Either mismatch is reported
+	once.  An epoch
 	carries RamUsed, the display CRC and the game's random-number state
 	(`rng`, s_randomSeed): a run that has drawn a different random number
 	has diverged even while every difference is still off screen, and five
@@ -78,7 +81,7 @@
 #include <stdint.h>
 
 #include "host/diag.h"
-#include "host/pump.h"			/* Port_Uncapped - the `# pace` header line */
+#include "host/pump.h"			/* Port_Uncapped, Port_CdPaced - `# pace`, `# loads` */
 #include "gpu/gpu_core.h"
 #include "system/types.h"
 #include "system/asmport.h"		/* PORT_CAP_* - the prompt-icon contract */
@@ -166,6 +169,7 @@ static int			g_recordingPtr = 4;
 static long			g_recordingSeed;		/* `# seed <n>`: what setRndSeed got */
 static int			g_haveSeed;
 static int			g_recordingPace = -1;	/* `# pace`: -1 unknown, 0 capped, 1 uncapped */
+static int			g_recordingLoads = -1;	/* `# loads`: -1 unknown, 0 instant, 1 paced */
 
 struct PromptMark						/* `# prompt <vblank> pad|keys` */
 {
@@ -317,9 +321,9 @@ static void padFileParse(void)
 			s++;
 
 		/*	`# epoch <vblank> ram=<n> crc=<hex>`, `# abi ptr=<n>`,
-			`# seed <n>`, `# pace <word>` and `# prompt <vblank> <word>` are
-			data; every other comment (a leading `#`, or ` #` after an entry)
-			is dropped.  */
+			`# seed <n>`, `# pace <word>`, `# loads <word>` and
+			`# prompt <vblank> <word>` are data; every other comment (a leading
+			`#`, or ` #` after an entry) is dropped.  */
 		if (*s == '#')
 		{
 			EpochCheck	ep = {};
@@ -358,6 +362,16 @@ static void padFileParse(void)
 				{
 					fclose(f);
 					padFileFail(path, line, "bad `# pace' (expected capped or uncapped)");
+				}
+			}
+			else if (sscanf(s, "# loads %15s", word) == 1)
+			{
+				if (strcmp(word, "paced") == 0)			g_recordingLoads = 1;
+				else if (strcmp(word, "instant") == 0)	g_recordingLoads = 0;
+				else
+				{
+					fclose(f);
+					padFileFail(path, line, "bad `# loads' (expected paced or instant)");
 				}
 			}
 			else if (sscanf(s, "# prompt %lu %15s", &pm.vblank, word) == 2)
@@ -402,15 +416,21 @@ static void padFileParse(void)
 	if (g_epochCount && g_recordingPtr != (int)sizeof(void *))
 		fprintf(stderr, "[input] cross-ABI recording (ptr=%d, this exe %d): epoch ram not compared\n",
 				g_recordingPtr, (int)sizeof(void *));
-	/*	A paced CD read costs wall-clock time, which is vblanks on a capped
-		run and nothing on an uncapped one (SBSP_CD_PACE=0 comes with
-		--uncapped), so the two do not agree on how long a load lasts, and
-		every entry after one lands on a different frame of the game.  The
-		epochs will say so; this says why, up front.  */
+	/*	A paced load costs the same emulated vblanks capped or uncapped
+		(cd/cd.cpp, issue #67).  What a capped run still has and an uncapped
+		one does not are the vblanks it fires while behind the wall clock -
+		through the boot stall, or a dropped frame - which the file does not
+		hold.  Instant loads against paced ones never agree on how long a
+		load lasts, and every entry after one lands on a different frame.
+		The epochs will say so; this says why, up front.  */
 	if (g_recordingPace >= 0 && g_recordingPace != (Port_Uncapped() != 0))
-		fprintf(stderr, "[input] recording was %s, this run is %s: load durations differ, "
-						"so every offset after a load drifts\n",
+		fprintf(stderr, "[input] recording was %s, this run is %s: vblanks a capped run "
+						"fired behind the wall clock are not in the file\n",
 				g_recordingPace ? "uncapped" : "capped", Port_Uncapped() ? "uncapped" : "capped");
+	if (g_recordingLoads >= 0 && g_recordingLoads != (Port_CdPaced() != 0))
+		fprintf(stderr, "[input] recording's loads were %s, this run's are %s (--no-cd-pace): "
+						"every offset after a load drifts\n",
+				g_recordingLoads ? "paced" : "instant", Port_CdPaced() ? "paced" : "instant");
 }
 
 static void scriptsParse(void)
@@ -554,8 +574,8 @@ extern "C" int Port_InputAtExit(void)
 /*	SBSP_RECORD_PAD=<path>: the applied mask, on change, in the scene-
 	relative grammar above, plus `# scene` markers at each open, a `# prompt`
 	line when the prompt-icon device changes and an `# epoch` line every 300
-	vblanks, under a header of `# abi`, `# seed` (if one was given) and
-	`# pace`.  Flushed per
+	vblanks, under a header of `# abi`, `# seed` (if one was given),
+	`# pace` and `# loads`.  Flushed per
 	line so a crash still leaves a usable file.  */
 static FILE			*g_rec;
 static int			g_recTried;
@@ -586,6 +606,7 @@ static void recordFrame(unsigned long vblank, unsigned mask)
 				if (Port_BootSeed(&seed))
 					fprintf(g_rec, "# seed %ld\n", seed);
 				fprintf(g_rec, "# pace %s\n", Port_Uncapped() ? "uncapped" : "capped");
+				fprintf(g_rec, "# loads %s\n", Port_CdPaced() ? "paced" : "instant");
 			}
 			else
 				fprintf(stderr, "[input] SBSP_RECORD_PAD: cannot write %s\n", path);

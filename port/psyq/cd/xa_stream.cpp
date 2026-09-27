@@ -249,9 +249,11 @@ void XaStream_Serve(uint32_t *madr, int sizeWords)
 	at 50Hz (EUR) exactly 3.  */
 extern "C" void Port_CdVblank(int vblankHz)
 {
-	/*	The STR engine ticks FIRST and unconditionally: the hold below
-		exists because FMV clears the ready callback, and it must not gate
-		the movie stream itself (str_stream.cpp, M7).  */
+	/*	The CdRead data clock and the STR engine tick FIRST and
+		unconditionally: the hold below exists because FMV clears the ready
+		callback, and it must not gate data loads (cd.cpp, issue #67) or the
+		movie stream itself (str_stream.cpp, M7).  */
+	Port_CdDataVblank(vblankHz);
 	StrStream_Vblank(vblankHz);
 
 	if (!g_playing || !g_cdReadyCallback)

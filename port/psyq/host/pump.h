@@ -16,8 +16,9 @@ void			Port_PumpIdle(void);		/* Sleep(1) + Port_Pump - use in wait loops */
 unsigned long	Port_VBlankCount(void);
 void			Port_SetVBlankHz(int hz);	/* 60 NTSC / 50 PAL (SetVideoMode) */
 int				Port_VBlankHz(void);		/* the rate last set: 60 or 50 (GetVideoMode, pace log, XM check) */
-double			Port_NowSeconds(void);		/* QPC wall clock, fixed epoch (CD pacing) */
+double			Port_NowSeconds(void);		/* QPC wall clock, fixed epoch (pace log, pause, present throttle) */
 int				Port_Uncapped(void);		/* SBSP_UNCAPPED=1: vblanks are not wall-clock paced */
+int				Port_CdPaced(void);		/* SBSP_CD_PACE!=0: CdRead waits for the emulated drive (cd/cd.cpp) */
 
 /*	--pace-log phase split (M8 perf): wall seconds spent in a phase since the
 	last [pace] line.  Callers bracket with Port_NowSeconds() only when
