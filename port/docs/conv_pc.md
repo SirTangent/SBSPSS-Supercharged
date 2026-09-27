@@ -1271,6 +1271,74 @@ with `[ini] path:N: 'key' repeated - the later value wins`; a later empty
 `key=` puts the key back to its built-in default; the count is of distinct
 keys, not lines.
 
+### Audio accuracy and malformed-data bounds (issue #59)
+
+Shim-side only: `spu/spu_core.cpp`, `xmplay/xm_data.cpp`,
+`xmplay/xm_seq.cpp`, `xmplay/xm_state.h`, `cd/xa_stream.cpp`, the tests
+and the docs.  Rows 4, 19, 37 and 38 change `--dump-audio` output on
+purpose; each commit was checked against the previous one with the WAV
+oracle (boot FMVs, the title theme, the game-over speech route, aligned
+at the first nonzero sample).
+
+**The mix clips before the master volume.**  `Spu_RenderFrames` used to
+multiply the voices + CD sum by the master volume in a plain `int` and
+clamp afterwards, so a sum above ~131k at the game's 0x3FFF wrapped onto
+the opposite rail.  The sum is now clamped to s16 first and the master
+applied to that - the hardware's order, and DuckStation's - which makes
+the master step a 16x16 product.  A clipped sample at master 0x3FFF is
+now 32765/-32766 rather than 32767/-32768; on the oracle those were the
+only samples that changed.  The CD-input interpolation's product (tap
+step up to +-65535 times a phase up to 44099) is widened with `int64_t`:
+`long`, which it used before, is 32 bits on both Windows ABIs.
+
+**The loaders are bounded.**  The vintage `InitXMData` and `XM_VABInit`
+take bare pointers and walked the file by lengths read from it.  They now
+call `XmParseModule` / `XmVabInitSized` (`xm_state.h`), which check every
+advance against a size and cap the header fields at FT2's limits: file
+header <= 4096 and holding the order table, pattern header 9..64 with
+1..256 rows, instrument header 29..263 (at least 241 with samples -
+`instrView` reads to +240), at most 16 samples per instrument; for a VAB,
+ps <= 128, vs <= 255, the size table inside the VH, its total inside the
+VB and sound RAM.  The game supplies no sizes, so the public calls bound
+a buffer by the end of the arena it was loaded into (`OPT_LinkerOpts`,
+as `api/arena.cpp` sets it) and a buffer outside the arena by the caps
+alone.  A module or bank that does not fit is refused with one `[xm]`
+line: `InitXMData` returns -1 and leaves the slot unused, so `XM_Init`
+turns the song down and it is silent; `XM_VABInit` returns -1, which the
+game `ASSERT`s on.  `readSlot`/`skipSlot` never read past a pattern's
+packed data.  Every shipped PXM walks to exactly its file size and every
+VH table sums exactly to its VB, so none of this is audible.
+
+**Note delay is FT2's.**  On an EDx row (x > 0) nothing of the row happens
+at tick 0 - not the instrument (stashed in `XmChannelState.delayedInstr`),
+not the volume column; at tick x the instrument takes over, the note
+triggers, the instrument resets volume/pan only if the row had one, and
+the row's set-volume or set-pan column lands on the new note.  Before, the
+volume column hit the old note at tick 0 and the delayed note played at
+the sample default.  A delay that never fires in its row (x >= speed) is
+now dropped at the next row, as FT2 drops it; before, it stayed armed.
+That is the one change the title-theme oracle shows: sb-title pattern 1
+(and 7) row 45 channel 1 is ED3 at speed 3, which FT2 never plays and the
+port used to fire late in the next, speed-4 row.
+
+**XA speech pre-rolls.**  Sector delivery is quantized to vblanks, and the
+ring drained from the first push with no cushion, so a line's next sector
+could land up to one vblank after the samples ran out: a 145-frame
+(3.3 ms) zero run, several per line in the game-over dump.  `XaStream_ReadS`
+now arms a pre-roll: the stream's first audio sector is preceded by
+`XA_PREROLL_FRAMES` (756 frames, 40 ms) of silence when the ring is empty,
+more than the worst lateness (315 frames at 60 Hz, 378 at 50 Hz).  Speech
+starts 40 ms later in the mix; the terminator sector still ends the line,
+so nothing the game sees moves.  The game mutes the CD input at the
+terminator, which now falls ~40 ms before the ring would have emptied:
+over all 709 lines on `TRACK1.IXA` the last 756 samples peak at a median
+of 0 and a 99th percentile of 172 (one short 3-sector line reaches 4096),
+so what is muted is the lines' trailing silence.  `xa_test` streams every
+interleave slot at both rates through `Port_CdVblank` and
+`Spu_RenderFrames` and requires one unbroken run (46 of 62 broke before).
+The FMV/STR audio ring (`cd/str_stream.cpp`) has the same vblank
+quantization and is not changed here; it is left for a follow-up.
+
 ## Game-source changes (keyboard prompt icons, issue #43)
 
 **The problem.**  Every "press this to do that" line in the game draws a pad
