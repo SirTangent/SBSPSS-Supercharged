@@ -485,31 +485,77 @@ def tier2(exe, seed, short, logdir, only):
     return ok
 
 
+def pe_image_base(path):
+    """the preferred ImageBase in an exe's PE optional header (PE32 or PE32+)"""
+    b = Path(path).read_bytes()[:4096]
+    pe, = struct.unpack_from("<I", b, 0x3C)
+    if b[:2] != b"MZ" or b[pe:pe + 4] != b"PE\0\0":
+        return None
+    opt = pe + 24
+    magic, = struct.unpack_from("<H", b, opt)
+    if magic == 0x10B:
+        return struct.unpack_from("<I", b, opt + 28)[0]
+    if magic == 0x20B:
+        return struct.unpack_from("<Q", b, opt + 24)[0]
+    return None
+
+
+def check_link(res, exe):
+    """the fault self-test's [crash] line: link must be the exe file's
+    ImageBase + rva - the address addr2line wants, on x86 and x64 alike
+    (issue #62).  Returns an error string, or None."""
+    line = next((l for l in res.lines if l.startswith("[crash] code=")), None)
+    m = re.search(r"\brva=0x([0-9A-Fa-f]+) link=(?:0x)?([0-9A-Fa-f]+)\b", line or "")
+    if not m:
+        return f"no rva/link in {line!r}"
+    base = pe_image_base(exe)
+    rva, link = int(m.group(1), 16), int(m.group(2), 16)
+    if base is None or link != base + rva:
+        return f"link 0x{link:X} != ImageBase {base if base is None else hex(base)} + rva 0x{rva:X}"
+    return None
+
+
 def selftest(exe, seed, logdir, territory="USA"):
+    # (name, env, exit code, tag the log must show, line that makes it a SKIP)
     cases = [
-        ("assert", {"SBSP_SELFTEST": "assert@100"}, 10, "[assert]"),
-        ("fault", {"SBSP_SELFTEST": "fault@100"}, 11, "[crash]"),
-        ("hang", {"SBSP_SELFTEST": "hang@100", "SBSP_WATCHDOG": "3"}, 12, "[watchdog]"),
-        ("assert-continue", {"SBSP_SELFTEST": "assert@100", "SBSP_ASSERT_CONTINUE": "1"}, 0, "[assert]"),
+        ("assert", {"SBSP_SELFTEST": "assert@100"}, 10, "[assert]", None),
+        ("fault", {"SBSP_SELFTEST": "fault@100"}, 11, "[crash] code=0xC0000005", None),
+        ("hang", {"SBSP_SELFTEST": "hang@100", "SBSP_WATCHDOG": "3"}, 12, "[watchdog]", None),
+        ("assert-continue", {"SBSP_SELFTEST": "assert@100", "SBSP_ASSERT_CONTINUE": "1"}, 0, "[assert]", None),
+        # the CRT terminations that raise no SEH exception (issue #62)
+        ("abort", {"SBSP_SELFTEST": "abort@100"}, 11, "[crash] kind=abort", None),
+        ("terminate", {"SBSP_SELFTEST": "terminate@100"}, 11, "[crash] kind=terminate", None),
+        ("invalid-param", {"SBSP_SELFTEST": "invalid-param@100"}, 11, "[crash] kind=invalid-parameter",
+         "[selftest] invalid-param returned"),
+        ("stack-overflow", {"SBSP_SELFTEST": "stack-overflow@100"}, 11, "[crash] code=0xC00000FD", None),
     ]
     ok = True
-    for name, env, want, tag in cases:
+    for name, env, want, tag, skip in cases:
         # --pad-script: nothing pressed, but a scripted-input run like every
         # other one here (no sbsp.ini, live keyboard and pad ignored)
         args = ["--level", "1-1", "--seed", str(seed), "--exit-after", "300",
                 "--pad-script", "0:0000"] + DETERMINISM
         log = Path(logdir) / f"selftest_{name}.log" if logdir else None
         res = run_game(exe, args, env, 120, log)
+        if skip and any(l.startswith(skip) for l in res.lines):
+            print(f"  SKIP selftest {name}: this CRT does not report it (exit {res.code})")
+            continue
         tagged = any(l.startswith(tag) for l in res.lines)
-        summary = any(l.startswith("[summary]") for l in res.lines)
+        # the exit code the process returned is the one [summary] states
+        summary = res.summary.get("exit") == str(want)
         # the self-test provokes forbidden tags on purpose, so FORBIDDEN as a
         # whole does not apply - but it must read no sbsp.ini, like every run
         ini = [l for l in res.lines if l.startswith("[ini] loaded")]
-        good = res.code == want and tagged and summary and not ini
+        link = check_link(res, exe) if name == "fault" else None
+        good = res.code == want and tagged and summary and not ini and not link
         if ini:
             print(f"       {ini[0]}")
+        if link:
+            print(f"       {link}")
         print(f"  {'PASS' if good else 'FAIL'} selftest {name}: exit {res.code} (want {want}), "
-              f"{tag} {'seen' if tagged else 'MISSING'}, [summary] {'seen' if summary else 'MISSING'}")
+              f"{tag} {'seen' if tagged else 'MISSING'}, [summary] "
+              f"{'exit=' + res.summary['exit'] if 'exit' in res.summary else 'MISSING'}"
+              f"{', link = ImageBase + rva' if name == 'fault' and not link else ''}")
         ok &= good
     ok &= selftest_paced(exe, seed, logdir)
     ok &= selftest_wav(exe, seed, logdir, territory)

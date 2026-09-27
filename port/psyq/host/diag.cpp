@@ -12,6 +12,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <io.h>				/* _close - SBSP_SELFTEST=invalid-param */
+#include <exception>		/* std::terminate - SBSP_SELFTEST=terminate */
 
 #include "system/types.h"
 #include "system/asmport.h"		/* PORT_Scratchpad + guard */
@@ -60,9 +62,25 @@ int envFlag(const char *name)
 	return e && *e && *e != '0';
 }
 
-/*	SBSP_SELFTEST=assert|fault|hang@<vblank>: exercise one exit path on
-	purpose so run_tier.py can prove the exit codes (10/11/12) and their
-	log lines without a throwaway build.  */
+/*	SBSP_SELFTEST=stack-overflow: unbounded recursion the optimizer cannot
+	see through (the call goes through a volatile pointer, and the frame is
+	still live after it, so it is no tail call either).  */
+void recurse(volatile char *prev);
+void (*volatile g_recurse)(volatile char *) = recurse;
+
+void recurse(volatile char *prev)
+{
+	volatile char frame[1024];
+	frame[0] = prev ? prev[0] : 1;
+	g_recurse(frame);
+	frame[1] = frame[0];
+}
+
+/*	SBSP_SELFTEST=<mode>@<vblank>: exercise one exit path on purpose so
+	run_tier.py can prove the exit codes (10/11/12) and their log lines
+	without a throwaway build.  Modes: assert, fault, hang, and the CRT
+	terminations host/crash.cpp routes to exit 11 (issue #62): abort,
+	terminate, invalid-param, stack-overflow.  */
 void selfTest(void)
 {
 	static int			parsed;
@@ -92,6 +110,20 @@ void selfTest(void)
 	else if (strcmp(mode, "hang") == 0)
 		for (;;)
 			Sleep(1);		/* never pumps: only the watchdog thread can end this */
+	else if (strcmp(mode, "abort") == 0)
+		abort();
+	else if (strcmp(mode, "terminate") == 0)
+		std::terminate();
+	else if (strcmp(mode, "invalid-param") == 0)
+	{
+		/*	fd -1: a CRT that validates calls the invalid-parameter handler;
+			one that does not just returns -1 (EBADF) and says so here,
+			which run_tier reports as a SKIP rather than a pass  */
+		_close(-1);
+		fprintf(stderr, "[selftest] invalid-param returned - this CRT did not report it\n");
+	}
+	else if (strcmp(mode, "stack-overflow") == 0)
+		g_recurse(NULL);
 	else
 		fprintf(stderr, "[selftest] unknown mode '%s' - ignored\n", mode);
 	mode[0] = 0;

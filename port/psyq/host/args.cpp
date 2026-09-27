@@ -215,8 +215,9 @@ static void usage(void)
 		"  Alt+Enter toggles fullscreen; the game pauses while another window has focus\n"
 		"Env only: SBSP_PRIM_LOG=1 (prim-pool high-water log),\n"
 		"          SBSP_WATCHDOG=<s> (exit 12 after s seconds without a vblank; 30, 0=off),\n"
-		"          SBSP_SELFTEST=assert|fault|hang@<vblank> (exercise an exit path)\n"
-		"Exit codes: 0 clean, 10 assert, 11 fault, 12 watchdog, 13 replay/oracle\n");
+		"          SBSP_SELFTEST=<mode>@<vblank> (exercise an exit path: assert fault hang\n"
+		"                        abort terminate invalid-param stack-overflow)\n"
+		"Exit codes: 0 clean, 10 assert, 11 fault/crash, 12 watchdog, 13 replay/oracle\n");
 }
 
 /*	If argv[*i] names this option, set *matched and return its value:
