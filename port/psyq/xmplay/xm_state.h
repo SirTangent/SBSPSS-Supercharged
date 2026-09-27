@@ -87,6 +87,7 @@ struct XmChannelState
 	uint8_t		retrigTick;
 	uint8_t		patLoopRow, patLoopCount;
 	uint8_t		delayedNote, delayTick;
+	uint8_t		delayedInstr;	/* EDx row's instrument, taken at the delay tick */
 	uint8_t		rowVolCol;		/* this row's volume-column byte */
 
 	int			volEnvPos, panEnvPos;

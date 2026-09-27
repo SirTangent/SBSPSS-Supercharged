@@ -119,6 +119,77 @@ static void expandSparse(const uint8_t *data, int packedSize, int rows,
 	}
 }
 
+/* ---- synthetic PXM builder (note-delay cases) ---------------------------- */
+
+/*	One pattern cell; fields left 0 are absent from the packed slot.  */
+struct Cell
+{
+	int row, ch, note, instr, vol, eff, param;
+};
+
+static void put16(uint8_t *p, unsigned v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
+static void put32(uint8_t *p, uint32_t v) { put16(p, v & 0xFFFF); put16(p + 2, v >> 16); }
+
+/*	A PXM with 2 channels, one pattern of `rows` rows, speed 6 and BPM 150
+	(one tick per 60Hz XM_Update) and two instruments of one sample each,
+	sample default volume 40 and pan 128, no envelopes - playable against
+	the sb-title VAB (VAG 1 and 2).  Returns the byte count.  */
+static size_t buildPxm(uint8_t *out, int rows, const Cell *cells, int nCells)
+{
+	memset(out, 0, 4096);
+	put16(out + 0x3A, XM_PXM_VERSION);
+	put32(out + 0x3C, 276);					/* header size */
+	put16(out + 0x40, 1);					/* song length */
+	put16(out + 0x44, 2);					/* channels */
+	put16(out + 0x46, 1);					/* patterns */
+	put16(out + 0x48, 2);					/* instruments */
+	put16(out + 0x4A, 1);					/* linear frequencies */
+	put16(out + 0x4C, 6);					/* speed */
+	put16(out + 0x4E, 150);					/* BPM: 300 = 5 * 60 per update */
+	size_t o = 0x3C + 276;
+
+	uint8_t *ph = out + o;
+	put32(ph, 9);
+	put16(ph + 5, (unsigned)rows);
+	size_t d = o + 9;
+	for (int r = 0; r < rows; r++)
+	{
+		for (int i = 0; i < nCells; i++)
+		{
+			const Cell &c = cells[i];
+			if (c.row != r)
+				continue;
+			out[d++] = (uint8_t)c.ch;
+			uint8_t mask = 0x80;
+			if (c.note)  mask |= 0x01;
+			if (c.instr) mask |= 0x02;
+			if (c.vol)   mask |= 0x04;
+			if (c.eff)   mask |= 0x08;
+			if (c.param) mask |= 0x10;
+			out[d++] = mask;
+			if (c.note)  out[d++] = (uint8_t)c.note;
+			if (c.instr) out[d++] = (uint8_t)c.instr;
+			if (c.vol)   out[d++] = (uint8_t)c.vol;
+			if (c.eff)   out[d++] = (uint8_t)c.eff;
+			if (c.param) out[d++] = (uint8_t)c.param;
+		}
+		out[d++] = 0xFF;
+	}
+	put16(ph + 7, (unsigned)(d - o - 9));
+	o = d;
+
+	for (int i = 0; i < 2; i++)
+	{
+		put32(out + o, 263);
+		put16(out + o + 27, 1);				/* one sample; keymap all 0 */
+		uint8_t *sh = out + o + 263;
+		sh[12] = 40;						/* default volume */
+		sh[15] = 128;						/* default pan */
+		o += 263 + 40;
+	}
+	return o;
+}
+
 /*	cross-check every pattern of a parsed PXM module against the pristine
 	FastTracker .xm sitting next to it in data/  */
 static void crossCheckPatterns(const XmModule *m, const uint8_t *xm,
@@ -453,6 +524,118 @@ int main()
 		XM_Quit(sfxId);
 		XM_CloseVAB(vabSfx);
 		XM_CloseVAB(vabMusic);
+	}
+
+	/* --- note delay (EDx), FT2 semantics (issue #59) ---------------------- */
+	{
+		/*	Synthetic modules at speed 6, one tick per XM_Update once the
+			song's tick accumulator is zeroed: update n processes tick
+			(n-1)%6 of row (n-1)/6.  The title theme swings speed 3/4, so
+			none of this is pinned on real music.  */
+		XM_OnceOffInit(XM_NTSC);
+		for (int i = 0; i < 24; i++)
+			XM_SetSongAddress(songStore[i]);
+		XM_SetFileHeaderAddress(hdr0);
+		SpuInit();
+		static char table[SPU_MALLOC_RECSIZ * 201];
+		SpuInitMalloc(200, table);
+		SpuSetCommonMasterVolume(0x3FFF, 0x3FFF);
+		int vab = XmVabInitSized(vh, (size_t)vhSize, vb, (size_t)vbSize);
+		check(vab == 0, "note delay: sb-title VAB resident");
+
+		static uint8_t mod[4096];
+		struct Scenario
+		{
+			const char *name;
+			Cell cells[3];
+			int nCells;
+		};
+		/*	A: instrument + set volume 7 + ED2.  B: no instrument, ED2 keeps
+			the running volume (row 0 set it to 32).  C: set pan 0x40 + ED2.
+			D: ED7 >= speed never fires, even when row 2 (F08 on channel 1,
+			channel 0 empty) stretches the row to 8 ticks.  */
+		static const Scenario sc[4] = {
+			{ "A", { { 0, 0, 49, 1, 0,    0,    0    },
+					 { 1, 0, 61, 2, 0x17, 0x0E, 0xD2 } }, 2 },
+			{ "B", { { 0, 0, 49, 1, 0x30, 0,    0    },
+					 { 1, 0, 61, 0, 0,    0x0E, 0xD2 } }, 2 },
+			{ "C", { { 0, 0, 49, 1, 0,    0,    0    },
+					 { 1, 0, 61, 1, 0xC4, 0x0E, 0xD2 } }, 2 },
+			{ "D", { { 0, 0, 49, 1, 0,    0,    0    },
+					 { 1, 0, 61, 2, 0,    0x0E, 0xD7 },
+					 { 2, 1, 0,  0, 0,    0x0F, 0x08 } }, 3 },
+		};
+		struct Snap
+		{
+			int note, instr, volume, pan, row, speed;
+		} snap[21];
+		for (int k = 0; k < 4; k++)
+		{
+			size_t n = buildPxm(mod, 3, sc[k].cells, sc[k].nCells);
+			size_t walked = 0;
+			check(XmParseModule(mod, n, 0, XM_UseXMPanning, &walked) == 0 &&
+				  walked == n, "note delay: synthetic PXM parses");
+			int id = XM_Init(vab, 0, -1, 0, XM_Loop, -1, XM_Music, 0);
+			check(id >= 0, "note delay: XM_Init");
+			if (id < 0)
+				continue;
+			XmSongState *s = g_xmSongSlot[id];
+			s->tickAccumHz = 0;
+			for (int u = 1; u <= 20; u++)
+			{
+				XM_Update();
+				const XmChannelState &c = s->ch[0];
+				snap[u].note = c.note;
+				snap[u].instr = c.instr;
+				snap[u].volume = c.volume;
+				snap[u].pan = c.pan;
+				snap[u].row = s->row;
+				snap[u].speed = s->speed;
+			}
+			XM_Quit(id);
+
+			int before = g_failures;
+			bool ok;
+			switch (k)
+			{
+			case 0:
+				ok = snap[6].note == 49 && snap[6].volume == 40 && snap[6].instr == 1;
+				for (int u = 7; u <= 8; u++)
+					ok = ok && snap[u].note == 49 && snap[u].volume == 40 &&
+						 snap[u].instr == 1;
+				check(ok, "EDx A: ticks 0-1 leave the old note, its volume and "
+						  "the instrument alone");
+				check(snap[9].note == 61 && snap[9].volume == 7 && snap[9].instr == 2,
+					  "EDx A: the delay tick plays the new note at the row's volume");
+				break;
+			case 1:
+				check(snap[8].note == 49 && snap[8].volume == 32 &&
+					  snap[9].note == 61 && snap[9].volume == 32,
+					  "EDx B: without an instrument the running volume is kept");
+				break;
+			case 2:
+				check(snap[7].pan == 128 && snap[8].pan == 128 && snap[8].note == 49 &&
+					  snap[9].note == 61 && snap[9].pan == 0x40 &&
+					  snap[9].volume == 40,
+					  "EDx C: the set-pan column lands on the delayed note");
+				break;
+			default:
+				check(snap[19].row == 2 && snap[19].speed == 8,
+					  "EDx D: row 2 runs 8 ticks (the case is live)");
+				ok = true;
+				for (int u = 7; u <= 20; u++)
+					ok = ok && snap[u].note == 49 && snap[u].instr == 1;
+				check(ok, "EDx D: a delay >= speed never fires, not even in a "
+						  "later, longer row");
+				break;
+			}
+			if (g_failures != before)
+				for (int u = 6; u <= 9; u++)
+					std::printf("  (%s update %d: note %d instr %d vol %d pan %d)\n",
+								sc[k].name, u, snap[u].note, snap[u].instr,
+								snap[u].volume, snap[u].pan);
+		}
+		XM_CloseVAB(vab);
 	}
 
 	if (g_failures)

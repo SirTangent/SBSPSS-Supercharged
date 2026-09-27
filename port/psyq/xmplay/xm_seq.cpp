@@ -446,6 +446,11 @@ void doKeyOff(XmSongState *s, int ch)
 void processSlotTick0(XmSongState *s, int ch, const RowSlot *sl)
 {
 	XmChannelState &c = s->ch[ch];
+	/*	a note delay that never fired (EDx with x >= speed) dies with its
+		row, as in FT2 - left armed it went off in whichever later row first
+		ran that many ticks  */
+	c.delayTick = 0;
+	c.delayedInstr = 0;
 	c.effect = sl->present ? sl->eff : 0;
 	c.param = sl->present ? sl->param : 0;
 	if (!sl->present)
@@ -460,7 +465,10 @@ void processSlotTick0(XmSongState *s, int ch, const RowSlot *sl)
 	int delayTicks = (sl->eff == 14 && (sl->param >> 4) == 0x0D)
 						 ? (sl->param & 0x0F) : 0;
 
-	if (sl->instr)
+	/*	EDx (FT2 noteDelay): the whole row - note, instrument, and the
+		set-volume/set-pan part of the volume column - happens at the delay
+		tick (processTickN); until then the old note plays on untouched  */
+	if (sl->instr && !delayTicks)
 		c.instr = sl->instr;
 
 	/*	9xx: xx is remembered per channel, but triggerNote applies it only
@@ -473,6 +481,7 @@ void processSlotTick0(XmSongState *s, int ch, const RowSlot *sl)
 	{
 		c.delayedNote = (uint8_t)note;
 		c.delayTick = (uint8_t)delayTicks;
+		c.delayedInstr = sl->instr;
 	}
 	else if (note == 97)
 	{
@@ -506,8 +515,8 @@ void processSlotTick0(XmSongState *s, int ch, const RowSlot *sl)
 	if (sl->instr && note != 97 && !delayTicks)
 		resetInstrument(s, ch);
 
-	/* volume column, tick 0 */
-	uint8_t v = sl->vol;
+	/* volume column, tick 0 - none of it on a note-delay row (FT2) */
+	uint8_t v = delayTicks ? 0 : sl->vol;
 	if (v >= 0x10 && v <= 0x50)
 		c.volume = (int16_t)clampi(v - 0x10, 0, 64);
 	else if ((v & 0xF0) == 0x80)
@@ -688,18 +697,30 @@ void processTickN(XmSongState *s, int ch, int tick)
 	XmChannelState &c = s->ch[ch];
 	uint8_t p = c.param;
 
-	/* delayed note fires on its tick */
+	/*	delayed note fires on its tick, FT2's noteDelay: the row's
+		instrument takes over, the note triggers, the instrument column (only
+		if the row had one) resets volume/pan, and then the row's set-volume
+		or set-pan volume column lands on the new note.  The volume column's
+		slides still run per tick below, as on any row.  */
 	if (c.delayTick && tick == c.delayTick)
 	{
 		int note = c.delayedNote;
+		int instr = c.delayedInstr;
 		c.delayTick = 0;
+		c.delayedInstr = 0;
+		if (instr)
+			c.instr = (uint8_t)instr;
 		if (note == 97)
 			doKeyOff(s, ch);
 		else if (note >= 1 && note <= 96 && c.instr)
-		{
 			triggerNote(s, ch, note);
+		if (instr && note != 97)
 			resetInstrument(s, ch);
-		}
+		uint8_t v = c.rowVolCol;
+		if (v >= 0x10 && v <= 0x50)
+			c.volume = (int16_t)clampi(v - 0x10, 0, 64);
+		else if ((v & 0xF0) == 0xC0)
+			c.pan = (int16_t)((v & 0x0F) << 4);
 	}
 
 	switch (c.effect)
