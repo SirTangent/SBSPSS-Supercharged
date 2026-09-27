@@ -15,7 +15,7 @@ This project substitutes the PSYQ SDK and its toolchain with a modern one, targe
 # How to use?
 In line with the overall project purpose, you can build the game executable using Windows 11.
 
-## Prerequisites
+## 1. Prerequisites
 | Requirement | Notes |
 |---|---|
 | Windows 10 or 11, 64-bit | The shipping game is a 32-bit executable; it runs fine on 64-bit Windows using WoW64 translation. (A 64-bit build exists too, section 4.) |
@@ -58,18 +58,16 @@ pacman -U https://repo.msys2.org/mingw/mingw32/mingw-w64-i686-sdl3-3.4.10-1-any.
 
 ```bat
 git clone https://github.com/SirTangent/SBSPSS-Supercharged.git
-cd SBSPSS-Modernized
+cd SBSPSS-Supercharged
+git checkout SBSP-Win11
 git lfs pull
 ```
 
+The Windows port lives on the `SBSP-Win11` branch until it lands on
+`master`, so check it out before pulling the LFS files.
+
 `git lfs pull` is not optional. Without it `Track1.Ixa` is a few-hundred-byte
 pointer file and the data build stops with "unmaterialised Git-LFS pointer".
-
-The Windows port lives on the `SBSP-Win11` branch until it lands on `master`:
-
-```bat
-git checkout SBSP-Win11
-```
 
 ## 3. Build the game data
 
@@ -79,7 +77,7 @@ pipeline, run under MSYS2. From the repository root, in a normal Command
 Prompt or PowerShell:
 
 ```bat
-port\build-data.cmd
+port\build-data.cmd usa
 ```
 
 This runs `makefile.gfx` through the vintage converter executables for every
@@ -88,15 +86,16 @@ track and the four FMV movies beside the result. Expect it to take a few
 minutes the first time; later runs only rebuild what changed. Output:
 
 ```
-out\USA\DEBUG\version\CD\BIGLUMP.BIN
-out\USA\DEBUG\version\CD\TRACK1.IXA
-out\USA\DEBUG\version\CD\THQ.STR  CLIMAX.STR  INTRO.STR  DEMO.STR
+out\USA\cd\BIGLUMP.BIN
+out\USA\cd\TRACK1.IXA
+out\USA\cd\THQ.STR  CLIMAX.STR  INTRO.STR  DEMO.STR
 out\USA\include\BigLump.h  Sprites.h  trans.h  ...
 ```
 
-The script takes optional `TERRITORY VERSION` arguments (defaults `USA
-DEBUG`). Only USA data is needed for the PC build. If you intend to run the
-`final` variant of the game, see the note in section 5.
+The argument is the territory, `usa` (the default) or `eur`. The data is per
+territory only: one USA data build serves both the `debug` and `final`
+executables. EUR data (`port\build-data.cmd eur`) is only needed for the
+`eur-*` builds.
 
 ## 4. Build the game
 
@@ -104,20 +103,28 @@ DEBUG`). Only USA data is needed for the PC build. If you intend to run the
 port\build-pc.cmd debug
 ```
 
-The argument is `debug`, `final`, or `all` (both). The script puts the MinGW
+The argument is `debug`, `final`, or `usa` (both). The script puts the MinGW
 toolchain on the path, configures with the matching CMake preset and builds
-with Ninja. A clean build takes a few minutes. Output:
+with Ninja. A clean build takes a few minutes. `eur-debug`, `eur-final` and
+`eur` are the EUR builds and need EUR data; `all`, which is also what no
+argument means, builds all four and so needs both territories' data. Output:
 
 | Variant | Executable | What it is |
 |---|---|---|
 | `debug` | `port\build\debug\sbsp.exe` | Asserts on, debug overlays and screen tools available, prim-pool overflow detection. Use this one while developing. |
-| `final` | `port\build\final\sbsp.exe` | The shipping configuration, heavier optimisation, asserts compiled out. |
+| `final` | `port\build\final\sbsp.exe` | The shipping configuration: asserts compiled out. Both variants use the same optimisation level (`-O2`). |
 
 The same directories also contain `sbsp_headless.exe` and the nineteen
-`*_test.exe` unit-test executables. `port\build-pc.cmd test` builds and then
-runs them all (ctest label `unit`) followed by the automated playthrough
-tiers (label `playthrough`: a scripted, faster-than-real-time run through
-every scene and every level); CI does the same on each pull request.
+`*_test.exe` unit-test executables. The recommended command is
+
+```bat
+port\build-pc.cmd test usa
+```
+
+which builds both USA variants and then runs those executables (ctest label
+`unit`) followed by the automated playthrough tiers (label `playthrough`: a
+scripted, faster-than-real-time run through every scene and every level) on
+each.
 
 If configure fails with "Generated headers missing", section 3 was skipped or
 failed.
@@ -155,8 +162,7 @@ Output is `port\build\clangcl-debug\` with the same executables, each
 with its `.pdb` and an `SDL3.dll` beside it (the official SDL VC package
 has no static library). The first configure downloads SDL3 and the Vulkan
 headers into `port\build\deps\`. `port\build-pc.cmd test clangcl` runs
-the same tests. The MinGW executables remain the ones that ship; CI builds
-the clang-cl variant as an advisory job.
+the same tests. The MinGW executables remain the 32-bit ones that ship.
 
 The same toolchain also builds a true 64-bit executable
 (`x86_64-pc-windows-msvc`; it needs the MSVC x64 build tools):
@@ -170,6 +176,28 @@ game data is unchanged - the 4-byte pointer fields in the level and actor
 files are read through a 4-byte pointer type (`port/docs/conv_pc.md`,
 "Game-source changes (M9)"), and the 64-bit exe renders the same frames as
 the 32-bit one.
+
+### Continuous integration
+
+The GitHub Actions workflow (`.github/workflows/build.yml`) runs only when
+someone starts it by hand: the *Actions* tab, *Build & test*, *Run
+workflow*, or `gh workflow run build.yml --ref <branch>`. It never runs by
+itself on a push or a pull request, so check a pull request locally with the
+same builds and tests before opening it:
+
+```bat
+port\build-pc.cmd test usa
+port\build-pc.cmd test clangcl-debug
+port\build-pc.cmd test clangcl64
+python port\tools\stretch_keycaps.py --check
+```
+
+and, if the change touches the game sources, the PlayStation link:
+`port\build-psx.cmd`. A workflow run builds the USA data, checks the key-cap
+bitmaps against their masters, builds and tests the MinGW `debug` and `final`
+trees and the clang-cl `clangcl-debug`, `clangcl-x64-debug` and
+`clangcl-x64-final` trees, and links the PlayStation executable. EUR is not
+covered yet; it waits on issue #42.
 
 ## 5. Run
 
@@ -201,7 +229,8 @@ your slots are populated without visiting Options. Settings live in
 `sbsp.ini` **beside the executable**, written with commented defaults on
 the first run: window size
 or `fullscreen`, `scale=fit|integer|stretch`, `vsync`, audio device /
-buffer / volume, the keyboard bindings, gamepad dead zone and rumble,
+buffer / volume, the keyboard bindings, `prompt_icons=auto|keys|pad`
+(which icons the button prompts show), gamepad dead zone and rumble,
 pause-on-focus-loss, language, and the data and save directories.
 Precedence is
 command-line argument > `SBSP_*` environment variable > ini. (Only English
@@ -225,7 +254,7 @@ port\build\debug\sbsp.exe --level 1-1
 
 The argument is `chapter-level` (chapters 1 to 5, levels 1 to 5, where level 5 is that chapter's bonus level) or a raw level-table index from 0 to 24. Run with
 `--help` for the full list of options, or see the table in
-[ARCHITECTURE.md](ARCHITECTURE.md#55-command-line-and-environment). Every
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Every
 option also has an `SBSP_*` environment-variable form.
 
 ## 6. Controls
@@ -282,7 +311,7 @@ Given this was a solo project and that I have a full-time software engineering j
 
 ### Plan to support other platforms?
 
-Yes, Definately! Right now, the MVP is to get it ported for Windows 11. In addition, it only compiles as a 32-bit application (Using WoW64188) and have it in-scope to refactor it to target x86-64. Once I finish the Win11 milestone, I can start to work on other ports. Here are some on the to-do list.
+Yes, Definately! Right now, the MVP is to get it ported for Windows 11. In addition, it builds as a 32-bit application (running under WoW64) and, with clang-cl, as a native 64-bit (x86-64) one (section 4). Once I finish the Win11 milestone, I can start to work on other ports. Here are some on the to-do list.
 
 * MacOS
 * Linux
