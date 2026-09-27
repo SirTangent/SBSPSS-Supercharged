@@ -17,6 +17,7 @@
 #ifndef PORT_XM_STATE_H
 #define PORT_XM_STATE_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #define XM_MAX_HEADER_SLOTS		8	/* "max 8" per Calls.txt (game uses 2) */
@@ -139,6 +140,19 @@ struct XmVab
 	uint32_t	vagAddr[XM_MAX_VAGS];	/* SPU byte address per VAG index */
 	uint32_t	vagBytes[XM_MAX_VAGS];
 };
+
+/*	Port-private sized entry points (issue #59).  The vintage API hands
+	InitXMData and XM_VABInit bare pointers, so the public calls bound them by
+	the end of the game arena (the buffers are CFileIO loads) and otherwise by
+	caps alone; xm_test drives these directly with real file sizes.  A module
+	or bank that does not fit is refused - inUse stays 0 / -1 is returned and
+	one line is logged - so a bad data build plays silence instead of
+	faulting.  parsedBytes (optional) receives where the walk ended: exactly
+	the file size for every shipped PXM.  */
+int XmParseModule(const uint8_t *base, size_t size, int xmId, int panType,
+				  size_t *parsedBytes = 0);
+int XmVabInitSized(const uint8_t *vh, size_t vhSize,
+				   const uint8_t *vb, size_t vbSize);
 
 /* registries (xm_data.cpp) */
 extern XmModule *g_xmHeaderSlot[XM_MAX_HEADER_SLOTS];

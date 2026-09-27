@@ -16,6 +16,8 @@
 #include <libspu.h>
 #include <XMPLAY.H>
 
+#include "system/types.h"
+#include "system/lnkopt.h"	/* the arena bound, as api/arena.cpp */
 #include "spu/spu_core.h"
 #include "xmplay/xm_state.h"
 #include "host/pump.h"		/* Port_VBlankHz: the tick-clock cross-check */
@@ -133,15 +135,75 @@ void XM_SetFileHeaderAddress(u_char *Address)
 
 /* ---- module (PXM) parsing ----------------------------------------------- */
 
-int InitXMData(u_char *mpp, int XM_ID, int S3MPan)
+}	/* extern "C" */
+
+namespace
+{
+
+/*	FT2 structure caps (issue #59).  Every shipped PXM has a 276-byte file
+	header, 9-byte pattern headers, 263-byte instrument headers and one
+	sample per instrument; the caps are FT2's own limits, loose enough for
+	any real module and tight enough that no length from a corrupt file can
+	carry the walk off into memory.  instrView reads instrument header bytes
+	up to +240, so an instrument with samples needs at least 241.  */
+const uint32_t kMaxFileHdr		= 4096;
+const uint32_t kMinPatHdr		= 9;		/* through packedSize at +7 */
+const uint32_t kMaxPatHdr		= 64;
+const uint32_t kMinInstHdr		= 29;		/* through numSamples at +27 */
+const uint32_t kMinInstHdrSmp	= 241;
+const uint32_t kMaxInstHdr		= 263;
+const uint32_t kMaxInstSamples	= 16;
+const uint32_t kMaxRows			= 256;
+
+/*	n bytes at offset off lie inside size bytes (no overflow)  */
+inline bool fits(size_t off, size_t n, size_t size)
+{
+	return off <= size && n <= size - off;
+}
+
+/*	Bytes from p to the end of the game arena - every CFileIO load is a
+	MemAlloc from it - or "unbounded" for a buffer outside it (a unit test's
+	malloc), which the caps alone then check.  */
+size_t arenaBytesFrom(const void *p)
+{
+	uintptr_t a = (uintptr_t)p;
+	uintptr_t lo = (uintptr_t)OPT_LinkerOpts.FreeMemAddress;
+	uintptr_t hi = lo + OPT_LinkerOpts.FreeMemSize;
+	if (lo && a >= lo && a < hi)
+		return (size_t)(hi - a);
+	return (size_t)-1;
+}
+
+int refuseModule(XmModule *m, const char *why)
+{
+	static int logged;
+	if (!logged)
+	{
+		logged = 1;
+		fprintf(stderr, "[xm] InitXMData: malformed module (%s) - refused, "
+						"the song will be silent\n", why);
+	}
+	m->inUse = 0;
+	return -1;
+}
+
+}	/* namespace */
+
+int XmParseModule(const uint8_t *base, size_t size, int xmId, int panType,
+				  size_t *parsedBytes)
 {
 	static int badSlot, badVersion, tooMany;
-	if (XM_ID < 0 || XM_ID >= g_xmHeaderCount)
+	if (xmId < 0 || xmId >= g_xmHeaderCount)
 	{
 		xmLogOnce(&badSlot, "InitXMData: XM_ID has no registered header slot");
 		return -1;
 	}
-	const uint8_t *base = (const uint8_t *)mpp;
+	/*	whatever the slot held is gone, whether or not this parse succeeds;
+		inUse is set only once the whole walk has fitted  */
+	XmModule *m = g_xmHeaderSlot[xmId];
+	memset(m, 0, sizeof(*m));
+	if (!fits(0, 0x50, size))
+		return refuseModule(m, "shorter than an XM header");
 	uint16_t version = rd16(base + 0x3A);
 	if (version != XM_PXM_VERSION && version != XM_FT2_VERSION)
 	{
@@ -149,11 +211,8 @@ int InitXMData(u_char *mpp, int XM_ID, int S3MPan)
 		return -1;
 	}
 
-	XmModule *m = g_xmHeaderSlot[XM_ID];
-	memset(m, 0, sizeof(*m));
-	m->inUse = 1;
 	m->base = base;
-	m->panType = S3MPan;
+	m->panType = panType;
 
 	uint32_t hdrSize = rd32(base + 0x3C);
 	m->songLength = rd16(base + 0x40);
@@ -169,22 +228,33 @@ int InitXMData(u_char *mpp, int XM_ID, int S3MPan)
 	/*	a module with no patterns or an empty order table has nothing to
 		play, and every "last valid index" downstream would be -1  */
 	if (m->numPatterns > XM_MAX_PATTERNS || m->numInstruments > XM_MAX_INSTRUMENTS ||
-		m->numPatterns < 1 || m->songLength < 1)
+		m->numPatterns < 1 || m->songLength < 1 || m->songLength > 256)
 	{
 		xmLogOnce(&tooMany, "InitXMData: pattern/instrument count out of range");
-		m->inUse = 0;
 		return -1;
 	}
+	/*	the order table (at 0x50) lives inside the header  */
+	if (hdrSize > kMaxFileHdr || hdrSize < 0x14u + (uint32_t)m->songLength ||
+		!fits(0x3C, hdrSize, size))
+		return refuseModule(m, "file header length");
 
 	/* patterns: [u32 hdrLen][u8 packing][u16 rows][u16 packedSize][data] */
-	const uint8_t *p = base + 0x3C + hdrSize;
+	size_t off = 0x3C + hdrSize;
 	for (int i = 0; i < m->numPatterns; i++)
 	{
-		uint32_t phLen = rd32(p);
-		m->pat[i].rows = rd16(p + 5);
-		m->pat[i].packedSize = rd16(p + 7);
-		m->pat[i].data = p + phLen;
-		p += phLen + m->pat[i].packedSize;
+		if (!fits(off, kMinPatHdr, size))
+			return refuseModule(m, "pattern header past the end");
+		uint32_t phLen = rd32(base + off);
+		uint16_t rows = rd16(base + off + 5);
+		uint16_t packed = rd16(base + off + 7);
+		if (phLen < kMinPatHdr || phLen > kMaxPatHdr || rows < 1 || rows > kMaxRows)
+			return refuseModule(m, "pattern header fields");
+		if (!fits(off, phLen + (size_t)packed, size))
+			return refuseModule(m, "pattern data past the end");
+		m->pat[i].rows = rows;
+		m->pat[i].packedSize = packed;
+		m->pat[i].data = base + off + phLen;
+		off += phLen + packed;
 	}
 
 	/*	instruments: header (numSamples at +27, sample headers appended);
@@ -195,33 +265,76 @@ int InitXMData(u_char *mpp, int XM_ID, int S3MPan)
 	int vagIndex = 1;
 	for (int i = 0; i < m->numInstruments; i++)
 	{
-		uint32_t ihLen = rd32(p);
-		uint16_t nSamp = rd16(p + 27);
-		m->ins[i].hdr = p;
+		if (!fits(off, kMinInstHdr, size))
+			return refuseModule(m, "instrument header past the end");
+		uint32_t ihLen = rd32(base + off);
+		uint16_t nSamp = rd16(base + off + 27);
+		if (ihLen < kMinInstHdr || ihLen > kMaxInstHdr || nSamp > kMaxInstSamples ||
+			(nSamp && ihLen < kMinInstHdrSmp))
+			return refuseModule(m, "instrument header fields");
+		size_t hdrs = ihLen + (size_t)nSamp * 40;
+		if (!fits(off, hdrs, size))
+			return refuseModule(m, "sample headers past the end");
+		m->ins[i].hdr = base + off;
 		m->ins[i].numSamples = nSamp;
 		m->ins[i].vagBase = (uint16_t)vagIndex;
-		m->ins[i].sampleHdr = nSamp ? p + ihLen : 0;
+		m->ins[i].sampleHdr = nSamp ? base + off + ihLen : 0;
 		vagIndex += nSamp;
 
-		uint32_t sampleBytes = 0;
-		const uint8_t *sh = p + ihLen;
+		size_t sampleBytes = 0;
+		const uint8_t *sh = base + off + ihLen;
 		for (int s = 0; s < nSamp; s++)
-			sampleBytes += rd32(sh + s * 40);	/* 0 in a PXM, real in an XM */
-		p += ihLen + (uint32_t)nSamp * 40 + sampleBytes;
+		{
+			uint32_t len = rd32(sh + s * 40);	/* 0 in a PXM, real in an XM */
+			if (!fits(off + hdrs + sampleBytes, len, size))
+				return refuseModule(m, "sample data past the end");
+			sampleBytes += len;
+		}
+		off += hdrs + sampleBytes;
 	}
 
-	return XM_ID;
+	m->inUse = 1;
+	if (parsedBytes)
+		*parsedBytes = off;
+	return xmId;
 }
 
-/* ---- VAB (VH/VB) -------------------------------------------------------- */
-
-int XM_VABInit(u_char *VHData, u_char *VBData)
+/*	VH: 32-byte VabHdr + 128 x 16-byte ProgAtr + ps x 16 x 32-byte VagAtr +
+	256 x u16 VAG sizes in 8-byte units (entry 0 = dummy).  Every shipped
+	bank has ps=1, so VagAtr cannot carry per-instrument envelopes - the
+	sequencer programs its own neutral SPU ADSR and does all shaping through
+	the XM volume envelopes instead.  The size table decides how much of
+	the VB is copied, so it has to lie inside the VH and its total inside
+	both the VB and sound RAM: every shipped pair is built matched, the
+	table summing exactly to the VB's size.  */
+int XmVabInitSized(const uint8_t *vh, size_t vhSize,
+				   const uint8_t *vb, size_t vbSize)
 {
-	static int badMagic, noSlot, noRam;
-	const uint8_t *vh = (const uint8_t *)VHData;
-	if (memcmp(vh, "pBAV", 4) != 0)
+	static int badMagic, noSlot, noRam, malformed;
+	if (!fits(0, 32, vhSize) || memcmp(vh, "pBAV", 4) != 0)
 	{
 		xmLogOnce(&badMagic, "XM_VABInit: VH lacks the VABp magic");
+		return -1;
+	}
+
+	uint16_t ps = rd16(vh + 18);
+	uint16_t vs = rd16(vh + 22);
+	size_t tableOff = 32 + 128 * 16 + (size_t)ps * 16 * 32;
+	if (ps > 128 || vs > XM_MAX_VAGS - 1 || !fits(tableOff, XM_MAX_VAGS * 2, vhSize))
+	{
+		xmLogOnce(&malformed, "XM_VABInit: malformed VH (program/VAG counts, or "
+							  "size table past its end) - refused");
+		return -1;
+	}
+	const uint8_t *sizeTable = vh + tableOff;
+
+	uint32_t total = 0;
+	for (int i = 0; i < XM_MAX_VAGS; i++)
+		total += (uint32_t)rd16(sizeTable + i * 2) << 3;
+	if (total > vbSize || total > SPU_RAM_SIZE)
+	{
+		xmLogOnce(&malformed, "XM_VABInit: VH size table exceeds the VB or sound "
+							  "RAM (mismatched VH/VB pair?) - refused");
 		return -1;
 	}
 
@@ -240,25 +353,11 @@ int XM_VABInit(u_char *VHData, u_char *VBData)
 		return -1;
 	}
 
-	/*	VH: 32-byte VabHdr + 128 x 16-byte ProgAtr + ps x 16 x 32-byte
-		VagAtr + 256 x u16 VAG sizes in 8-byte units (entry 0 = dummy).
-		Every shipped bank has ps=1, so VagAtr cannot carry per-instrument
-		envelopes - the sequencer programs its own neutral SPU ADSR and
-		does all shaping through the XM volume envelopes instead.  */
-	uint16_t ps = rd16(vh + 18);
-	uint16_t vs = rd16(vh + 22);
-	const uint8_t *sizeTable = vh + 32 + 128 * 16 + (uint32_t)ps * 16 * 32;
-
 	XmVab &vab = g_xmVab[slot];
 	memset(&vab, 0, sizeof(vab));
 	vab.numVags = vs;
-
-	uint32_t total = 0;
 	for (int i = 0; i < XM_MAX_VAGS; i++)
-	{
 		vab.vagBytes[i] = (uint32_t)rd16(sizeTable + i * 2) << 3;
-		total += vab.vagBytes[i];
-	}
 
 	long base = SpuMalloc((long)total);
 	if (base < 0)
@@ -277,9 +376,27 @@ int XM_VABInit(u_char *VHData, u_char *VBData)
 	}
 
 	SpuSetTransferStartAddr(vab.spuBase);
-	SpuWrite((unsigned char *)VBData, total);	/* synchronous - caller frees */
+	SpuWrite((unsigned char *)vb, total);	/* synchronous - caller frees */
 	vab.inUse = 1;
 	return slot;
+}
+
+extern "C" {
+
+/*	The game passes no buffer sizes (source/sound/xmplay.cpp loadModData,
+	loadSampleData), so the bound is the end of the arena they came from.  */
+int InitXMData(u_char *mpp, int XM_ID, int S3MPan)
+{
+	const uint8_t *base = (const uint8_t *)mpp;
+	return XmParseModule(base, arenaBytesFrom(base), XM_ID, S3MPan);
+}
+
+/* ---- VAB (VH/VB) -------------------------------------------------------- */
+
+int XM_VABInit(u_char *VHData, u_char *VBData)
+{
+	return XmVabInitSized((const uint8_t *)VHData, arenaBytesFrom(VHData),
+						  (const uint8_t *)VBData, arenaBytesFrom(VBData));
 }
 
 void XM_CloseVAB(int VabID)

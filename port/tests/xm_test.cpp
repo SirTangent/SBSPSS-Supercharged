@@ -5,6 +5,8 @@
 	files that ship beside them (the PXM repack must lose nothing), and
 	verifies XM_VABInit uploads the VB byte-exactly at the addresses the
 	VH size table dictates, with clean close/re-init allocation accounting.
+	The sized entry points (issue #59) must walk every shipped module to
+	exactly its file size and refuse truncated or corrupt modules and VABs.
 */
 #include <cstdio>
 #include <cstring>
@@ -166,9 +168,10 @@ int main()
 	uint8_t *xm = loadFile("data/Music/sb-title/sb-title.xm", &xmSize);
 	uint8_t *vh = loadFile("data/Music/sb-title/sb-title.VH", &vhSize);
 	uint8_t *vb = loadFile("data/Music/sb-title/sb-title.VB", &vbSize);
-	uint8_t *pxm1 = loadFile("data/Music/chapter1/chapter1.PXM", &pxmSize);
+	long pxm1Size, pxmSfxSize;
+	uint8_t *pxm1 = loadFile("data/Music/chapter1/chapter1.PXM", &pxm1Size);
 	uint8_t *xm1 = loadFile("data/Music/chapter1/CHAPTER1.XM", &xmSize);
-	uint8_t *pxmSfx = loadFile("data/Sfx/ingame/ingame.PXM", &pxmSize);
+	uint8_t *pxmSfx = loadFile("data/Sfx/ingame/ingame.PXM", &pxmSfxSize);
 	uint8_t *xmSfx = loadFile("data/Sfx/ingame/ingame.xm", &xmSize);
 	long vhSfxSize, vbSfxSize;
 	uint8_t *vhSfx = loadFile("data/Sfx/ingame/ingame.VH", &vhSfxSize);
@@ -267,6 +270,76 @@ int main()
 		XM_CloseVAB(0);
 
 		check(XM_VABInit(pxm, vb) == -1, "non-VAB data is rejected");
+	}
+
+	/* --- malformed-data bounds (issue #59): the sized entry points ------- */
+	{
+		/*	every shipped module walks to exactly its file size, so one byte
+			less is a truncation the walk must notice  */
+		const uint8_t *mods[3] = { pxm, pxm1, pxmSfx };
+		const long sizes[3] = { pxmSize, pxm1Size, pxmSfxSize };
+		for (int i = 0; i < 3; i++)
+		{
+			size_t walked = 0;
+			check(XmParseModule(mods[i], (size_t)sizes[i], 0, XM_UseXMPanning,
+								&walked) == 0 && (long)walked == sizes[i],
+				  "sized parse: shipped PXM walks to exactly its file size");
+			check(XmParseModule(mods[i], (size_t)sizes[i] - 1, 0,
+								XM_UseXMPanning) == -1 &&
+				  !g_xmHeaderSlot[0]->inUse,
+				  "sized parse: a PXM one byte short is refused");
+		}
+
+		/*	corrupt fields on a copy of sb-title, each refused with the true
+			size and - where a cap alone must catch it - unbounded too  */
+		const size_t unbounded = (size_t)-1;
+		check(XmParseModule(pxm, (size_t)pxmSize, 0, XM_UseXMPanning) == 0,
+			  "sized parse: sb-title for the offsets below");
+		size_t pat0 = 0x3C + rd32(pxm + 0x3C);
+		size_t ins0 = (size_t)(g_xmHeaderSlot[0]->ins[0].hdr - pxm);
+		uint8_t *bad = (uint8_t *)malloc((size_t)pxmSize);
+		struct { size_t at; uint32_t value; int bytes; const char *what; } cases[] = {
+			{ pat0,      0x7FFFFFFFu, 4, "pattern header length 0x7FFFFFFF refused" },
+			{ ins0,      0x10000u,    4, "instrument header length 0x10000 refused" },
+			{ ins0 + 27, 17,          2, "17 samples in an instrument refused" },
+		};
+		for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++)
+		{
+			memcpy(bad, pxm, (size_t)pxmSize);
+			for (int k = 0; k < cases[c].bytes; k++)
+				bad[cases[c].at + k] = (uint8_t)(cases[c].value >> (8 * k));
+			check(XmParseModule(bad, (size_t)pxmSize, 0, XM_UseXMPanning) == -1 &&
+				  XmParseModule(bad, unbounded, 0, XM_UseXMPanning) == -1 &&
+				  !g_xmHeaderSlot[0]->inUse,
+				  cases[c].what);
+		}
+		free(bad);
+
+		/*	a refused module is silence, not a fault: XM_Init turns it down  */
+		SpuInit();
+		static char table[SPU_MALLOC_RECSIZ * 201];
+		SpuInitMalloc(200, table);
+		int vab = XmVabInitSized(vh, (size_t)vhSize, vb, (size_t)vbSize);
+		check(vab == 0 && g_xmVab[0].spuBytes == (uint32_t)vbSize,
+			  "sized VAB: shipped pair uploads the whole VB");
+		check(XmParseModule(pxm, (size_t)pxmSize - 1, 0, XM_UseXMPanning) == -1 &&
+			  XM_Init(vab, 0, -1, 0, XM_Loop, -1, XM_Music, 0) == -1,
+			  "XM_Init refuses a module whose parse was refused");
+		XM_CloseVAB(vab);
+
+		check(XmVabInitSized(vh, (size_t)vhSize, vb, (size_t)vbSize - 1) == -1,
+			  "sized VAB: a VB one byte short of the size table is refused");
+		check(XmVabInitSized(vh, (size_t)vhSize - 1, vb, (size_t)vbSize) == -1,
+			  "sized VAB: a size table running past the VH is refused");
+		uint8_t *badVh = (uint8_t *)malloc((size_t)vhSize);
+		memcpy(badVh, vh, (size_t)vhSize);
+		badVh[18] = 0xFF;						/* ps = 0xFFFF */
+		badVh[19] = 0xFF;
+		check(XmVabInitSized(badVh, (size_t)vhSize, vb, (size_t)vbSize) == -1 &&
+			  XmVabInitSized(badVh, unbounded, vb, unbounded) == -1,
+			  "sized VAB: ps = 0xFFFF is refused");
+		free(badVh);
+		check(!g_xmVab[0].inUse, "refused VABs leave the slot free");
 	}
 
 	/* --- sequencer end-to-end: the title theme actually plays -------------- */

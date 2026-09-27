@@ -106,48 +106,55 @@ struct RowSlot
 	uint8_t present;
 };
 
-const uint8_t *readSlot(const uint8_t *p, RowSlot *s)
+/*	one byte of a slot, or 0 once the pattern's data has run out  */
+inline uint8_t slotByte(const uint8_t *&p, const uint8_t *end)
 {
-	uint8_t b = *p++;
+	return p < end ? *p++ : 0;
+}
+
+/*	decode one packed slot; a slot cut short by the pattern's end reads its
+	missing fields as 0 and never looks past end  */
+const uint8_t *readSlot(const uint8_t *p, const uint8_t *end, RowSlot *s)
+{
+	uint8_t b = slotByte(p, end);
 	if (b & 0x80)
 	{
-		if (b & 0x01) s->note = *p++;
-		if (b & 0x02) s->instr = *p++;
-		if (b & 0x04) s->vol = *p++;
-		if (b & 0x08) s->eff = *p++;
-		if (b & 0x10) s->param = *p++;
+		if (b & 0x01) s->note = slotByte(p, end);
+		if (b & 0x02) s->instr = slotByte(p, end);
+		if (b & 0x04) s->vol = slotByte(p, end);
+		if (b & 0x08) s->eff = slotByte(p, end);
+		if (b & 0x10) s->param = slotByte(p, end);
 	}
 	else
 	{
 		s->note = b;
-		s->instr = *p++;
-		s->vol = *p++;
-		s->eff = *p++;
-		s->param = *p++;
+		s->instr = slotByte(p, end);
+		s->vol = slotByte(p, end);
+		s->eff = slotByte(p, end);
+		s->param = slotByte(p, end);
 	}
 	return p;
 }
 
-/*	step over one packed slot without decoding it (row skipping)  */
-const uint8_t *skipSlot(const uint8_t *p)
+/*	step over one packed slot without decoding it (row skipping), stopping
+	at end  */
+const uint8_t *skipSlot(const uint8_t *p, const uint8_t *end)
 {
+	if (p >= end)
+		return end;
 	uint8_t b = *p++;
+	size_t n = 4;
 	if (b & 0x80)
-	{
-		if (b & 0x01) p++;
-		if (b & 0x02) p++;
-		if (b & 0x04) p++;
-		if (b & 0x08) p++;
-		if (b & 0x10) p++;
-	}
-	else
-		p += 4;
-	return p;
+		n = (b & 0x01) + ((b >> 1) & 1) + ((b >> 2) & 1) + ((b >> 3) & 1) +
+			((b >> 4) & 1);
+	return n <= (size_t)(end - p) ? p + n : end;
 }
 
 /*	fetch row `row` of a sparse pattern into slots[chans].  packedSize
-	bounds every scan: a truncated or mis-parsed PXM must stop at the end
-	of the pattern rather than hunt for a 0xFF past the module buffer.  */
+	bounds every scan and every slot read: a truncated or mis-parsed PXM
+	must stop at the end of the pattern rather than hunt for a 0xFF past
+	the module buffer (the parse has already checked that the pattern's
+	packedSize bytes lie inside it).  */
 void fetchRow(const XmPatternRef *pat, int row, int chans, RowSlot *slots)
 {
 	memset(slots, 0, sizeof(RowSlot) * (size_t)chans);
@@ -160,7 +167,7 @@ void fetchRow(const XmPatternRef *pat, int row, int chans, RowSlot *slots)
 		while (p < end && *p != 0xFF)
 		{
 			p++;
-			p = skipSlot(p);
+			p = skipSlot(p, end);
 		}
 		if (p >= end)
 			return;
@@ -171,7 +178,7 @@ void fetchRow(const XmPatternRef *pat, int row, int chans, RowSlot *slots)
 		int c = *p++;
 		RowSlot tmp;
 		memset(&tmp, 0, sizeof(tmp));
-		p = readSlot(p, &tmp);
+		p = readSlot(p, end, &tmp);
 		if (c < chans)
 		{
 			slots[c] = tmp;
