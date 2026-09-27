@@ -60,6 +60,31 @@ static long syncResult(long expectCmd, const char *what)
 
 static const char *FNAME = "BASLUS-01352";
 
+/*	The later sections each get a directory of their own:
+	SBSP_SAVE_DIR=<dir> and a freshly formatted card opened there.  */
+static void freshCard(const char *dir)
+{
+	static char env[64];
+	char path[64];
+	_mkdir(dir);
+	std::snprintf(path, sizeof(path), "%s\\card0.mcd", dir);
+	remove(path);							/* stale run */
+	std::snprintf(env, sizeof(env), "SBSP_SAVE_DIR=%s", dir);
+	_putenv(env);
+	Card_ResetForTest();
+	check(Card_Open() == CARD_OK, "fresh card opens");
+}
+
+static void dropDir(const char *dir)
+{
+	char path[64];
+	std::snprintf(path, sizeof(path), "%s\\card0.mcd", dir);
+	remove(path);
+	std::snprintf(path, sizeof(path), "%s\\card0.mcd.tmp", dir);
+	remove(path);
+	_rmdir(dir);
+}
+
 int main(void)
 {
 	_putenv("SBSP_SAVE_DIR=mcrd_test_tmp");
@@ -315,6 +340,67 @@ int main(void)
 		check(size == 1024, "the refused file was left untouched");
 		remove("mcrd_test_tmp2\\card0.mcd");
 		_rmdir("mcrd_test_tmp2");
+	}
+
+	/*	-------- 20-char names: a product code + 8 chars, the longest name
+		a card holds (another game's save in an imported image, say).  A
+		DIRENTRY carries 19 of them, and the game opens, rewrites and
+		deletes every file by the name its DIRENTRY gave it.  */
+	{
+		static const char *LONG20 = "BASLUS-00000ABCDEFGH";
+		static const char *TWIN20 = "BASLUS-00000ABCDEFGX";	/* same 19 */
+		static unsigned char data[8192], got[8192];
+		for (int i = 0; i < 8192; i++)
+			data[i] = (unsigned char)(i * 13 + 5);
+
+		freshCard("mcrd_test_tmp3");
+		check(MemCardCreateFile(0, (char *)FNAME, 1) == McErrNone,
+			  "20-char: neighbour file created");
+		check(MemCardCreateFile(0, (char *)LONG20, 1) == McErrNone,
+			  "20-char: file created");
+		MemCardWriteFile(0, (char *)LONG20, (unsigned long *)data, 0, 8192);
+		check(syncResult(McFuncWriteFile, "20-char write") == McErrNone,
+			  "20-char: write by the full name");
+
+		DIRENTRY list[15];
+		long n = -1;
+		check(MemCardGetDirentry(0, (char *)"*", list, &n, 0, 15) == McErrNone &&
+			  n == 2, "20-char: two files listed");
+		const DIRENTRY *e = NULL;
+		for (long i = 0; i < n; i++)
+			if (strncmp(list[i].name, LONG20, 12) == 0 &&
+				strcmp(list[i].name, FNAME) != 0)
+				e = &list[i];
+		check(e != NULL, "20-char: dirent found");
+		if (e)
+		{
+			check(e->name[19] == 0 && strlen(e->name) == 19 &&
+				  strncmp(e->name, LONG20, 19) == 0,
+				  "20-char: dirent carries the first 19 chars, terminated");
+
+			memset(got, 0, sizeof(got));
+			MemCardReadFile(0, (char *)e->name, (unsigned long *)got, 0, 8192);
+			check(syncResult(McFuncReadFile, "20-char read") == McErrNone,
+				  "20-char: read by the dirent name");
+			check(memcmp(got, data, 8192) == 0, "20-char: the right file's data");
+
+			MemCardWriteFile(0, (char *)e->name, (unsigned long *)data, 0, 128);
+			check(syncResult(McFuncWriteFile, "20-char rewrite") == McErrNone,
+				  "20-char: write by the dirent name");
+
+			check(MemCardCreateFile(0, (char *)e->name, 1) == McErrAlreadyExist,
+				  "20-char: a 19-char name that prefixes it cannot be created");
+		}
+		check(MemCardCreateFile(0, (char *)TWIN20, 1) == McErrAlreadyExist,
+			  "20-char: a second 20-char name sharing its 19 cannot be created");
+
+		check(MemCardDeleteFile(0, (char *)LONG20) == McErrNone,
+			  "20-char: delete by the full name");
+		n = -1;
+		MemCardGetDirentry(0, (char *)"*", list, &n, 0, 15);
+		check(n == 1 && strcmp(list[0].name, FNAME) == 0,
+			  "20-char: the delete took that file and left its neighbour");
+		dropDir("mcrd_test_tmp3");
 	}
 
 	if (g_failures)

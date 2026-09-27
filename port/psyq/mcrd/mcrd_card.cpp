@@ -222,15 +222,53 @@ static int nextBlock(int b)
 	return (int)next + 1;
 }
 
+/*	The on-card name field holds up to 20 chars + NUL, but a KERNEL.H
+	DIRENTRY.name is 20 bytes, so Card_Dirents hands a 20-char name out as
+	its first 19 chars - and the game opens every file by exactly the name
+	Dirents gave it (memcard.cpp HandleCmd_ReadFileInfo, then strcpy's it
+	for the write/delete paths).  A 20-char name is what a real card holds
+	for a product code + 8 chars, e.g. another game's save in an imported
+	image; if it could not be looked up, the read would fail,
+	InvalidateCard would run and the card would never become valid.
+
+	So: an exact match first; failing that, a 19-char name also resolves
+	to a 20-char card name that starts with it.  Should an imported card
+	hold two 20-char names sharing those 19 chars, the first wins - there
+	is no way to tell them apart through a DIRENTRY.  Card_CreateFile
+	refuses to make such a pair (nameTaken).  */
+static const int CARD_NAME_MAX   = 20;
+static const int DIRENT_NAME_MAX = CARD_NAME_MAX - 1;	/* see Card_Dirents */
+
+static const char *cardName(int block)	{ return (const char *)dirFrame(block) + 0x0A; }
+
 static int findFile(const char *name)
 {
 	for (int b = 1; b <= CARD_DATA_BLOCKS; b++)
-	{
-		const uint8_t *d = dirFrame(b);
-		if (stateFirst(ld32(d)) &&
-			strncmp((const char *)d + 0x0A, name, 20) == 0)
+		if (stateFirst(ld32(dirFrame(b))) &&
+			strncmp(cardName(b), name, CARD_NAME_MAX) == 0)
 			return b;
-	}
+
+	if (strnlen(name, CARD_NAME_MAX) != (size_t)DIRENT_NAME_MAX)
+		return 0;
+	for (int b = 1; b <= CARD_DATA_BLOCKS; b++)
+		if (stateFirst(ld32(dirFrame(b))) &&
+			strnlen(cardName(b), CARD_NAME_MAX) == (size_t)CARD_NAME_MAX &&
+			memcmp(cardName(b), name, DIRENT_NAME_MAX) == 0)
+			return b;
+	return 0;
+}
+
+/*	Would a new file called `name` be listed by Card_Dirents under the same
+	name as a file already on the card?  Names up to 18 chars compare
+	exactly; at 19 or 20 chars only the 19 a DIRENTRY carries count.
+	Refusing those keeps every name Dirents hands out pointing at exactly
+	one file.  */
+static int nameTaken(const char *name)
+{
+	for (int b = 1; b <= CARD_DATA_BLOCKS; b++)
+		if (stateFirst(ld32(dirFrame(b))) &&
+			strncmp(cardName(b), name, DIRENT_NAME_MAX) == 0)
+			return 1;
 	return 0;
 }
 
@@ -246,7 +284,8 @@ long Card_Dirents(struct DIRENTRY *out, long maxEntries)
 		memset(e, 0, sizeof(*e));
 		/*	one short of the field: the game strcpy()s this name around
 			(memcard.cpp:1073), so it must be terminated even if a corrupt
-			frame fills all 20 bytes  */
+			frame fills all 20 bytes.  A legal 20-char name therefore comes
+			out as 19; findFile resolves that back to the file.  */
 		memcpy(e->name, d + 0x0A, sizeof(e->name) - 1);
 		e->size = (long)ld32(d + 0x04);
 		e->attr = 0x50;				/* what a real card reports for a save */
@@ -259,7 +298,7 @@ CardResult Card_CreateFile(const char *name, long blocks)
 {
 	if (!Card_IsFormatted())
 		return CARD_NOT_FORMATTED;
-	if (blocks < 1 || findFile(name))
+	if (blocks < 1 || nameTaken(name))
 		return blocks < 1 ? CARD_NO_FILE : CARD_FILE_EXISTS;
 
 	/*	collect enough free blocks (0xA0 fresh or 0xA1-A3 freed)  */
