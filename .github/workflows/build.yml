@@ -1,10 +1,18 @@
 name: Build & test
 
+# Manual runs only, by the maintainer's decision (issue #64): nothing here
+# fires on a push or a pull request.  Start it from the Actions tab (Run
+# workflow, pick the branch) or `gh workflow run build.yml --ref <branch>`.
+# A run costs LFS bandwidth (the 133MB Track1.Ixa on a cold cache, see the
+# data job) and runner time, and pull requests are checked locally with the
+# commands in README.md instead.  Running on every PR again means adding
+# pull_request / push triggers back here - a deliberate change, not a fix.
+#
+# Not covered yet: EUR.  The EUR data build is not reliably one-shot
+# (issue #42), so an EUR data artifact and eur-debug / eur-final legs wait
+# for that root cause.
 on:
-  pull_request:
-    branches: [SBSP-Win11]
-  push:
-    branches: [SBSP-Win11]
+  workflow_dispatch:
 
 permissions:
   contents: read
