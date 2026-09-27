@@ -14,6 +14,12 @@
 	    by the virtual device's Rumble callback), big motor -> low-frequency
 	    magnitude, small motor -> high-frequency, re-arm cadence bounded,
 	    explicit stop on zero, nothing after disconnect
+	  - rumble at exit (issue #62), each in a child process of this exe
+	    whose virtual pad's Rumble callback writes a marker file on the
+	    zero that stops the motors: armed + Port_Exit(0) on the main thread
+	    -> marker; armed + a fault under Port_CrashInit -> exit 11 + marker;
+	    armed + Port_Exit from another thread -> no marker (the hook
+	    belongs to the thread that opened the pad)
 
 	The virtual device is typed SDL_JOYSTICK_TYPE_GAMEPAD so SDL maps it
 	automatically and emits a real GAMEPAD_ADDED - the shim sees an
@@ -23,12 +29,17 @@
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL.h>
 
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <process.h>
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 #include "system/types.h"
 #include "system/asmport.h"		/* PORT_CAP_* - the prompt-icon contract */
+#include "host/diag.h"			/* Port_Exit, Port_CrashInit, PORT_EXIT_* */
 
 extern unsigned char *Port_PadBuffer[2];		/* pads_shim.cpp */
 extern unsigned char *Port_PadMotor[2];
@@ -97,8 +108,99 @@ static unsigned packetMask(const unsigned char *buf)
 	return ((unsigned)(unsigned char)~buf[2] << 8) | (unsigned char)~buf[3];
 }
 
-int main(void)
+/*****************************************************************************/
+/*	rumble at exit (issue #62): the child side  */
+
+static const char	*g_marker;
+static bool			g_armed;
+
+static bool SDLCALL markerRumble(void *userdata, Uint16 low, Uint16 high)
 {
+	(void)userdata;
+	if (low || high)
+		g_armed = true;
+	else if (g_armed && g_marker)
+	{
+		FILE *f = std::fopen(g_marker, "w");	/* the stop reached the device */
+		if (f)
+		{
+			std::fputs("stopped\n", f);
+			std::fclose(f);
+		}
+	}
+	return true;
+}
+
+static DWORD WINAPI exitFromWorker(LPVOID arg)
+{
+	(void)arg;
+	Port_Exit(PORT_EXIT_CLEAN);
+}
+
+static int exitChild(const char *mode)
+{
+	g_marker = std::getenv("PAD_TEST_MARKER");
+	SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
+	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMEPAD))
+		return 2;
+	static unsigned char pad0[34], pad1[34];
+	PadInitDirect(pad0, pad1);
+
+	SDL_VirtualJoystickDesc desc;
+	SDL_INIT_INTERFACE(&desc);
+	desc.type     = SDL_JOYSTICK_TYPE_GAMEPAD;
+	desc.naxes    = SDL_GAMEPAD_AXIS_COUNT;
+	desc.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+	desc.name     = "SBSP virtual pad";
+	desc.Rumble   = markerRumble;
+	if (!SDL_AttachVirtualJoystick(&desc))
+		return 3;
+	pumpEvents();						/* the shim opens it (and hooks the exit) */
+
+	static unsigned char motor[2] = { 0, 200 };
+	PadSetAct(0, motor, 2);
+	Port_InputFrame(1);					/* a 100ms rumble window, armed */
+	if (!g_armed)
+		return 4;
+
+	if (std::strcmp(mode, "exit-main") == 0)
+		Port_Exit(PORT_EXIT_CLEAN);
+	if (std::strcmp(mode, "exit-fault") == 0)
+	{
+		Port_CrashInit();
+		*(volatile int *)0 = 0;
+	}
+	if (std::strcmp(mode, "exit-thread") == 0)
+	{
+		HANDLE t = CreateThread(NULL, 0, exitFromWorker, NULL, 0, NULL);
+		if (t)
+			WaitForSingleObject(t, INFINITE);
+	}
+	return 5;
+}
+
+/*	the parent side: returns the child's exit code, *stopped = the marker  */
+static int spawnExitChild(const char *mode, const char *marker, bool *stopped)
+{
+	char exe[MAX_PATH], quoted[MAX_PATH + 4];
+	if (!GetModuleFileNameA(NULL, exe, sizeof(exe)))
+		return -1;
+	std::snprintf(quoted, sizeof(quoted), "\"%s\"", exe);
+	std::remove(marker);
+	intptr_t rc = _spawnl(_P_WAIT, exe, quoted, mode, (const char *)NULL);
+	FILE *f = std::fopen(marker, "r");
+	*stopped = f != NULL;
+	if (f)
+		std::fclose(f);
+	std::remove(marker);
+	return (int)rc;
+}
+
+int main(int argc, char **argv)
+{
+	if (argc > 1)
+		return exitChild(argv[1]);
+
 	SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
 	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMEPAD))
 	{
@@ -483,6 +585,28 @@ int main(void)
 	check(g_rumbleCalls == before, "no rumble calls after disconnect");
 
 	SDL_Quit();
+
+	/*	-------- rumble at exit (issue #62): children, see exitChild  */
+	{
+		char tmp[MAX_PATH], marker[MAX_PATH + 64], env[MAX_PATH + 96];
+		GetTempPathA(sizeof(tmp), tmp);
+		std::snprintf(marker, sizeof(marker), "%ssbsp_pad_test_%lu.stop", tmp, GetCurrentProcessId());
+		std::snprintf(env, sizeof(env), "PAD_TEST_MARKER=%s", marker);
+		_putenv(env);
+
+		bool stopped;
+		int rc = spawnExitChild("exit-main", marker, &stopped);
+		check(rc == PORT_EXIT_CLEAN, "exit while rumbling: exit code 0");
+		check(stopped, "exit while rumbling: the exit hook stopped the motors");
+
+		rc = spawnExitChild("exit-fault", marker, &stopped);
+		check(rc == PORT_EXIT_FAULT, "fault while rumbling: exit code 11");
+		check(stopped, "fault while rumbling: the fault-safe hook stopped the motors");
+
+		rc = spawnExitChild("exit-thread", marker, &stopped);
+		check(rc == PORT_EXIT_CLEAN, "exit from another thread: exit code 0");
+		check(!stopped, "exit from another thread: the main thread's hook did not run");
+	}
 
 	if (g_failures)
 	{

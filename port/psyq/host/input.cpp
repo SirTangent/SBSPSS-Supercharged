@@ -814,9 +814,33 @@ static void recordFrame(unsigned long vblank, unsigned mask)
 }
 
 /*****************************************************************************/
+/*	Exit hook (issue #62).  Rumble runs in 100ms windows that only SDL's
+	event pump expires (rumbleFrame), and Port_Exit leaves through _exit:
+	a process that ends inside a window - Alt+F4, an assert or a fault
+	while the vibe pattern runs - never sends the stop, and XInput and
+	HIDAPI pads keep the last level after the owner dies.  So send it
+	here, then close the pad (SDL's close sends a zero rumble of its own
+	while one is armed; the explicit one does not depend on that).
+	Registered by the first openGamepad, i.e. on the thread that runs the
+	event loop, so only an exit on that thread runs it - never the
+	watchdog's or the audio thread's, where SDL's joystick state is not
+	theirs to touch.  Fault-safe: a fault on that thread leaves SDL's
+	joystick lock, which is recursive, usable by the same thread.  */
+static void rumbleStopAtExit(int code)
+{
+	(void)code;
+	if (!g_gamepad)
+		return;
+	SDL_RumbleGamepad(g_gamepad, 0, 0, 0);
+	SDL_CloseGamepad(g_gamepad);
+	g_gamepad = NULL;
+}
+
 /*	Open one pad.  Returns 1 on success.  */
 static int openGamepad(SDL_JoystickID id, const char *how)
 {
+	static int	exitHooked;
+
 	g_gamepad = SDL_OpenGamepad(id);
 	g_rumbleLow = g_rumbleHigh = 0;		/* fresh device: re-arm from scratch */
 	g_smallLevel = 0;
@@ -826,6 +850,11 @@ static int openGamepad(SDL_JoystickID id, const char *how)
 		return 0;
 	}
 	fprintf(stderr, "[input] gamepad %s: %s\n", how, SDL_GetGamepadName(g_gamepad));
+	if (!exitHooked)
+	{
+		exitHooked = 1;
+		Port_OnExit(rumbleStopAtExit, 1);	/* reads g_gamepad at exit: follows an adopted pad */
+	}
 	return 1;
 }
 
