@@ -296,6 +296,49 @@ int main()
 		checkPx(101, 101, 16 * 0x421, "no dither: 128 >> 3 everywhere");
 	}
 
+	/*	--- libgpu transfers: zero-size rects move nothing (issue #60) --------
+		LoadImage/StoreImage clamp w to [0,1024] and h to [0,512] and size
+		the DMA from w*h; the raw GP0 rule would have made w=0 a full
+		1024-wide transfer through the caller's buffer.  MoveImage refuses
+		a zero dimension with -1.  */
+	{
+		resetEnv();
+		static uint16_t src[1024 * 4];
+		for (int i = 0; i < 1024 * 4; i++)
+			src[i] = 0x5555;
+		g_vram[10][10]  = 0x1111;
+		g_vram[10][500] = 0x2222;
+		g_vram[13][10]  = 0x3333;
+		RECT zw = { 10, 10, 0, 4 };
+		RECT zh = { 10, 10, 8, 0 };
+		LoadImage(&zw, (u_long *)src);
+		LoadImage(&zh, (u_long *)src);
+		checkPx(10, 10, 0x1111, "LoadImage w=0 writes nothing");
+		checkPx(500, 10, 0x2222, "LoadImage w=0 is not a 1024-wide load");
+		checkPx(10, 13, 0x3333, "LoadImage h=0 writes nothing");
+
+		static uint16_t dst[1024 * 4 + 8];		/* room for the old w=0 */
+		for (int i = 0; i < 1024 * 4 + 8; i++)
+			dst[i] = 0xCAFE;
+		StoreImage(&zw, (u_long *)dst);
+		StoreImage(&zh, (u_long *)dst);
+		check(dst[0] == 0xCAFE, "StoreImage zero-size rect stores nothing");
+
+		/*	w=2048 clamps to 1024: exactly one VRAM row, not a halfword more  */
+		for (int x = 0; x < 1024; x++)
+			g_vram[20][x] = (uint16_t)(0x4000 + x);
+		RECT wide = { 0, 20, 2048, 1 };
+		StoreImage(&wide, (u_long *)dst);
+		check(dst[0] == 0x4000 && dst[1023] == 0x4000 + 1023,
+			  "StoreImage w=2048 stores the whole row");
+		check(dst[1024] == 0xCAFE, "StoreImage w=2048 stores exactly 1024 halfwords");
+
+		g_vram[30][40] = 0x0777;
+		RECT mz = { 40, 30, 0, 4 };
+		check(MoveImage(&mz, 300, 30) == -1, "MoveImage w=0 returns -1");
+		checkPx(300, 30, 0x0000, "MoveImage w=0 moves nothing");
+	}
+
 	/* --- texture window (E2): u -> (u & ~mask*8) | (offset&mask)*8 -------- */
 	{
 		resetEnv();

@@ -216,10 +216,13 @@ extern "C" void SetDrawArea(DR_AREA *p, RECT *r)
 }
 
 /*****************************************************************************/
-/*	rect helper shared by the transfers: top-left masked into VRAM, sizes
-	clamped so a bogus rect cannot overrun the array (hardware wraps; the
-	one oversized caller - actor.cpp ClearImage w=2048 - just wants "a lot",
-	and masking reproduces hardware's 10/9-bit coordinate space).  */
+/*	The transfers model two layers, like ClearImage below (issue #26): the
+	GP0 command masks a rect into the 10/9-bit VRAM space, but the libgpu
+	call in front of it decides first what reaches the command.
+
+	maskRect is the raw GP0 rule - top-left masked into VRAM, size
+	((n-1) & mask) + 1, so 0 means the full 1024/512.  Only MoveImage
+	passes a rect to it verbatim.  */
 static void maskRect(const RECT *r, int *x, int *y, int *w, int *h)
 {
 	*x = r->x & 0x3FF;
@@ -228,10 +231,29 @@ static void maskRect(const RECT *r, int *x, int *y, int *w, int *h)
 	*h = ((r->h - 1) & 0x1FF) + 1;
 }
 
+/*	LoadImage/StoreImage (LIBGPU.LIB module SYS, executors 0x1b44 and
+	0x1d80) clamp w to [0,1024] and h to [0,512] and size the DMA from
+	w*h, so a zero-size rect moves nothing.  Through maskRect it would
+	have become a full 1024- or 512-wide transfer through the caller's
+	buffer (issue #60).  Returns 0 when there is nothing to move.  */
+static int libgpuXferRect(const RECT *r, int *x, int *y, int *w, int *h)
+{
+	int cw = r->w < 0 ? 0 : (r->w > VRAM_W ? VRAM_W : (int)r->w);
+	int ch = r->h < 0 ? 0 : (r->h > VRAM_H ? VRAM_H : (int)r->h);
+	if (cw * ch == 0)
+		return 0;
+	*x = r->x & 0x3FF;
+	*y = r->y & 0x1FF;
+	*w = cw;
+	*h = ch;
+	return 1;
+}
+
 extern "C" int LoadImage(RECT *rect, u_long *p)
 {
 	int x, y, w, h;
-	maskRect(rect, &x, &y, &w, &h);
+	if (!libgpuXferRect(rect, &x, &y, &w, &h))
+		return 0;
 	const uint16_t *src = (const uint16_t *)p;
 	for (int row = 0; row < h; row++)
 	{
@@ -245,7 +267,8 @@ extern "C" int LoadImage(RECT *rect, u_long *p)
 extern "C" int StoreImage(RECT *rect, u_long *p)
 {
 	int x, y, w, h;
-	maskRect(rect, &x, &y, &w, &h);
+	if (!libgpuXferRect(rect, &x, &y, &w, &h))
+		return 0;
 	uint16_t *dst = (uint16_t *)p;
 	for (int row = 0; row < h; row++)
 	{
@@ -256,8 +279,13 @@ extern "C" int StoreImage(RECT *rect, u_long *p)
 	return 0;
 }
 
+/*	libgpu's MoveImage (module SYS, 0x6e8) refuses a zero width or height
+	with -1 and otherwise hands the rect to GP0(80h) unclamped, so the raw
+	rule applies to everything else.  */
 extern "C" int MoveImage(RECT *rect, int x, int y)
 {
+	if (rect->w == 0 || rect->h == 0)
+		return -1;
 	int sx, sy, w, h;
 	maskRect(rect, &sx, &sy, &w, &h);
 	x &= 0x3FF;
