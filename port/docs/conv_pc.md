@@ -968,8 +968,10 @@ against a constant picture and RamUsed and requires the desync.
 
 ### Replay judging (issue #67)
 
-No game-source change: `cd/cd.cpp`, `cd/xa_stream.cpp`, `host/args.cpp`,
-`host/input.cpp`, `host/pump.cpp`, the tests and the docs.
+Shim-side: `cd/cd.cpp`, `cd/xa_stream.cpp`, `host/args.cpp`,
+`host/input.cpp`, `host/pump.cpp`, the tests and the docs.  Game source:
+entries #56 (the pause-menu report) and #57 (the zeroed save buffer), both
+inside `!PSX_MIPS_ASM` arms with a `#line` re-sync.
 
 **Loads cost emulated vblanks.**  `CdRead` still copies its sectors at
 once; what changed is how long `CdReadSync` then reports "still reading".
@@ -1045,6 +1047,15 @@ pass 200.  `pump_test` checks both modes, with owed wall time, and the
 spin rule.  The `# pace` mismatch warning is gone: there is nothing left
 for it to warn about.
 
+**Why epochs stay absolute.**  #67 held a fallback in reserve: anchor each
+`# epoch` to the latest scene open (`Scene#n+off`, like the pad entries),
+so a replay that opened scenes late would still be judged at the right
+frame.  It was not needed.  With loads costed in emulated vblanks and
+vblanks fired only in waits, a replay opens every scene on the vblank the
+recording did, capped or uncapped, so an absolute epoch lands on the same
+frame; a drift is now itself a divergence, and anchoring would have hidden
+it.  The grammar, and every recording made so far, stay as they were.
+
 **Recordings name their build.**  A DEBUG heap block carries guard words
 (`mem/memory.h` `MEM_BLOCK_HDR`), so FINAL's RamUsed runs about 3.3 KB
 below DEBUG's with identical screens (916,472 against 919,768 at vblank
@@ -1063,6 +1074,44 @@ now names what differed, and prints `ram` even when it is not compared:
 `replay_test` flips `# build` on a copy with a doctored `ram` (replays
 clean), doctors `ram` alone (caught) and writes `# build release`
 (refused, exit 13).
+
+**The pause menu across builds.**  The first two sessions recorded on a #67
+zip - each a new game, 1-1 and a save, one on the 32-bit and one on the
+64-bit DEBUG exe, each with a pause of about nine seconds -
+replayed frame-identical on both DEBUG exes, but both FINAL exes failed
+the `crc` of the two epochs taken under the pause.  DEBUG's pause menu has
+one more line, "Invincible SpongeBob" (`game/pause.cpp`, `__VERSION_DEBUG__`),
+so the picture differs for exactly as long as the menu is up (539 and 510
+frames) while the game is in the same state (`rng` matched).  The game
+now reports every frame it renders (`Port_PauseMenuDrawn`, entry #56), and
+a replay on the other build type does not compare `crc` while the menu was
+in any of the last three frames built: the frame on screen at an epoch was
+built up to two frames before the latest.  In both sessions that window
+covered every differing frame, with one vblank to spare at each end.  A
+scene open forgets the menu, `rng` is still compared, and a replay on the
+same build type compares `crc` under the menu as before.  The desync line
+says `crc ... (not compared: cross-build pause menu)` when it applies.
+What this cannot excuse is a DEBUG-only *action*: turning Invincible
+SpongeBob on in that menu, or R2 in a level (`game.cpp`, DEBUG skips to the
+next level), changes the game itself, and a FINAL replay rightly reports it.
+`replay_test` doctors an epoch's `crc` and reports the menu around it: on
+the other build type it replays clean with the menu drawn up to two frames
+before the latest, and is caught three frames after, with no menu, after a
+scene open, and on the same build type.
+
+**Saves carry no stale heap.**  The same sessions' cards differed between
+DEBUG and FINAL, and between the two FINALs, in 7,375 bytes that no one
+reads.  `CSaveLoadDatabase::allocateBuffer` rounds the save buffer up to a
+whole 8 KB card block but fills only the header, the data and the MD5 at
+the end (0x331 bytes of content), so the rest of the block went to the
+card as whatever `MemAlloc` handed back: `0x3D` on DEBUG
+(`MEM_FILL_PATTERN`, `mem/memory.cpp`), old heap contents on FINAL,
+different again on x64 - and the MD5 covers them, so it differed too.
+Entry #57 zeroes the buffer on PC: the four exes now write byte-identical
+cards, the directory and save data unchanged.  A card saved by an older
+build still loads (its MD5 covers the bytes it has), but its tail no
+longer matches a replay's, so a session recorded before the change is
+judged on the save data rather than on the whole card.
 
 ## Game-source changes (keyboard prompt icons, issue #43)
 
@@ -1200,6 +1249,28 @@ says "Press the **X button** to continue" (the memory-card result screens) and
 make the PS1 build wrong; saying it correctly on each needs device-aware text
 (a runtime substitution in the shim, or a second string set), which is a
 larger change than an icon swap and is left for its own issue.
+
+## Game-source changes (replay judging, issue #67)
+
+Both inside `#if !defined(PSX_MIPS_ASM)` arms whose `#else` re-syncs the
+PS1 build's `__LINE__` with `#line`, so `Spongey.cpe` is unchanged; see
+"Replay judging (issue #67)" for the evidence.
+
+56. **`source/game/game.cpp` (`CGameScene::render_playing`), `source/system/asmport.h`** -
+    after `m_pauseMenu->render()`, `Port_PauseMenuDrawn(m_pauseMenu->isActive())`
+    tells the shim, once per rendered frame, whether the pause menu is in
+    it.  DEBUG draws that menu with one more line, so a replay on the other
+    build type does not compare an epoch's display CRC while the menu is
+    among the last three frames built (`host/input.cpp crcSkipped`).  At
+    render rather than in `think_playing`: that is the frame the CRC will
+    see, and `think_playing` can run three times in one frame (a teleport).
+
+57. **`source/memcard/saveload.cpp` (`CSaveLoadDatabase::allocateBuffer`)** -
+    `memset(m_tempBuffer,0,m_bufferSize)` after the `MemAlloc`.  The buffer
+    is a whole 8 KB card block of which the save fills 0x331 bytes; the rest
+    went to the card, and into its MD5, as stale heap bytes that differ
+    between DEBUG, FINAL and x64.  Zeroed, every exe writes the same card.
+    The PlayStation build keeps writing its heap (retail behaviour).
 
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 

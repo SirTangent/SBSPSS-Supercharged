@@ -371,6 +371,12 @@ void CGameScene::render_playing()
 		}
 
 		m_pauseMenu->render();
+#if !defined(PSX_MIPS_ASM)
+		// PC: the DEBUG pause menu draws an extra line - a cross-build replay skips crc under it (conv_pc.md #56)
+		Port_PauseMenuDrawn(m_pauseMenu->isActive());
+#else
+#line 373	// keep the PS1 build's __LINE__ (ASSERTs below) byte-identical
+#endif
 		CConversation::render();
 		CThingManager::renderAllThings();
 

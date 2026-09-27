@@ -55,7 +55,9 @@
 	300 vblanks, a `# prompt` line whenever the prompt-icon device changes,
 	and a header: the exe's pointer size and build type (`# abi`, `# build`;
 	RamUsed differs across either, so a replay across them compares the CRC
-	and rng alone - issue #67 for the build), the seed when one was
+	and rng alone - issue #67 for the build - and across build types not
+	the CRC either while the pause menu, which DEBUG draws with one more
+	line, is on screen), the seed when one was
 	given (`# seed`, adopted by a replay that has no --seed; without one the
 	game seeds itself the same way every boot - host/seed.cpp) and
 	its pacing (`# pace capped|uncapped`, `# loads paced|instant`).  Capped
@@ -187,6 +189,36 @@ static const char *ramSkipped(void)
 		return "cross-ABI";
 	if (g_recordingBuild >= 0 && g_recordingBuild != thisBuildFinal())
 		return "cross-build";
+	return NULL;
+}
+
+/*	The DEBUG pause menu draws one line more than FINAL's ("Invincible
+	SpongeBob", game/pause.cpp), so while it is up a DEBUG and a FINAL run
+	show different pictures of the same game state, and an epoch taken under
+	it cannot match on crc across build types.  The game reports every frame
+	it renders (Port_PauseMenuDrawn, game/game.cpp); a cross-build replay
+	does not compare crc while the menu was drawn in any of the last three
+	frames built - the frame on screen at an epoch was built up to two
+	frames before the latest - and still compares rng, which a paused game
+	leaves alone.  A scene open forgets the menu.  */
+static unsigned			g_pauseDrawn;		/* bit n: the menu was in the frame built n frames ago */
+static unsigned long	g_pauseScene;		/* Port_LastSceneOpenVblank() at the latest report */
+
+extern "C" void Port_PauseMenuDrawn(int drawn)
+{
+	unsigned long scene = Port_LastSceneOpenVblank();
+	if (scene != g_pauseScene)
+		g_pauseDrawn = 0;
+	g_pauseScene = scene;
+	g_pauseDrawn = ((g_pauseDrawn << 1) | (drawn != 0)) & 7;
+}
+
+/*	why an epoch's crc is not compared, or NULL when it is  */
+static const char *crcSkipped(void)
+{
+	if (g_recordingBuild >= 0 && g_recordingBuild != thisBuildFinal() &&
+		g_pauseDrawn && g_pauseScene == Port_LastSceneOpenVblank())
+		return "cross-build pause menu";
 	return NULL;
 }
 /*	The rest of a recording's data lines (issue #58).  Older exes read
@@ -456,7 +488,8 @@ static void padFileParse(void)
 		fprintf(stderr, "[input] cross-ABI recording (ptr=%d, this exe %d): epoch ram not compared\n",
 				g_recordingPtr, (int)sizeof(void *));
 	if (g_epochCount && g_recordingBuild >= 0 && g_recordingBuild != thisBuildFinal())
-		fprintf(stderr, "[input] cross-build recording (%s, this exe %s): epoch ram not compared\n",
+		fprintf(stderr, "[input] cross-build recording (%s, this exe %s): epoch ram not compared, "
+						"nor crc while the pause menu is up\n",
 				g_recordingBuild ? "final" : "debug", thisBuildFinal() ? "final" : "debug");
 	/*	Capped against uncapped needs no word: both see the same emulated
 		time (host/pump.cpp, issue #67).  Instant loads against paced ones
@@ -573,13 +606,14 @@ static void epochCheck(unsigned long vblank)
 		uint32_t      crc = GPU_DisplayCRC32(NULL);
 		uint32_t      rng = (ep.hasRng && g->randomSeed) ? (uint32_t)*g->randomSeed : ep.rng;
 		const char   *skip   = ramSkipped();		/* see g_recordingPtr, g_recordingBuild */
+		const char   *crcSkip = crcSkipped();	/* see g_pauseDrawn */
 		const int		badRam = !skip && ram != ep.ram;
-		const int		badCrc = crc != ep.crc;
+		const int		badCrc = !crcSkip && crc != ep.crc;
 		const int		badRng = rng != ep.rng;
 		if (badRam || badCrc || badRng)
 		{
-			/*	names what differed, and prints ram even when it is not
-				compared, so a cross-build heap difference is still visible  */
+			/*	names what differed, and prints ram and crc even when they are
+				not compared, so a cross-build difference is still visible  */
 			g_desyncs++;
 			fprintf(stderr, "[replay] desync at vblank %lu (line %d) on%s%s%s: ram %lu vs %lu",
 					vblank, ep.line, badRam ? " ram" : "", badCrc ? " crc" : "", badRng ? " rng" : "",
@@ -587,6 +621,8 @@ static void epochCheck(unsigned long vblank)
 			if (skip)
 				fprintf(stderr, " (not compared: %s)", skip);
 			fprintf(stderr, ", crc %08X vs %08X", crc, ep.crc);
+			if (crcSkip)
+				fprintf(stderr, " (not compared: %s)", crcSkip);
 			if (ep.hasRng)				/* an older recording's epoch has none to compare */
 				fprintf(stderr, ", rng %08X vs %08X", rng, ep.rng);
 			fputc('\n', stderr);

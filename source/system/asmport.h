@@ -66,6 +66,7 @@ int		Port_AutoplaySpatulasAll(void);
 int		Port_AutoplayLives(void);
 int		Port_AutoplayContinues(void);
 int		Port_AutoplayDie(int playerIsDead);
+void	Port_PauseMenuDrawn(int drawn);							/* game/game.cpp (host/input.cpp, issue #67) */
 
 /*	Button prompts (issue #43).  Every "press this to do that" line in the
 	game draws a pad icon beside it; on PC the PS1 glyph is a lie for a

@@ -530,6 +530,12 @@ void CSaveLoadDatabase::allocateBuffer()
 	m_bufferSize=MC_HEADER_SIZE+sizeof(m_dataBuffer)+MD5_CHECKSUM_SIZE;
 	m_bufferSize=((m_bufferSize/MemCard::BLOCKSIZE)+1)*MemCard::BLOCKSIZE;
 	m_tempBuffer=(unsigned char*)MemAlloc(m_bufferSize,"MEMCARD");
+#if !defined(PSX_MIPS_ASM)
+	// PC: the block past the save data went to the card as stale heap bytes, different per build (conv_pc.md #57)
+	memset(m_tempBuffer,0,m_bufferSize);
+#else
+#line 532	// keep the PS1 build's __LINE__ (ASSERTs below) byte-identical
+#endif
 }
 
 

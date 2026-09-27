@@ -30,7 +30,10 @@
 	three copies of A about the build type (issue #67): `# build` flipped
 	and the epoch's ram doctored ("replay": ram is not compared across
 	builds), the ram doctored alone ("expect-desync": it is compared on the
-	same build) and an unknown `# build` word (refused at boot, exit 13).  The
+	same build) and an unknown `# build` word (refused at boot, exit 13), and
+	last a doctored crc under a reported pause menu, which only a replay on
+	the other build type may overlook, and only while the menu is recent and
+	the scene has not changed (six children).  The
 	children step vblanks with VSync(0) under SBSP_UNCAPPED=1,
 	so Port_VBlankCount advances and Host_VBlank calls Port_InputFrame exactly
 	as in the game, and open scenes through Port_SceneEvent at chosen counts.
@@ -58,6 +61,7 @@ extern "C" int	Port_InputPadActive(void);
 extern "C" int	Port_PadFileSeed(long *seed);
 extern "C" int	Port_BootSeed(long *seed);			/* host/seed.cpp */
 extern "C" void	Port_SeedExplicit(long seed);
+extern "C" void	Port_PauseMenuDrawn(int drawn);	/* host/input.cpp, from game.cpp */
 extern "C" void	PadInitDirect(unsigned char *pad1, unsigned char *pad2);
 extern "C" int	VSync(int mode);
 extern char		INF_Version[];				/* api/info.cpp: "DEBUG" or "FINAL", per tree */
@@ -159,6 +163,23 @@ static SDL_Joystick *attachPad(void)
 	Game#1+1.  */
 enum { RUN_VBLANKS = 320 };
 
+/*	The pause menu (issue #67), as game.cpp reports it: once per frame the
+	Game scene renders, here after each vblank's VSync.  REPLAY_TEST_PAUSE
+	"<first>-<last>" draws it in the frames rendered after those vblanks;
+	REPLAY_TEST_MAP_AT <vb> opens a "Map" scene after that vblank, which
+	has no pause menu and so reports nothing from then on.  */
+static unsigned long g_pauseFirst = 1, g_pauseLast = 0, g_mapAt = 0;
+
+static void readPauseEnv(void)
+{
+	const char *p = std::getenv("REPLAY_TEST_PAUSE");
+	if (p && *p)
+		std::sscanf(p, "%lu-%lu", &g_pauseFirst, &g_pauseLast);
+	const char *m = std::getenv("REPLAY_TEST_MAP_AT");
+	if (m && *m)
+		g_mapAt = std::strtoul(m, NULL, 10);
+}
+
 static void drive(SDL_Joystick *joy, bool replay)
 {
 	static unsigned char pad0[34], pad1[34];
@@ -216,6 +237,10 @@ static void drive(SDL_Joystick *joy, bool replay)
 			Port_SceneEvent("FrontEnd");
 		if (vb == 50)
 			Port_SceneEvent("Game");
+		if (g_mapAt && vb == g_mapAt)
+			Port_SceneEvent("Map");
+		if (vb >= 50 && (!g_mapAt || vb < g_mapAt))
+			Port_PauseMenuDrawn(vb >= g_pauseFirst && vb <= g_pauseLast);
 		g_fakeRng = (long)(0x015a4e35u * (unsigned long)g_fakeRng + 1u);	/* one draw a frame */
 	}
 }
@@ -229,6 +254,7 @@ static int childMain(Mode mode)
 	if (!sdlUp())
 		return 1;
 	setEnv("SBSP_UNCAPPED", "1");			/* before the first VSync: Port_Uncapped caches */
+	readPauseEnv();
 	SDL_Joystick *joy = attachPad();
 	if (!joy)
 		return 1;
@@ -533,6 +559,68 @@ int main(int argc, char **argv)
 	rc = spawnSelf(exe, "replay");
 	check(rc == 13, "an unknown `# build` word is refused at boot (exit 13)");
 
+	/*	8. the pause menu (issue #67): DEBUG draws one more line in it, so
+		across build types an epoch's crc is not compared while the menu is
+		in any of the last three frames rendered - and only then.  A copy
+		with the epoch at 300's crc doctored stands in for that picture.  */
+	char xcrc[MAX_PATH + 48], scrc[MAX_PATH + 48];
+	std::snprintf(xcrc, sizeof(xcrc), "%ssbsp_replay_test_%lu_xcrc.pad", tmp, pid);
+	std::snprintf(scrc, sizeof(scrc), "%ssbsp_replay_test_%lu_crc.pad", tmp, pid);
+	da = slurp(a, &na);
+	if (da)
+	{
+		std::string s(da, na);
+		const std::string mine  = std::string("# build ") + thisBuild();
+		const std::string other = std::string("# build ") + (std::strcmp(thisBuild(), "final") ? "final" : "debug");
+		const size_t bl = s.find(mine);
+		const size_t cl = s.find(" crc=", s.find("# epoch 300 "));
+		check(bl != std::string::npos && cl != std::string::npos,
+			  "A carries this build's `# build` line and an epoch at 300 with a crc");
+		if (bl != std::string::npos && cl != std::string::npos)
+		{
+			std::string same = s;						/* same length edits: offsets stay valid */
+			same.replace(cl + 5, 8, s.compare(cl + 5, 8, "DEADBEEF") ? "DEADBEEF" : "FEEDFACE");
+			std::string cross = same;
+			cross.replace(bl, mine.size(), other);
+			for (const auto &out : { std::make_pair(xcrc, &cross), std::make_pair(scrc, &same) })
+			{
+				FILE *f = std::fopen(out.first, "wb");
+				if (f)
+				{
+					std::fwrite(out.second->data(), 1, out.second->size(), f);
+					std::fclose(f);
+				}
+			}
+		}
+	}
+	std::free(da);
+	struct PauseCase { const char *file, *pause, *mapAt, *mode, *what; };
+	const PauseCase pauseCases[] =
+	{
+		{ xcrc, "290-299", "",    "replay",
+		  "other build, the pause menu up at the epoch: crc is not compared" },
+		{ xcrc, "290-297", "",    "replay",
+		  "other build, the menu last drawn two frames before the latest: still not compared" },
+		{ xcrc, "290-296", "",    "expect-desync",
+		  "other build, the menu gone for three frames: crc is compared again" },
+		{ xcrc, "",        "",    "expect-desync",
+		  "other build, no pause menu: crc is compared" },
+		{ xcrc, "290-298", "299", "expect-desync",
+		  "other build, a scene opened since the menu was drawn: crc is compared" },
+		{ scrc, "290-299", "",    "expect-desync",
+		  "same build, the pause menu up: crc is compared" },
+	};
+	for (const PauseCase &pc : pauseCases)
+	{
+		setEnv("SBSP_PAD_FILE", pc.file);
+		setEnv("REPLAY_TEST_PAUSE", pc.pause);
+		setEnv("REPLAY_TEST_MAP_AT", pc.mapAt);
+		rc = spawnSelf(exe, pc.mode);
+		check(rc == 0, pc.what);
+	}
+	setEnv("REPLAY_TEST_PAUSE", "");
+	setEnv("REPLAY_TEST_MAP_AT", "");
+
 	std::remove(a);
 	std::remove(b);
 	std::remove(c);
@@ -541,6 +629,8 @@ int main(int argc, char **argv)
 	std::remove(xbuild);
 	std::remove(ramd);
 	std::remove(badb);
+	std::remove(xcrc);
+	std::remove(scrc);
 
 	if (g_failures)
 	{
