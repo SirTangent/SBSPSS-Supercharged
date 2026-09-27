@@ -184,6 +184,33 @@ int main(int argc, char **argv)
 	/*	4. missing file  */
 	check(Port_IniLoad("ini_test_tmp/missing.ini") == -1, "missing file reports -1");
 
+	/*	4b. a key named twice (issue #62): the later line wins, counted once;
+		a variable set before the load still beats both lines; a later empty
+		value puts the key back to its built-in default  */
+	clearAll();
+	writeFile("ini_test_tmp/dup.ini",
+		"key_cross=Z\n"
+		"volume=80\n"
+		"key_cross=Space\n");
+	check(Port_IniLoad("ini_test_tmp/dup.ini") == 2, "dup.ini: key_cross and volume, each counted once");
+	check(envIs("SBSP_KEY_CROSS", "Space"), "a repeated key takes its later value");
+
+	clearAll();
+	_putenv("SBSP_KEY_CROSS=Return");			/* "an argument or the environment" */
+	check(Port_IniLoad("ini_test_tmp/dup.ini") == 1, "dup.ini with key_cross preset: only volume applied");
+	check(envIs("SBSP_KEY_CROSS", "Return"), "the environment beats every occurrence of a repeated key");
+
+	clearAll();
+	writeFile("ini_test_tmp/reset.ini",
+		"pad_deadzone=30\n"
+		"scale=integer\n"
+		"pad_deadzone=\n");
+	check(Port_IniLoad("ini_test_tmp/reset.ini") == 1, "reset.ini: only scale left applied");
+	check(envIs("SBSP_PAD_DEADZONE", NULL), "a later empty value resets the key to its default");
+	check(envIs("SBSP_SCALE", "integer"), "and leaves the other keys alone");
+	remove("ini_test_tmp/dup.ini");
+	remove("ini_test_tmp/reset.ini");
+
 	/*	5. the defaults round-trip  */
 	clearAll();
 	check(Port_IniWriteDefaults("ini_test_tmp/defaults.ini") == 1, "defaults written");
