@@ -222,9 +222,17 @@ extern "C" void Port_PauseMenuDrawn(int drawn)
 	g_pauseDrawn = ((g_pauseDrawn << 1) | (drawn != 0)) & 7;
 }
 
+/*	Renderer revision of the exe that made the recording (`# render N`,
+	written since issue #60; absent = 0).  When it is not this exe's
+	GPU_RENDER_REVISION the same game state draws a different picture, so
+	no epoch's crc is compared - ram and rng still are.  */
+static int				g_recordingRender = 0;
+
 /*	why an epoch's crc is not compared, or NULL when it is  */
 static const char *crcSkipped(void)
 {
+	if (g_recordingRender != GPU_RENDER_REVISION)
+		return "renderer revision";
 	if (g_recordingBuild >= 0 && g_recordingBuild != thisBuildFinal() &&
 		g_pauseDrawn && g_pauseScene == Port_LastSceneOpenVblank())
 		return "cross-build pause menu";
@@ -410,7 +418,7 @@ static void padFileParse(void)
 			PromptMark	pm = {};
 			BareMark	bm = {};
 			char		word[16];
-			int			ptr;
+			int			ptr, render;
 			int			nep = sscanf(s, "# epoch %lu ram=%lu crc=%x rng=%x",
 									 &ep.vblank, &ep.ram, &ep.crc, &ep.rng);
 			if (nep >= 3)
@@ -444,6 +452,15 @@ static void padFileParse(void)
 					fclose(f);
 					padFileFail(path, line, "bad `# build' (expected debug or final)");
 				}
+			}
+			else if (sscanf(s, "# render %d", &render) == 1)
+			{
+				if (render < 0)
+				{
+					fclose(f);
+					padFileFail(path, line, "bad `# render' (expected a revision number)");
+				}
+				g_recordingRender = render;
 			}
 			else if (sscanf(s, "# seed %ld", &g_recordingSeed) == 1)
 				g_haveSeed = 1;
@@ -528,6 +545,9 @@ static void padFileParse(void)
 		fprintf(stderr, "[input] cross-build recording (%s, this exe %s): epoch ram not compared, "
 						"nor crc while the pause menu is up\n",
 				g_recordingBuild ? "final" : "debug", thisBuildFinal() ? "final" : "debug");
+	if (g_epochCount && g_recordingRender != GPU_RENDER_REVISION)
+		fprintf(stderr, "[input] recording's renderer revision is %d, this exe's %d: "
+						"epoch crc not compared\n", g_recordingRender, GPU_RENDER_REVISION);
 	/*	Capped against uncapped needs no word: a replay fires the recording's
 		vblanks where it did, `# bare` ones included (host/pump.cpp, issue
 		#67).  Instant loads against paced ones
@@ -749,6 +769,7 @@ static void recordFrame(unsigned long vblank, unsigned mask)
 							   "CIRCLE=0020 SQUARE=0080 TRIANGLE=0010 L1=0004 R1=0008 L2=0001 R2=0002)\n"
 							   "# abi ptr=%d\n", (int)sizeof(void *));
 				fprintf(g_rec, "# build %s\n", thisBuildFinal() ? "final" : "debug");
+				fprintf(g_rec, "# render %d\n", GPU_RENDER_REVISION);
 				/*	host/seed.cpp decides now if the game has not asked yet.  No
 					seed given: the game seeds itself, identically every boot,
 					and so will the replay - there is nothing to write down.  */

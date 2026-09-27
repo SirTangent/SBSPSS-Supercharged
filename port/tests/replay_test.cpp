@@ -31,9 +31,12 @@
 	and the epoch's ram doctored ("replay": ram is not compared across
 	builds), the ram doctored alone ("expect-desync": it is compared on the
 	same build) and an unknown `# build` word (refused at boot, exit 13), and
-	last a doctored crc under a reported pause menu, which only a replay on
+	a doctored crc under a reported pause menu, which only a replay on
 	the other build type may overlook, and only while the menu is recent and
-	the scene has not changed (six children).  The
+	the scene has not changed (six children), and last the renderer revision
+	(issue #60): a recording without `# render`, or naming another revision,
+	replays clean with its crc doctored but is still caught on a doctored ram
+	or rng, and a negative revision is refused at boot (five children).  The
 	children step vblanks with VSync(0) under SBSP_UNCAPPED=1,
 	so Port_VBlankCount advances and Host_VBlank calls Port_InputFrame exactly
 	as in the game, and open scenes through Port_SceneEvent at chosen counts.
@@ -53,6 +56,7 @@
 #include <string>
 
 #include "host/pump.h"		/* Port_VBlankCount */
+#include "gpu/gpu_core.h"	/* GPU_RENDER_REVISION - the `# render` line */
 #include "host/diag.h"		/* Port_SceneEvent, Port_InputAtExit */
 
 extern unsigned char *Port_PadBuffer[2];		/* pads_shim.cpp */
@@ -302,14 +306,16 @@ static char *slurp(const char *path, size_t *n)
 static void checkRecording(const char *path)
 {
 	struct Want { const char *text; bool prefix; };
-	char abi[32], build[32];
+	char abi[32], build[32], render[32];
 	std::snprintf(abi, sizeof(abi), "# abi ptr=%d", (int)sizeof(void *));
 	std::snprintf(build, sizeof(build), "# build %s", thisBuild());
+	std::snprintf(render, sizeof(render), "# render %d", GPU_RENDER_REVISION);
 	const Want want[] =
 	{
 		{ "# recorded by sbsp --record-pad", true  },
 		{ abi,                              false },
 		{ build,                            false },	/* issue #67 */
+		{ render,                           false },	/* issue #60 */
 		{ "# seed 4242",                    false },	/* the recording was given one */
 		{ "# pace uncapped",                false },
 		{ "# loads paced",                  false },	/* uncapped no longer means instant loads (#67) */
@@ -620,6 +626,74 @@ int main(int argc, char **argv)
 	}
 	setEnv("REPLAY_TEST_PAUSE", "");
 	setEnv("REPLAY_TEST_MAP_AT", "");
+
+	/*	9. the renderer revision (issue #60): a fidelity fix redraws the same
+		game state differently, so a recording made before it - no `# render`
+		line - or by another revision does not compare crc; ram and rng still
+		are.  A doctored crc stands in for the changed picture.  */
+	struct RenderCase { const char *tag, *renderLine; char field; const char *mode, *what; };
+	char other[32];
+	std::snprintf(other, sizeof(other), "# render %d", GPU_RENDER_REVISION + 1);
+	const RenderCase renderCases[] =
+	{
+		{ "rnone",  NULL,          'c', "replay",
+		  "no `# render` line (an older recording): crc is not compared" },
+		{ "rother", other,         'c', "replay",
+		  "another renderer revision: crc is not compared" },
+		{ "rram",   NULL,          'r', "expect-desync",
+		  "no `# render` line: a doctored ram is still caught" },
+		{ "rrng",   NULL,          'n', "expect-desync",
+		  "no `# render` line: a doctored rng is still caught" },
+		{ "rbad",   "# render -1", 0,   "replay", NULL },
+	};
+	char renderFiles[5][MAX_PATH + 48];
+	int  nRender = 0;
+	for (const RenderCase &rc9 : renderCases)
+	{
+		char *path = renderFiles[nRender++];
+		std::snprintf(path, MAX_PATH + 48, "%ssbsp_replay_test_%lu_%s.pad", tmp, pid, rc9.tag);
+		da = slurp(a, &na);
+		if (!da)
+			continue;
+		std::string s(da, na);
+		std::free(da);
+		char mine[32];
+		std::snprintf(mine, sizeof(mine), "# render %d", GPU_RENDER_REVISION);
+		const size_t ep = s.find("# epoch 300 ");
+		const size_t rl = s.find(mine);
+		check(rl != std::string::npos && ep != std::string::npos,
+			  "A carries this exe's `# render` line and an epoch at 300");
+		if (rl == std::string::npos || ep == std::string::npos)
+			continue;
+		const char *key = rc9.field == 'c' ? " crc=" : rc9.field == 'r' ? " ram=" : " rng=";
+		if (rc9.field)
+		{
+			const size_t at = s.find(key, ep) + 5;
+			if (rc9.field == 'r')
+				s.replace(at, 1, "1");					/* ram=0 -> ram=1 */
+			else
+				s.replace(at, 8, s.compare(at, 8, "DEADBEEF") ? "DEADBEEF" : "FEEDFACE");
+		}
+		const size_t eol = s.find('\n', rl);
+		if (rc9.renderLine)
+			s.replace(rl, std::strlen(mine), rc9.renderLine);
+		else
+			s.erase(rl, eol + 1 - rl);
+		FILE *f = std::fopen(path, "wb");
+		if (f)
+		{
+			std::fwrite(s.data(), 1, s.size(), f);
+			std::fclose(f);
+		}
+		setEnv("SBSP_PAD_FILE", path);
+		rc = spawnSelf(exe, rc9.mode);
+		if (rc9.what)
+			check(rc == 0, rc9.what);
+		else
+			check(rc == 13, "a negative `# render` is refused at boot (exit 13)");
+	}
+	for (int i = 0; i < nRender; i++)
+		std::remove(renderFiles[i]);
 
 	std::remove(a);
 	std::remove(b);

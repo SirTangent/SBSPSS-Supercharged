@@ -47,6 +47,17 @@ struct GpuState
 
 extern GpuState g_gpu;
 
+/*	The software renderer's pixel revision.  Bump it whenever a change moves
+	displayed pixels on purpose (a fidelity fix, not a refactor): --record-pad
+	writes it as `# render N`, and a replay whose recording names another
+	revision - or none, as every recording before the line existed does -
+	does not compare the display CRC at its epochs, only ram and rng, since
+	the same game state now draws a different picture (host/input.cpp).
+	  0  the implicit revision of recordings without the line
+	  1  issue #60: polygon tpage attributes keep the E1 dither bit; the
+	     MDEC IDCT saturates to signed 8 bits  */
+#define GPU_RENDER_REVISION	1
+
 /* gp0.cpp: execute `count` GP0 words at `words` against g_gpu/g_vram */
 void GPU_ExecWords(const uint32_t *words, int count);
 
