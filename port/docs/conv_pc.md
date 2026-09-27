@@ -1388,6 +1388,111 @@ interleave slot at both rates through `Port_CdVblank` and
 The FMV/STR audio ring (`cd/str_stream.cpp`) has the same vblank
 quantization and is not changed here; it is left for a follow-up.
 
+### Video accuracy and bounds (issues #60, #28, #29)
+
+Shim-only: `gpu/vram.cpp`, `gte/gte_core.cpp`, `mdec/mdec.cpp`,
+`mdec/vlc3.cpp`, `cd/str_stream.{h,cpp}` and their tests.  No game source,
+and no pixel the game draws changes: `run_tier.py --tier1 --tier2
+--compare-frames` against the parent commit is identical, and the FMV CRC
+goldens are unchanged.
+
+**What LIBGPU.LIB does (module SYS, disassembled).**  The library calls
+decide what reaches the GP0 command before the command's own masking
+applies; issue #26 found this for ClearImage's clamp, and the rest of the
+module follows the same pattern.
+- `LoadImage` / `StoreImage` (executors 0x1b44, 0x1d80) clamp w to
+  [0,1024] and h to [0,512] and size the DMA from w*h, so a zero-size rect
+  moves nothing.  The shim ran every rect through the raw GP0 rule, where
+  a 0 means the full 1024 or 512, so `StoreImage` of a 0-wide rect (e.g.
+  animtex.cpp with a 4bpp frame under 4 pixels wide) wrote 1024*h
+  halfwords into a zero-byte block.
+- `MoveImage` (0x6e8) returns -1 when w or h is 0 and otherwise passes the
+  rect to GP0(80h) unclamped, so the raw rule still applies there.
+- `ClearImage` (.text 0x500) and `ClearImage2` (0x590) queue one executor
+  (0x1914).  It clamps w to [0,1023] and h to [0,511], then:
+  - if x and w are both 64-aligned: E6=0, E1 (the current mode, from
+    GPUSTAT & 0x7FF), then GP0(02h) - the raw fill, which wraps at the
+    VRAM edge;
+  - otherwise: E3=0, E4=FFFFFF, E5=0, E6=0, E1, a GP0(60h) opaque
+    monochrome rect, then E3/E4/E5 restored from the library's copy.
+  So the 60h draw is not clipped by the game's draw env and ignores the
+  mask bits.  Issue #28 assumed the opposite (that an unaligned clear
+  "fills through the draw-env clip"); the disassembly overturns that.
+  The fill is exact and undithered, with the coordinates sign-extended to
+  11 bits like any GP0 vertex, and it is clipped only at the VRAM edge.
+  No GP0 state survives the call.
+- `ClearImage2` sets bit 31 of the colour word, which only sets E1 bit 10
+  (dfe) for the fill.  The shim ignores dfe (see `PutDrawEnv`), so
+  ClearImage2 draws ClearImage's pixels.  It had no definition at all, so
+  a game TU that called it failed at link time (#29).
+- `PutDrawEnv`'s isbg clear comes from the same packet builder (0x1470):
+  the same clamp and 02h/60h split, emitted with the env's clip and
+  offset in force and the offset compensated, so its 60h form clips to
+  the env's clip rect.
+
+**The shim now.**  `libgpuFill` in vram.cpp is that executor, shared by
+ClearImage, ClearImage2 and the isbg clear.  The aligned case is plain
+`Raster_FillRect15`, and it WRAPS at the right edge like the hardware (the
+old code clipped every clear).  The unaligned case fills the exact rect
+clipped to the VRAM edge (or the env's clip, for isbg).  The one-shot
+"not 64-aligned" log is gone.  Every game caller lands on the same pixels
+as before:
+- fmv.cpp's {0,0,512,512} and {0,0,320,480}, ClearVRam's {512,0,512,512}
+  and its 64-wide stripes, and the 512-wide isbg clears are aligned (02h)
+  and never reach the edge;
+- actor.cpp's cache wipe {512,256,2048,254} clamps to w=1023, which is not
+  aligned, so it is a 60h draw that stops at the right edge.  The green
+  cache marker still never wraps into the framebuffer columns (the #26
+  loading-screen regression).
+
+**GTE shifts.**  `gte_core.cpp` left-shifted possibly negative signed
+values: SY into SXY2, the 44-bit MAC sign-extension, TR/CV/FC/IR << 12 and
+MAC << sf.  That is undefined before C++20, and the game's dialect is
+gnu++98.  `shl64()` shifts the unsigned bit pattern instead, and SXY packs
+`(uint32_t)y << 16`.  The bits are identical on every compiler we build
+with; `gte_test` is unchanged.
+
+**MDEC and BS bounds (disc data).**
+- `DecDCTout` gets its size from fmv.cpp as 24*height/2 words, with the
+  height taken from the STR header.  A corrupt height of 1607 or more
+  overran the 77,120-byte PlaybackBuffer, zero fill included.  One call
+  now writes at most a full-height 16-pixel 24bpp slice (16*3*512 =
+  24,576 bytes), and a size <= 0 writes nothing.  The callback still
+  fires.  The game asks for 11,520 bytes a slice.  `vlc3_test` and
+  `fmv_pipeline_test` used to take a whole frame in one call; they now
+  read it in fmv.cpp's 16-pixel columns (same bytes, same CRCs).
+- The BS bit reader was bounded at 64KB from the frame start.  A frame
+  handed out late in the game's 64KB StSetRing buffer then let a stream
+  with no end code read up to 64KB past the ring.
+  `StrStream_FrameEnd(frame)` returns the end of the frame's own ring
+  region (regions are contiguous - `allocRegion`), and vlc3 stops there.
+  A buffer the stream engine did not hand out (the unit tests' hand-built
+  frames) keeps the old 32768-halfword bound.
+
+**Tests.**
+- `gpu_test`:
+  - zero-size LoadImage/StoreImage leave VRAM and the buffer intact;
+  - w=2048 stores exactly 1024 halfwords;
+  - MoveImage w=0 returns -1 and moves nothing;
+  - the 02h/60h split: unaligned x fills exactly 520..535, w=100 is not
+    rounded to 112, an offset/clipped env is ignored and left as it was,
+    the right edge clips (60h) or wraps (02h), and isbg clears exactly its
+    clip;
+  - ClearImage2 draws ClearImage's pixels on five shapes;
+  - the cache-wipe row checks now sample a column inside the rect (#61
+    row 56);
+  - the 1023x511 G3 is compared pixel for pixel, dither off, against an
+    int64 floor(255 * weight / area) reference (#61 row 57), where it used
+    to check only the vertex pixel.
+- `mdec_test`: DecDCTout of 1M words into a buffer ending at a guard page.
+- `str_test`:
+  - StrStream_FrameEnd for 3- and 9-chunk frames, a non-start pointer, a
+    freed frame and an unset ring;
+  - a BS v2 frame with no end code whose ring region ends exactly at a
+    PAGE_NOACCESS page decodes to its last whole block and stops.  It
+    lives in str_test rather than vlc3_test because the frame has to come
+    from the stream engine, and str_test has the synthetic disc.
+
 ## Game-source changes (keyboard prompt icons, issue #43)
 
 **The problem.**  Every "press this to do that" line in the game draws a pad
