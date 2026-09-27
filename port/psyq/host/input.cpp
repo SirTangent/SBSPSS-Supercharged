@@ -10,8 +10,11 @@
 	user-confirmed): arrows=D-pad, Z=Cross, X=Circle, A=Square, S=Triangle,
 	Enter=Start, RShift=Select, Q=L1, W=R1, E=L2, R=R2.  Sticks centred.
 	The first connected SDL gamepad ORs in on top (south/east/west/north =
-	Cross/Circle/Square/Triangle, triggers = L2/R2, sticks pass through).
-	Port 1 stays disconnected.
+	Cross/Circle/Square/Triangle, triggers = L2/R2, sticks pass through -
+	and the left stick past the game's own threshold also sets the D-pad
+	bits, see stickFold).  Port 1 stays disconnected.  When that pad goes
+	away, the next one still plugged in is adopted (SDL does not announce
+	it again).
 
 	Test tooling: SBSP_PAD_SCRIPT="vblank:HEXmask[,vblank:HEXmask...]"
 	injects buttons for automated runs.  Each entry applies from its vblank
@@ -26,7 +29,8 @@
 	    1500:0800                 absolute vblank
 	    Map#2+30:2000             30 vblanks after the 2nd open of "Map"
 	    FMA:INTRO#1+10:0800       (FMA scripts use the [scene] FMA:<name>)
-	    # epoch 3000 ram=123456 crc=89ABCDEF
+	    # epoch 3000 ram=123456 crc=89ABCDEF rng=0123ABCD
+	    # seed 12345   # pace capped|uncapped   # prompt 3000 pad|keys
 	A scene open releases every button: an entry is in force only if it
 	came due at or after the most recent scene open (for a scene-relative
 	entry that also means its anchor occurrence is the current scene).
@@ -36,11 +40,34 @@
 	the first scene from outliving its scene-relative release.  Within the
 	entries in force, the latest one that has come due wins.
 
-	The `# epoch` markers come from SBSP_RECORD_PAD=<path>, which writes
-	the applied mask in the scene-relative form plus one marker every 300
-	vblanks; replaying such a file re-checks them and reports "[replay]
-	desync".  A malformed line, a desync, or a scene reference the run
-	never reached (reported at exit) makes the process exit 13.
+	Either one makes the run SCRIPTED (issue #58): the live keyboard and
+	gamepad are ignored - mask, sticks and the prompt-icon device alike -
+	so the run, and whatever it records, is a function of the script and
+	of nothing else on the machine it happens to run on.  (args.cpp's loadIni
+	applies the same test and reads no exe-dir sbsp.ini for such a run;
+	Port_HarnessRun, host/crash.cpp, is the shell's wider predicate - it
+	adds --uncapped and --exit-after - and only stops defaults being written.)
+
+	The `#` data lines come from SBSP_RECORD_PAD=<path>, which writes the
+	applied mask in the scene-relative form - pressing again whatever is
+	still held when a scene opens, since the release rule above would let
+	go of it on replay - plus `# scene` markers, one `# epoch` marker every
+	300 vblanks, a `# prompt` line whenever the prompt-icon device changes,
+	and a header: the exe's pointer size (`# abi`), the seed when one was
+	given (`# seed`, adopted by a replay that has no --seed; without one the
+	game seeds itself the same way every boot - host/seed.cpp) and
+	its pacing (`# pace`; a mismatch is reported once, because load
+	durations then differ and every offset after a load drifts).  An epoch
+	carries RamUsed, the display CRC and the game's random-number state
+	(`rng`, s_randomSeed): a run that has drawn a different random number
+	has diverged even while every difference is still off screen, and five
+	seconds between epochs was long enough for a wrong-seed replay to show
+	a different frame 111 times and still match every epoch (issue #58).
+	`long` is 32 bits on both Windows ABIs, so rng, like crc, is compared
+	across them; an epoch without it (an older recording) skips it.  Replaying
+	such a file re-checks the epochs and reports "[replay] desync".  A
+	malformed line, a desync, or a scene reference the run never reached
+	(reported at exit) makes the process exit 13.
 */
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL.h>
@@ -51,6 +78,7 @@
 #include <stdint.h>
 
 #include "host/diag.h"
+#include "host/pump.h"			/* Port_Uncapped - the `# pace` header line */
 #include "gpu/gpu_core.h"
 #include "system/types.h"
 #include "system/asmport.h"		/* PORT_CAP_* - the prompt-icon contract */
@@ -61,8 +89,14 @@ extern unsigned char *Port_PadMotor[2];		/* pads_shim.cpp - PadSetAct buffer */
 static SDL_Gamepad	*g_gamepad;
 
 /*	Which device the button prompts should describe (issue #43): 1 while the
-	gamepad is driving, 0 for the keyboard.  See Port_InputPadActive.  */
+	gamepad is driving, 0 for the keyboard.  See Port_InputPadActive.
+	g_padActive follows the devices as their events arrive - including in
+	Host_PausePoll, between two vblanks; g_promptPad is what the game is
+	shown, latched from it once per Port_InputFrame, which is also where the
+	recorder writes `# prompt` and a replay applies it, so a change lands on
+	the same frame in both (issue #58).  */
 static int			g_padActive;
+static int			g_promptPad;
 
 /*	Rumble (M6): last values armed on the device, so a steady game state
 	does not spam the driver every vblank, plus the small motor's smoothed
@@ -108,6 +142,8 @@ struct EpochCheck
 	unsigned long	vblank;
 	unsigned long	ram;
 	uint32_t		crc;
+	uint32_t		rng;			/* s_randomSeed, when hasRng */
+	int				hasRng;
 	int				line;
 };
 
@@ -124,26 +160,54 @@ static int			g_desyncs;
 	RamUsed depends on it - x64 objects are bigger and the heap aligns to 16 -
 	so a recording replayed across ABIs compares the display CRC alone.  */
 static int			g_recordingPtr = 4;
+/*	The rest of a recording's data lines (issue #58).  Older exes read
+	none of them - every unrecognised `#` line is a comment - and this exe
+	reads a recording without them as before.  */
+static long			g_recordingSeed;		/* `# seed <n>`: what setRndSeed got */
+static int			g_haveSeed;
+static int			g_recordingPace = -1;	/* `# pace`: -1 unknown, 0 capped, 1 uncapped */
 
-static void addEntry(const PadEntry &e)
+struct PromptMark						/* `# prompt <vblank> pad|keys` */
 {
-	if (g_entryCount == g_entryCap)
+	unsigned long	vblank;
+	int				pad;
+};
+static PromptMark	*g_prompts;
+static int			g_promptCount, g_promptCap;
+static int			g_promptNext;			/* replay cursor into g_prompts */
+static int			g_replayPadActive;		/* the recording's prompt device, so far */
+
+/*	1 when SBSP_PAD_FILE / SBSP_PAD_SCRIPT supplies the input.  The live
+	keyboard and gamepad are then ignored entirely - mask, sticks and the
+	prompt device - so the run, and what it records, is a function of the
+	script alone, whatever is plugged into the machine running it.  */
+static int			g_scripted;
+
+/*	Append to one of the growable arrays above (entries, epochs, prompt
+	marks).  A pad file is unbounded, so running out of memory is possible
+	on a huge or corrupt one: say so and stop rather than write through a
+	NULL realloc.  */
+template <class T>
+static void push(T *&arr, int &count, int &cap, const T &v, int first)
+{
+	if (count == cap)
 	{
-		g_entryCap = g_entryCap ? g_entryCap * 2 : 64;
-		g_entries  = (PadEntry *)realloc(g_entries, g_entryCap * sizeof(PadEntry));
+		int	n = cap ? cap * 2 : first;
+		T	*p = (T *)realloc(arr, (size_t)n * sizeof(T));
+		if (!p)
+		{
+			fprintf(stderr, "[replay] pad script: out of memory at %d items - aborting\n", count);
+			Port_Exit(PORT_EXIT_ORACLE);
+		}
+		arr = p;
+		cap = n;
 	}
-	g_entries[g_entryCount++] = e;
+	arr[count++] = v;
 }
 
-static void addEpoch(const EpochCheck &ep)
-{
-	if (g_epochCount == g_epochCap)
-	{
-		g_epochCap = g_epochCap ? g_epochCap * 2 : 16;
-		g_epochs   = (EpochCheck *)realloc(g_epochs, g_epochCap * sizeof(EpochCheck));
-	}
-	g_epochs[g_epochCount++] = ep;
-}
+static void addEntry(const PadEntry &e)		{ push(g_entries, g_entryCount, g_entryCap, e, 64); }
+static void addEpoch(const EpochCheck &ep)	{ push(g_epochs, g_epochCount, g_epochCap, ep, 16); }
+static void addPrompt(const PromptMark &pm)	{ push(g_prompts, g_promptCount, g_promptCap, pm, 16); }
 
 static void scriptParse(void)
 {
@@ -252,15 +316,22 @@ static void padFileParse(void)
 		while (*s == ' ' || *s == '\t')
 			s++;
 
-		/*	`# epoch <vblank> ram=<n> crc=<hex>` is data; every other
-			comment (a leading `#`, or ` #` after an entry) is dropped.  */
+		/*	`# epoch <vblank> ram=<n> crc=<hex>`, `# abi ptr=<n>`,
+			`# seed <n>`, `# pace <word>` and `# prompt <vblank> <word>` are
+			data; every other comment (a leading `#`, or ` #` after an entry)
+			is dropped.  */
 		if (*s == '#')
 		{
-			EpochCheck ep = {};
-			int ptr;
-			if (sscanf(s, "# epoch %lu ram=%lu crc=%x", &ep.vblank, &ep.ram, &ep.crc) == 3)
+			EpochCheck	ep = {};
+			PromptMark	pm = {};
+			char		word[16];
+			int			ptr;
+			int			nep = sscanf(s, "# epoch %lu ram=%lu crc=%x rng=%x",
+									 &ep.vblank, &ep.ram, &ep.crc, &ep.rng);
+			if (nep >= 3)
 			{
-				ep.line = line;
+				ep.hasRng = nep == 4;
+				ep.line   = line;
 				addEpoch(ep);
 			}
 			else if (sscanf(s, "# abi ptr=%d", &ptr) == 1)
@@ -276,6 +347,29 @@ static void padFileParse(void)
 					padFileFail(path, line, "bad `# abi ptr=' (expected 4 or 8)");
 				}
 				g_recordingPtr = ptr;
+			}
+			else if (sscanf(s, "# seed %ld", &g_recordingSeed) == 1)
+				g_haveSeed = 1;
+			else if (sscanf(s, "# pace %15s", word) == 1)
+			{
+				if (strcmp(word, "capped") == 0)		g_recordingPace = 0;
+				else if (strcmp(word, "uncapped") == 0)	g_recordingPace = 1;
+				else
+				{
+					fclose(f);
+					padFileFail(path, line, "bad `# pace' (expected capped or uncapped)");
+				}
+			}
+			else if (sscanf(s, "# prompt %lu %15s", &pm.vblank, word) == 2)
+			{
+				if (strcmp(word, "pad") == 0)			pm.pad = 1;
+				else if (strcmp(word, "keys") == 0)		pm.pad = 0;
+				else
+				{
+					fclose(f);
+					padFileFail(path, line, "bad `# prompt' (expected pad or keys)");
+				}
+				addPrompt(pm);
 			}
 			continue;
 		}
@@ -303,11 +397,20 @@ static void padFileParse(void)
 		entries++;
 	}
 	fclose(f);
-	fprintf(stderr, "[input] SBSP_PAD_FILE %s: %d entries, %d epoch checks\n",
-			path, entries, g_epochCount);
+	fprintf(stderr, "[input] SBSP_PAD_FILE %s: %d entries, %d epoch checks, %d prompt marks\n",
+			path, entries, g_epochCount, g_promptCount);
 	if (g_epochCount && g_recordingPtr != (int)sizeof(void *))
 		fprintf(stderr, "[input] cross-ABI recording (ptr=%d, this exe %d): epoch ram not compared\n",
 				g_recordingPtr, (int)sizeof(void *));
+	/*	A paced CD read costs wall-clock time, which is vblanks on a capped
+		run and nothing on an uncapped one (SBSP_CD_PACE=0 comes with
+		--uncapped), so the two do not agree on how long a load lasts, and
+		every entry after one lands on a different frame of the game.  The
+		epochs will say so; this says why, up front.  */
+	if (g_recordingPace >= 0 && g_recordingPace != (Port_Uncapped() != 0))
+		fprintf(stderr, "[input] recording was %s, this run is %s: load durations differ, "
+						"so every offset after a load drifts\n",
+				g_recordingPace ? "uncapped" : "capped", Port_Uncapped() ? "uncapped" : "capped");
 }
 
 static void scriptsParse(void)
@@ -315,8 +418,45 @@ static void scriptsParse(void)
 	if (g_scriptParsed)
 		return;
 	g_scriptParsed = 1;
+	const char *script = getenv("SBSP_PAD_SCRIPT");
+	const char *file   = getenv("SBSP_PAD_FILE");
+	g_scripted = (script && *script) || (file && *file);
 	scriptParse();
 	padFileParse();
+}
+
+/*	host/seed.cpp: the seed the recording ran with, if it says.  Safe
+	before PadInitDirect - only getenv and fopen happen here (and a
+	malformed pad file exits 13 at boot rather than at the first frame).  */
+extern "C" int Port_PadFileSeed(long *seed)
+{
+	scriptsParse();
+	if (g_haveSeed)
+		*seed = g_recordingSeed;
+	return g_haveSeed;
+}
+
+/*	Replay of the `# prompt` marks: the recording's prompt-icon device as
+	of this vblank.  A cursor walk rather than an exact match, so a mark
+	the first frame never saw (none is written before the recorder's first
+	frame, but a hand-edited file could) still takes effect.  A pinned
+	prompt_icons wins over the marks, as it does over the live device -
+	said once, because the frame CRCs will then differ from the recording's.  */
+static void replayPrompts(unsigned long vblank)
+{
+	while (g_promptNext < g_promptCount && g_prompts[g_promptNext].vblank <= vblank)
+	{
+		const PromptMark &pm = g_prompts[g_promptNext++];
+		g_replayPadActive = pm.pad;
+		static int warned;
+		if (!warned && Port_InputPadActive() != pm.pad)		/* declared in system/asmport.h */
+		{
+			warned = 1;
+			fprintf(stderr, "[input] prompt_icons is pinned but the recording switched to %s at "
+							"vblank %lu: the frame CRCs will differ from the recording's\n",
+					pm.pad ? "pad" : "keys", pm.vblank);
+		}
+	}
 }
 
 /*	Scene-relative entries become absolute the vblank their scene open
@@ -376,13 +516,17 @@ static void epochCheck(unsigned long vblank)
 		const PortGameGlobals *g = Port_GameGlobals();
 		unsigned long ram = g->ramUsed ? *g->ramUsed : 0;
 		uint32_t      crc = GPU_DisplayCRC32(NULL);
+		uint32_t      rng = (ep.hasRng && g->randomSeed) ? (uint32_t)*g->randomSeed : ep.rng;
 		if (g_recordingPtr != (int)sizeof(void *))
 			ram = ep.ram;				/* not comparable across ABIs, see g_recordingPtr */
-		if (ram != ep.ram || crc != ep.crc)
+		if (ram != ep.ram || crc != ep.crc || rng != ep.rng)
 		{
 			g_desyncs++;
-			fprintf(stderr, "[replay] desync at vblank %lu (line %d): ram %lu vs %lu, crc %08X vs %08X\n",
+			fprintf(stderr, "[replay] desync at vblank %lu (line %d): ram %lu vs %lu, crc %08X vs %08X",
 					vblank, ep.line, ram, ep.ram, crc, ep.crc);
+			if (ep.hasRng)				/* an older recording's epoch has none to compare */
+				fprintf(stderr, ", rng %08X vs %08X", rng, ep.rng);
+			fputc('\n', stderr);
 		}
 	}
 }
@@ -408,12 +552,15 @@ extern "C" int Port_InputAtExit(void)
 
 /*****************************************************************************/
 /*	SBSP_RECORD_PAD=<path>: the applied mask, on change, in the scene-
-	relative grammar above, plus `# scene` markers at each open and an
-	`# epoch` line every 300 vblanks.  Flushed per line so a crash still
-	leaves a usable file.  */
+	relative grammar above, plus `# scene` markers at each open, a `# prompt`
+	line when the prompt-icon device changes and an `# epoch` line every 300
+	vblanks, under a header of `# abi`, `# seed` (if one was given) and
+	`# pace`.  Flushed per
+	line so a crash still leaves a usable file.  */
 static FILE			*g_rec;
 static int			g_recTried;
 static unsigned		g_recLastMask;
+static int			g_recLastPrompt;		/* device last written: 0 keys (the start), 1 pad */
 static char			g_recScene[48];
 static int			g_recNth;
 
@@ -427,10 +574,19 @@ static void recordFrame(unsigned long vblank, unsigned mask)
 		{
 			g_rec = fopen(path, "w");
 			if (g_rec)
+			{
 				fprintf(g_rec, "# recorded by sbsp --record-pad (mask: START=0800 SELECT=0100 "
 							   "UP=1000 RIGHT=2000 DOWN=4000 LEFT=8000 CROSS=0040 "
 							   "CIRCLE=0020 SQUARE=0080 TRIANGLE=0010 L1=0004 R1=0008 L2=0001 R2=0002)\n"
 							   "# abi ptr=%d\n", (int)sizeof(void *));
+				/*	host/seed.cpp decides now if the game has not asked yet.  No
+					seed given: the game seeds itself, identically every boot,
+					and so will the replay - there is nothing to write down.  */
+				long seed = 0;
+				if (Port_BootSeed(&seed))
+					fprintf(g_rec, "# seed %ld\n", seed);
+				fprintf(g_rec, "# pace %s\n", Port_Uncapped() ? "uncapped" : "capped");
+			}
 			else
 				fprintf(stderr, "[input] SBSP_RECORD_PAD: cannot write %s\n", path);
 		}
@@ -442,14 +598,27 @@ static void recordFrame(unsigned long vblank, unsigned mask)
 	int				nth    = Port_SceneOpenCount(scene);
 	unsigned long	open   = 0;
 	int				inScene = nth > 0 && Port_SceneOpenVblank(scene, nth, &open);
+	int				newScene = inScene && (nth != g_recNth || strcmp(scene, g_recScene) != 0);
 
-	if (inScene && (nth != g_recNth || strcmp(scene, g_recScene) != 0))
+	if (newScene)
 	{
 		snprintf(g_recScene, sizeof(g_recScene), "%s", scene);
 		g_recNth = nth;
 		fprintf(g_rec, "# scene %s#%d vblank=%lu\n", scene, nth, open);
 	}
-	if (mask != g_recLastMask)
+	int pad = Port_InputPadActive();
+	if (pad != g_recLastPrompt)
+	{
+		g_recLastPrompt = pad;
+		fprintf(g_rec, "# prompt %lu %s\n", vblank, pad ? "pad" : "keys");
+	}
+	/*	A scene open releases every entry on replay (scriptMask), so a button
+		still held when one opens must be pressed again in the new scene's
+		terms: the recording kept it held, and without this line the replay
+		let go of it (issue #58).  The FMA sub-event (Port_FmaEvent) renames
+		the scene at the same open, which repeats the line under the second
+		name - harmless, same anchor and mask.  */
+	if (mask != g_recLastMask || (newScene && mask))
 	{
 		g_recLastMask = mask;
 		if (inScene)
@@ -460,35 +629,64 @@ static void recordFrame(unsigned long vblank, unsigned mask)
 	if (vblank % 300 == 0)
 	{
 		const PortGameGlobals *g = Port_GameGlobals();
-		fprintf(g_rec, "# epoch %lu ram=%lu crc=%08X\n", vblank,
+		fprintf(g_rec, "# epoch %lu ram=%lu crc=%08X", vblank,
 				g->ramUsed ? *g->ramUsed : 0ul, GPU_DisplayCRC32(NULL));
+		if (g->randomSeed)				/* NULL in the shim-only unit exes */
+			fprintf(g_rec, " rng=%08X", (uint32_t)*g->randomSeed);
+		fputc('\n', g_rec);
 	}
 	fflush(g_rec);
 }
 
 /*****************************************************************************/
+/*	Open one pad.  Returns 1 on success.  */
+static int openGamepad(SDL_JoystickID id, const char *how)
+{
+	g_gamepad = SDL_OpenGamepad(id);
+	g_rumbleLow = g_rumbleHigh = 0;		/* fresh device: re-arm from scratch */
+	g_smallLevel = 0;
+	if (!g_gamepad)
+	{
+		fprintf(stderr, "[input] gamepad %s but cannot be opened: %s\n", how, SDL_GetError());
+		return 0;
+	}
+	fprintf(stderr, "[input] gamepad %s: %s\n", how, SDL_GetGamepadName(g_gamepad));
+	return 1;
+}
+
 extern "C" void Port_InputHandleEvent(const void *evv)
 {
 	const SDL_Event *ev = (const SDL_Event *)evv;
 	if (ev->type == SDL_EVENT_GAMEPAD_ADDED && !g_gamepad)
 	{
-		g_gamepad = SDL_OpenGamepad(ev->gdevice.which);
-		if (g_gamepad)
-			fprintf(stderr, "[input] gamepad connected: %s\n",
-					SDL_GetGamepadName(g_gamepad));
-		g_rumbleLow = g_rumbleHigh = 0;		/* fresh device: re-arm from scratch */
-		g_smallLevel = 0;
-		g_padActive = 1;					/* a plugged-in pad owns the prompts until a key is pressed */
+		if (openGamepad(ev->gdevice.which, "connected"))
+			g_padActive = 1;				/* a plugged-in pad owns the prompts until a key is pressed */
 	}
 	else if (ev->type == SDL_EVENT_GAMEPAD_REMOVED && g_gamepad &&
 			 ev->gdevice.which == SDL_GetGamepadID(g_gamepad))
 	{
+		int wasActive = g_padActive;
 		SDL_CloseGamepad(g_gamepad);
 		g_gamepad = NULL;
 		g_rumbleLow = g_rumbleHigh = 0;
 		g_smallLevel = 0;
 		g_padActive = 0;
 		fprintf(stderr, "[input] gamepad disconnected\n");
+
+		/*	SDL announces a pad once, when it arrives, so a second controller
+			that was ignored while the first was open would stay dead until
+			replugged (issue #58): adopt the first one still connected.  It
+			inherits the prompts as they were - a keyboard player whose idle
+			pad was swapped out keeps the key caps.  */
+		int n = 0;
+		SDL_JoystickID *ids = SDL_GetGamepads(&n);
+		for (int i = 0; ids && i < n; i++)
+			if (ids[i] != ev->gdevice.which && openGamepad(ids[i], "adopted"))
+			{
+				g_padActive = wasActive;
+				break;
+			}
+		SDL_free(ids);
 	}
 }
 
@@ -610,10 +808,11 @@ static const struct { SDL_Scancode sc; int cap; } g_caps[] =
 };
 #define NUM_CAPS	(int)(sizeof(g_caps) / sizeof(g_caps[0]))
 
-/*	SBSP_PROMPT_ICONS (sbsp.ini prompt_icons): auto | keys | pad.  "keys"
-	is what a recorded playthrough wants - without it the icons, and so the
-	frame CRC, would depend on whether the machine happened to have a pad
-	plugged in.  */
+/*	SBSP_PROMPT_ICONS (sbsp.ini prompt_icons): auto | keys | pad.  In a
+	scripted run `auto` follows the recording's `# prompt` marks (key caps
+	when there are none), never the machine's own devices, so a replay
+	draws what the recording drew and a harness run draws the same on every
+	machine; pinning it for a replay only makes sense to force a difference.  */
 enum { PROMPT_AUTO = 0, PROMPT_KEYS, PROMPT_PAD };
 static int g_promptMode = -1;
 
@@ -633,14 +832,17 @@ static void loadPromptMode(void)
 /*	1 while the gamepad is the device driving the game, 0 for the keyboard.
 	Tracked by Port_InputFrame from whichever device actually produced
 	buttons this vblank, seeded by plug/unplug, so the prompts follow the
-	player between the two without a setting.  */
+	player between the two without a setting.  In a scripted run the
+	recording's `# prompt` marks say (replayPrompts); the parse is forced
+	here because the first prompt can be drawn before the first frame.  */
 extern "C" int Port_InputPadActive(void)
 {
 	if (g_promptMode < 0)
 		loadPromptMode();
 	if (g_promptMode != PROMPT_AUTO)
 		return g_promptMode == PROMPT_PAD;
-	return g_padActive;
+	scriptsParse();
+	return g_scripted ? g_replayPadActive : g_promptPad;
 }
 
 /*	The key cap to draw for a pad button name, or PORT_CAP_NONE for the
@@ -744,6 +946,27 @@ static unsigned char stickByte(SDL_Gamepad *p, SDL_GamepadAxis axis)
 	return (unsigned char)(v < 0 ? 0 : (v > 255 ? 255 : v));
 }
 
+/*	The left stick as the game reads it.  pads.cpp Pad2Digital turns
+	Analog2/3 (buf[6]/buf[7]) into PAD_LEFT/RIGHT/UP/DOWN past AnalogThresh
+	(64) either side of 127 - after this file has built the packet, so a
+	recording of the mask alone carried no stick, and a pad player's session
+	stood still on replay (issue #58).  Folding the same rule into the mask
+	changes nothing live (the game ORs the same bits again) and lets a
+	replay with centred sticks reproduce the movement.  Mirrors
+	pads.cpp:190-201 exactly, from the dead-zone-processed bytes the packet
+	carries: LEFT/RIGHT exclusive, UP/DOWN exclusive.  */
+static unsigned stickFold(unsigned char lx, unsigned char ly)
+{
+	const int	thresh = 64;				/* pads.cpp AnalogThresh */
+	int			x = (int)lx - 127, y = (int)ly - 127;
+	unsigned	m = 0;
+	if (x < -thresh)		m |= BTN_LEFT;
+	else if (x > thresh)	m |= BTN_RIGHT;
+	if (y < -thresh)		m |= BTN_UP;
+	else if (y > thresh)	m |= BTN_DOWN;
+	return m;
+}
+
 /*****************************************************************************/
 /*	Rumble (M6): forward the actuator bytes the game writes into the
 	PadSetAct buffer (pads.cpp ReadController) to the SDL gamepad.
@@ -826,14 +1049,33 @@ extern "C" void Port_InputFrame(unsigned long vblank)
 
 	scriptsParse();
 	resolveEntries();
-	unsigned kb = keyboardMask();
-	unsigned gp = gamepadMask();
-	/*	Whichever device produced buttons this vblank owns the prompts.  A
-		frame where both (or neither) are pressed leaves it where it was, so
-		a thumb resting on the stick while a hand reaches for the keyboard
-		does not flicker the icons.  */
-	if (gp && !kb)		g_padActive = 1;
-	else if (kb && !gp)	g_padActive = 0;
+
+	unsigned		kb = 0, gp = 0;
+	unsigned char	rx = 0x80, ry = 0x80, lx = 0x80, ly = 0x80;	/* centred */
+	if (g_scripted)
+	{
+		/*	Nothing from this machine: the script is the whole input, the
+			sticks stay centred (the stick's D-pad bits are in the recorded
+			mask, see stickFold) and the prompts follow the recording.  */
+		replayPrompts(vblank);
+	}
+	else
+	{
+		kb = keyboardMask();
+		rx = stickByte(g_gamepad, SDL_GAMEPAD_AXIS_RIGHTX);
+		ry = stickByte(g_gamepad, SDL_GAMEPAD_AXIS_RIGHTY);
+		lx = stickByte(g_gamepad, SDL_GAMEPAD_AXIS_LEFTX);
+		ly = stickByte(g_gamepad, SDL_GAMEPAD_AXIS_LEFTY);
+		gp = gamepadMask() | stickFold(lx, ly);
+		/*	Whichever device produced buttons this vblank owns the prompts.  A
+			frame where both (or neither) are pressed leaves it where it was,
+			so a thumb resting on the stick (inside the fold's threshold, so
+			not a button) while a hand reaches for the keyboard does not
+			flicker the icons.  */
+		if (gp && !kb)		g_padActive = 1;
+		else if (kb && !gp)	g_padActive = 0;
+		g_promptPad = g_padActive;		/* the game sees device changes only here */
+	}
 	unsigned mask = kb | gp | scriptMask(vblank);
 	epochCheck(vblank);
 	recordFrame(vblank, mask);
@@ -842,8 +1084,8 @@ extern "C" void Port_InputFrame(unsigned long vblank)
 	buf[1] = 0x73;							/* analog controller, 3 halfwords */
 	buf[2] = (unsigned char)~(mask >> 8);	/* active low */
 	buf[3] = (unsigned char)~mask;
-	buf[4] = stickByte(g_gamepad, SDL_GAMEPAD_AXIS_RIGHTX);
-	buf[5] = stickByte(g_gamepad, SDL_GAMEPAD_AXIS_RIGHTY);
-	buf[6] = stickByte(g_gamepad, SDL_GAMEPAD_AXIS_LEFTX);
-	buf[7] = stickByte(g_gamepad, SDL_GAMEPAD_AXIS_LEFTY);
+	buf[4] = rx;
+	buf[5] = ry;
+	buf[6] = lx;
+	buf[7] = ly;
 }

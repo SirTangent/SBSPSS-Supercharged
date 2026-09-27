@@ -5,7 +5,9 @@
 	                  retail bonus-level timer path in CGameScene::initLevel
 	                  is armed for every level (game.cpp, conv_pc.md #28)
 	  spatulas=all    on finish, the save slot records every spatula
-	                  (bookkeeping only; the player's carried count is untouched)
+	                  (bookkeeping only; the player's carried count is untouched;
+	                  levels 1-4 only - a bonus level has no spatula slot, and
+	                  its index would land in the next chapter's)
 	  lives=N         starting GameSlot.m_lives (0..127, a signed char) -
 	                  written at the FIRST initLevel only: game over ->
 	                  continue -> Map -> level runs initLevel again, and

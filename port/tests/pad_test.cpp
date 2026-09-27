@@ -3,7 +3,9 @@
 	that keyboard sign-off runs can never reach, verified without physical
 	hardware:
 
-	  - hotplug: SDL_EVENT_GAMEPAD_ADDED opens the pad, REMOVED closes it
+	  - hotplug: SDL_EVENT_GAMEPAD_ADDED opens the pad, REMOVED closes it and
+	    adopts the next pad still connected (issue #58)
+	  - left stick -> D-pad bits in the mask past the game's threshold (#58)
 	  - button-enum mapping: SOUTH/EAST/WEST/NORTH -> Cross/Circle/Square/
 	    Triangle, BACK/START -> SELECT/START, shoulders -> L1/R1, D-pad
 	  - trigger threshold: axis > 8192 -> L2/R2 (8192 itself is NOT pressed)
@@ -219,6 +221,33 @@ int main(void)
 	SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_RIGHTY, 0);
 	pumpEvents();
 
+	/*	-------- left stick -> D-pad bits (issue #58): the game's own
+		Pad2Digital rule (|byte - 127| > 64) folded into the mask, so a
+		recording carries stick movement.  +16384 is byte 192 (offset 65):
+		RIGHT; +16128 is byte 191 (offset 64): not yet; the right stick
+		never folds.  */
+	SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_LEFTX, 16384);
+	SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_RIGHTY, 32767);
+	pumpEvents();
+	Port_InputFrame(vblank++);
+	check(packetMask(pad0) == 0x2000, "LEFTX +16384 (byte 192) folds to RIGHT; RIGHTY does not fold");
+	SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_LEFTX, 16128);
+	pumpEvents();
+	Port_InputFrame(vblank++);
+	check(packetMask(pad0) == 0, "LEFTX +16128 (byte 191) is inside the game's threshold");
+	SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_LEFTX, -32768);
+	SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_LEFTY, 32767);
+	pumpEvents();
+	Port_InputFrame(vblank++);
+	check(packetMask(pad0) == 0xC000, "LEFTX min + LEFTY max fold to LEFT|DOWN");
+	check(pad0[6] == 0 && pad0[7] == 255, "the stick bytes still pass through beside the fold");
+	SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_LEFTX, 0);
+	SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_LEFTY, 0);
+	SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_RIGHTY, 0);
+	pumpEvents();
+	Port_InputFrame(vblank++);
+	check(packetMask(pad0) == 0, "stick centred: no D-pad bits");
+
 	/*	-------- dead zone (M8 shell): SBSP_PAD_DEADZONE percent of 32767,
 		default 15 (= 4915 raw), 0 = raw as above  */
 	SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_LEFTX, 3000);		/* ~9% */
@@ -241,10 +270,12 @@ int main(void)
 	pumpEvents();
 	Port_InputFrame(vblank++);
 	check(pad0[6] == 0x80, "pad_deadzone=50: 49% deflection is centred");
+	check(packetMask(pad0) == 0, "pad_deadzone=50: a centred stick folds to nothing");
 	SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_LEFTX, -17000);	/* ~-52% */
 	pumpEvents();
 	Port_InputFrame(vblank++);
 	check(pad0[6] == (-17000 >> 8) + 128, "pad_deadzone=50: -52% passes (symmetric)");
+	check(packetMask(pad0) == 0x8000, "pad_deadzone=50: -52% (byte 61) folds to LEFT");
 	_putenv("SBSP_PAD_DEADZONE=");
 	Port_InputReloadSettings();
 	SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_LEFTX, 0);
@@ -401,9 +432,43 @@ int main(void)
 	Port_InputReloadSettings();
 	Port_InputFrame(vblank++);
 
-	/*	-------- hotplug: detach -> the shim closes and the pad reads idle  */
+	/*	-------- hotplug: a second pad is adopted when the first goes
+		(issue #58).  SDL announces a pad once: while the first is open the
+		second's GAMEPAD_ADDED is ignored, so on the first's removal the
+		shim has to go and find it.  */
+	SDL_VirtualJoystickDesc desc2 = desc;
+	desc2.name = "SBSP virtual pad 2";
+	SDL_JoystickID id2 = SDL_AttachVirtualJoystick(&desc2);
+	check(id2 != 0, "second virtual pad attached");
+	pumpEvents();
+	check(SDL_GetGamepadFromID(id2) == NULL, "second pad left alone while the first is open");
 	SDL_DetachVirtualJoystick(id);
 	pumpEvents();
+	check(SDL_GetGamepadFromID(id2) != NULL, "first pad removed: the second is adopted");
+	/*	the game sees the device only as of the last input frame (the
+		latch the recorder shares) - and an adopted pad inherits the
+		prompts as they were; the pad was driving here  */
+	Port_InputFrame(vblank++);
+	check(Port_InputPadActive() == 1, "an adopted pad keeps the prompts the removed one had");
+	SDL_Joystick *joy2 = SDL_GetJoystickFromID(id2);
+	check(joy2 != NULL, "SDL_GetJoystickFromID(id2)");
+	if (joy2)
+	{
+		SDL_SetJoystickVirtualButton(joy2, SDL_GAMEPAD_BUTTON_WEST, true);
+		pumpEvents();
+		Port_InputFrame(vblank++);
+		check(packetMask(pad0) == 0x0080, "a button on the adopted pad reaches the packet");
+		SDL_SetJoystickVirtualButton(joy2, SDL_GAMEPAD_BUTTON_WEST, false);
+		pumpEvents();
+		Port_InputFrame(vblank++);
+	}
+
+	/*	-------- hotplug: detach -> the shim closes and the pad reads idle  */
+	SDL_DetachVirtualJoystick(id2);
+	pumpEvents();
+	/*	the unplug is handled, but the game is shown it only at the next
+		input frame - the latch the recorder's `# prompt` shares (#58)  */
+	check(Port_InputPadActive() == 1, "an unplug reaches the prompts only at the next input frame");
 	Port_InputFrame(vblank++);
 	check(packetMask(pad0) == 0, "packet idle after disconnect");
 	check(pad0[6] == 0x80, "sticks centred after disconnect");

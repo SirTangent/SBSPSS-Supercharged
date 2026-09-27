@@ -160,7 +160,8 @@ extern "C" const char *Port_CurrentScene(void)
 extern "C" void Port_RegisterGameGlobals(unsigned long *ramUsed, int *memNodeCount,
 										 int *invincibleSponge,
 										 unsigned char **currPrim, unsigned char **endPrim,
-										 unsigned char **primListStart, unsigned char **primListEnd)
+										 unsigned char **primListStart, unsigned char **primListEnd,
+										 long *randomSeed)
 {
 	g_globals.ramUsed          = ramUsed;
 	g_globals.memNodeCount     = memNodeCount;
@@ -169,6 +170,7 @@ extern "C" void Port_RegisterGameGlobals(unsigned long *ramUsed, int *memNodeCou
 	g_globals.endPrim          = endPrim;
 	g_globals.primListStart    = primListStart;
 	g_globals.primListEnd      = primListEnd;
+	g_globals.randomSeed       = randomSeed;
 
 	/*	--invincible: the DEBUG pause menu's toggle (player.cpp
 		invincibleSponge, read by CPlayer::takeDamage) exists in both
@@ -285,6 +287,16 @@ extern "C" void Port_Exit(int code)
 		fflush(stderr);
 		_exit(code);
 	}
+
+	/*	The game's own printf text is stdout, block-buffered whenever it is
+		redirected (the tester zip's stdout.txt, run_tier's pipe), and _exit
+		never flushes it: the last lines before an assert or a scripted exit
+		were lost.  Not on a fault or a watchdog kill - the faulting thread
+		may hold the CRT stream lock mid-printf and the watchdog is another
+		thread altogether, so flushing there could hang the exit; for those
+		the per-vblank flush in Host_VBlank bounds the loss to one frame.  */
+	if (code != PORT_EXIT_FAULT && code != PORT_EXIT_WATCHDOG)
+		fflush(stdout);
 
 	fprintf(stderr, "[summary] exit=%d vblanks=%lu scene=%s asserts=%lu "
 					"peak_ram=%lu peak_memnodes=%d/256 peak_prim=%lu paused=%.1f\n",

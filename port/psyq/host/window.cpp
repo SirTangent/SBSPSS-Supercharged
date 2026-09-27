@@ -332,6 +332,12 @@ extern "C" void Host_VBlank(unsigned long vblankNo)
 		fprintf(stderr, "[frame] %lu crc=%08X%s\n", vblankNo, crc, masked ? " masked" : "");
 	}
 
+	/*	The game's stdout is block-buffered when redirected to a file or a
+		pipe and Port_Exit cannot safely flush it on a fault (diag.cpp); one
+		flush per vblank - a lock and a test when nothing is pending - keeps
+		a crash from swallowing more than the current frame's lines.  */
+	fflush(stdout);
+
 	/*	Uncapped runs would otherwise be re-capped by the presenter's vsync
 		wait: present at most once per vblank period of wall time (60/s NTSC,
 		50/s PAL) and let the emulated vblanks run ahead.  */

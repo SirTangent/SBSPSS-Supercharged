@@ -82,7 +82,8 @@ extern "C" void Port_MkdirChain(const char *dir)
 	}
 }
 
-/*	The directory holding card0.mcd and sbsp.ini, created if needed.
+/*	The directory holding card0.mcd, created if needed (sbsp.ini is not
+	here: it lives beside the exe, args.cpp loadIni).
 	SBSP_SAVE_DIR is taken verbatim (relative paths included - the tests
 	rely on it); otherwise a saves\ directory beside the exe wins (the
 	tester-zip layout, portable), else %APPDATA%\SBSPSS.  */
