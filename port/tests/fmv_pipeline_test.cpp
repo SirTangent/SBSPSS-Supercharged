@@ -140,7 +140,10 @@ static int runMovie(const char *diskName, const char *slug)
 		DecDCTvlc3(addr, g_vlc);
 		StFreeRing(addr);
 		DecDCTin(g_vlc, 3);
-		DecDCTout((u_long *)g_stream, (int)sizeof(g_stream) / 4);
+		/*	one 16px column of 15 macroblocks per call, as fmv.cpp reads
+			it (one DecDCTout never returns more than a full-height slice)  */
+		for (int off = 0; off < (int)sizeof(g_stream); off += 15 * 768)
+			DecDCTout((u_long *)(g_stream + off), 15 * 768 / 4);
 
 		/*	16px-column macroblock stream -> raster  */
 		for (int mb = 0; mb < 300; mb++)

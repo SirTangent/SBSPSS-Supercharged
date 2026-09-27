@@ -8,10 +8,14 @@
 	  3. yuv_to_rgb (Mdec_YuvToRgb24): full-macroblock golden, byte order.
 	  4. DecDCTin/DecDCTout/DecDCToutCallback: end-to-end stream decode,
 	     fmv.cpp-style callback chaining through the trampoline (flat stack).
+	  5. DecDCTout bounds: a request sized from a corrupt STR height is
+	     capped at one full-height slice, against a guard page.
 
 	Golden fixture is loaded repo-root-relative with a graceful skip, like
 	xa_test.  Regenerate with:  py port/tests/make_mdec_golden.py
 */
+#include <windows.h>
+
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
@@ -322,6 +326,58 @@ static void testPipeline(void)
 }
 
 /*****************************************************************************/
+/*	DecDCTout's request comes from fmv.cpp as 24*height/2 words, height
+	straight from the STR frame header.  Whatever it asks for, one call
+	writes at most a 16-pixel 24bpp slice of 512 lines (24,576 bytes), and
+	a size <= 0 writes nothing; the completion callback fires either way.
+	The buffer ends at a PAGE_NOACCESS page, so an overrun faults.  */
+
+static int g_outFired;
+
+extern "C" void mdecCountCallback(void)
+{
+	g_outFired++;
+}
+
+static void testOutBounds(void)
+{
+	const int kCap = 16 * 3 * 512;
+	SYSTEM_INFO si;
+	GetSystemInfo(&si);
+	size_t page = si.dwPageSize;
+	size_t span = (kCap + page - 1) / page * page;
+	uint8_t *base = (uint8_t *)VirtualAlloc(NULL, span + page,
+											MEM_RESERVE | MEM_COMMIT,
+											PAGE_READWRITE);
+	check(base != NULL, "out bounds: guarded buffer allocated");
+	if (!base)
+		return;
+	DWORD old;
+	VirtualProtect(base + span, page, PAGE_NOACCESS, &old);
+	uint8_t *buf = base + span - kCap;		/* last byte abuts the guard */
+
+	DecDCTReset(0);
+	DecDCToutCallback(mdecCountCallback);
+	DecDCTin(g_stream, 3);					/* testPipeline's 2 MBs */
+
+	g_outFired = 0;
+	memset(buf, 0xAA, kCap);
+	DecDCTout((u_long *)buf, 0);
+	DecDCTout((u_long *)buf, -8);
+	check(g_outFired == 2, "out bounds: size <= 0 still completes");
+	check(buf[0] == 0xAA && buf[kCap - 1] == 0xAA,
+		  "out bounds: size <= 0 writes nothing");
+
+	/*	a 1 MB-word request (a header height of ~87,000 lines)  */
+	DecDCTout((u_long *)buf, 1 << 20);
+	check(g_outFired == 3, "out bounds: a huge request completes");
+	check(buf[kCap - 1] == 0, "out bounds: capped at one full slice");
+
+	DecDCToutCallback(0);
+	VirtualFree(base, 0, MEM_RELEASE);
+}
+
+/*****************************************************************************/
 int main(void)
 {
 	g_golden = fopen("port/tests/mdec_golden.bin", "rb");
@@ -344,6 +400,7 @@ int main(void)
 	testIdct();
 	testYuv();
 	testPipeline();
+	testOutBounds();
 
 	if (g_golden)
 		fclose(g_golden);

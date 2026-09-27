@@ -308,6 +308,13 @@ extern "C" void DecDCTin(u_long *buf, int mode)
 	}
 }
 
+/*	The most one DecDCTout can ask for: a 16-pixel column slice of 24bpp
+	at the full 512 VRAM lines.  fmv.cpp sizes its request from the STR
+	header's height (disc data) into a buffer sized for 240 lines, and the
+	real MDEC's DMA would stall rather than write what it never decoded -
+	so an absurd height must not become an absurd write (issue #60).  */
+#define MDEC_MAX_OUT_BYTES	(16 * 3 * 512)
+
 /*	Copy the next slice of the decoded stream, then run the completion
 	callback through the trampoline: the callback's own DecDCTout call
 	(fmv.cpp strCallback) only copies and re-arms the pending flag, so the
@@ -315,7 +322,17 @@ extern "C" void DecDCTin(u_long *buf, int mode)
 extern "C" void DecDCTout(u_long *buf, int size)
 {
 	uint8_t *dst = (uint8_t *)buf;
-	int bytes = size * 4;
+	int bytes;
+	if (size <= 0)
+		bytes = 0;
+	else if (size > MDEC_MAX_OUT_BYTES / 4)
+	{
+		PSYQ_LOG_ONCE_KEYED(5, "[mdec] DecDCTout of %d words - capped at "
+							"%d bytes\n", size, MDEC_MAX_OUT_BYTES);
+		bytes = MDEC_MAX_OUT_BYTES;
+	}
+	else
+		bytes = size * 4;
 	int avail = g_frameBytes - g_cursor;
 	int n = bytes < avail ? bytes : (avail > 0 ? avail : 0);
 

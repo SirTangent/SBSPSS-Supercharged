@@ -323,7 +323,10 @@ static void testRealFrame(void)
 	DecDCTin(g_out, 3);
 	check(Mdec_FrameBytesForTest() == (int)sizeof(g_pixels),
 		  "frame: 300 macroblocks decoded");
-	DecDCTout((u_long *)g_pixels, (int)sizeof(g_pixels) / 4);
+	/*	one 16px column of 15 macroblocks per call, as fmv.cpp reads it
+		(one DecDCTout never returns more than a full-height slice)  */
+	for (int off = 0; off < (int)sizeof(g_pixels); off += 15 * MDEC_MB_BYTES_24BPP)
+		DecDCTout((u_long *)(g_pixels + off), 15 * MDEC_MB_BYTES_24BPP / 4);
 
 	/*	Our stream is 16px column strips of 16x16 MBs; golden is raster.  */
 	long maxD = 0, sumD = 0, over2 = 0;
