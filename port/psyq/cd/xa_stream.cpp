@@ -135,8 +135,8 @@ void deliverNext(void)
 					samples every 12.8 vblanks at 60Hz - but each lands on a
 					whole vblank, up to one late, while the mixer drains the
 					ring continuously from the first push: without a cushion
-					the ring ran dry ~213ms into every line, a 63-sample
-					click.  So a stream's first sector is preceded by
+					the ring ran dry ~213ms into most lines (on 46 of the 62
+					slot/rate cases xa_test streams), a 63-sample click.  So a stream's first sector is preceded by
 					XA_PREROLL_FRAMES of silence (only into an empty ring -
 					nothing is ever delayed behind queued audio).  The end
 					of the line is still the terminator sector, so the
