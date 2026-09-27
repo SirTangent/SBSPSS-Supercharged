@@ -58,6 +58,14 @@ jobs:
         shell: bash
         run: git lfs pull
 
+      # Graphics/UI/+key*.bmp (what the data build packs) are generated from
+      # the square-pixel masters in port/art/keycaps (PR #54); a master
+      # edited without re-running the tool would ship stale caps.  Both sets
+      # are LFS, so this comes after the pull.  Uses the runner's Python.
+      - name: Keycaps in step with masters
+        shell: bash
+        run: python port/tools/stretch_keycaps.py --check
+
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MSYS
