@@ -18,7 +18,12 @@
 set(SBSP_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/build/deps")
 
 # sbsp_fetch_dep(<url> <sha256> <marker file relative to SBSP_DEPS_DIR>):
-# download + unpack unless the marker already exists.
+# download + verify + unpack unless the marker already exists.
+#
+# The hash is checked by hand after the download rather than with
+# file(DOWNLOAD ... EXPECTED_HASH): that option raises its own FATAL_ERROR on
+# a mismatch, before any guidance here could print, and a mismatch is the
+# likely way a pin breaks (an upstream re-upload or re-tag), issue #41.
 function(sbsp_fetch_dep url sha256 marker)
     if(EXISTS "${SBSP_DEPS_DIR}/${marker}")
         return()
@@ -26,12 +31,24 @@ function(sbsp_fetch_dep url sha256 marker)
     get_filename_component(_zip "${url}" NAME)
     set(_zip "${SBSP_DEPS_DIR}/${_zip}")
     message(STATUS "Fetching ${url}")
-    file(DOWNLOAD "${url}" "${_zip}" EXPECTED_HASH SHA256=${sha256} STATUS _st)
+    file(DOWNLOAD "${url}" "${_zip}" STATUS _st)
     list(GET _st 0 _code)
     if(NOT _code EQUAL 0)
         list(GET _st 1 _msg)
+        file(REMOVE "${_zip}")      # a partial file would pass for a download
         message(FATAL_ERROR "download failed: ${_msg}\n"
                             "Fetch ${url} by hand into ${SBSP_DEPS_DIR} and unpack it there.")
+    endif()
+    file(SHA256 "${_zip}" _got)
+    string(TOLOWER "${sha256}" _want)
+    if(NOT _got STREQUAL _want)
+        file(REMOVE "${_zip}")
+        message(FATAL_ERROR "SHA-256 mismatch for ${url}\n"
+                            "  expected ${_want}\n"
+                            "  actual   ${_got}\n"
+                            "Upstream changed the file.  Verify the new one and update the pin in "
+                            "port/cmake/deps_vc.cmake, or pass -DSDL3_DIR=<dir> / "
+                            "-DSBSP_VULKAN_INCLUDE=<dir> to use a copy of your own.")
     endif()
     file(ARCHIVE_EXTRACT INPUT "${_zip}" DESTINATION "${SBSP_DEPS_DIR}")
     if(NOT EXISTS "${SBSP_DEPS_DIR}/${marker}")
