@@ -647,6 +647,31 @@ int main(void)
 		dropDir("mcrd_test_tmp5");
 	}
 
+	/*	-------- a save directory too long for the path buffers is "no
+		card", never a truncated path: cut short, it would name some other
+		directory and the card would be created (and later looked for)
+		there.  1100 bytes, past the 1024-byte buffers.  */
+	{
+		static char env[1200];
+		int n = std::snprintf(env, sizeof(env), "SBSP_SAVE_DIR=mcrd_test_tmp6");
+		while (n < 1100 + (int)sizeof("SBSP_SAVE_DIR="))
+		{
+			env[n++] = '\\';
+			for (int i = 0; i < 49; i++)
+				env[n++] = 'a';
+		}
+		env[n] = 0;
+		_putenv(env);
+		Card_ResetForTest();
+		check(Card_Open() == CARD_IO_ERROR, "long path: an over-long save directory is refused");
+		MemCardExist(0);
+		check(syncResult(McFuncExist, "long-path Exist") == McErrCardNotExist,
+			  "long path: the game is told there is no card");
+		check(!exists("mcrd_test_tmp6"), "long path: no truncated directory was created");
+		_putenv("SBSP_SAVE_DIR=mcrd_test_tmp");
+		Card_ResetForTest();
+	}
+
 	if (g_failures)
 	{
 		std::printf("mcrd_test: %d failure(s)\n", g_failures);

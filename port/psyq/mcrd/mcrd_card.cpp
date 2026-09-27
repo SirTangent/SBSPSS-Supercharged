@@ -46,7 +46,12 @@
 #include "mcrd_card.h"
 
 static uint8_t	g_card[CARD_IMAGE_SIZE];
-static char		g_cardPath[512];
+/*	Paths are narrow in the process code page, UTF-8 once the exe's manifest
+	says so (issue #62): up to three bytes a character, so a MAX_PATH-length
+	directory needs ~780 bytes.  The file names ride on top of the directory
+	with room to spare.  */
+static const size_t	SAVE_DIR_MAX = 1024;
+static char		g_cardPath[SAVE_DIR_MAX + 32];	/* dir + "\\card0.mcd" */
 static int		g_opened;			/* 0 = never, 1 = ok, -1 = host unusable */
 static uint8_t	g_undo[CARD_IMAGE_SIZE];	/* g_card before the mutation in flight */
 
@@ -80,12 +85,27 @@ extern "C" int Port_SaveDir(char *dst, size_t n);	/* host/hostpath.cpp */
 
 /*	SBSP_SAVE_DIR verbatim, else saves\ beside the exe, else
 	%APPDATA%\SBSPSS - created if needed.  Resolved on every open: the
-	tests re-point the variable between opens.  */
-static void resolvePath(void)
+	tests re-point the variable between opens.
+	Returns 0 if the path does not fit: a truncated one names some other
+	file, so it is never opened - the session runs with no card instead.  */
+static int resolvePath(void)
 {
-	char dir[448];
-	Port_SaveDir(dir, sizeof(dir));
-	snprintf(g_cardPath, sizeof(g_cardPath), "%s\\card0.mcd", dir);
+	char dir[SAVE_DIR_MAX];
+	g_cardPath[0] = 0;
+	if (!Port_SaveDir(dir, sizeof(dir)))
+	{
+		fprintf(stderr, "[mcrd] save directory path is longer than %u bytes - "
+						"no card this run\n", (unsigned)(sizeof(dir) - 1));
+		return 0;
+	}
+	int len = snprintf(g_cardPath, sizeof(g_cardPath), "%s\\card0.mcd", dir);
+	if (len < 0 || (size_t)len >= sizeof(g_cardPath))
+	{
+		fprintf(stderr, "[mcrd] card path under %s is too long - no card this run\n", dir);
+		g_cardPath[0] = 0;
+		return 0;
+	}
+	return 1;
 }
 
 /*	Write the image to the host file.  `replace` is 1 for every save (the
@@ -97,8 +117,13 @@ static void resolvePath(void)
 	"flush" itself is a PSY-Q macro (R3000.H) - hence the name  */
 static CardResult cardFlush(int replace)
 {
-	char tmp[520];
-	snprintf(tmp, sizeof(tmp), "%s.tmp", g_cardPath);
+	char tmp[sizeof(g_cardPath) + 8];
+	int  len = snprintf(tmp, sizeof(tmp), "%s.tmp", g_cardPath);
+	if (len < 0 || (size_t)len >= sizeof(tmp))
+	{
+		fprintf(stderr, "[mcrd] temp path for %s is too long\n", g_cardPath);
+		return CARD_IO_ERROR;
+	}
 
 	FILE *f = fopen(tmp, "wb");
 	if (!f)
@@ -196,12 +221,16 @@ CardResult Card_Open(void)
 	if (g_opened)
 		return g_opened > 0 ? CARD_OK : CARD_IO_ERROR;
 
-	resolvePath();
-
 	/*	Every refusal below latches g_opened = -1: the rest of the session
 		runs with no card (the game shows its own "no memory card" screens)
 		and the file is left for the user to sort out.  No retry - a card
 		that came and went mid-session would only confuse the game's scan.  */
+	if (!resolvePath())
+	{
+		g_opened = -1;
+		return CARD_IO_ERROR;
+	}
+
 	errno = 0;
 	FILE *f = fopen(g_cardPath, "rb");
 	int   openErrno = errno;
