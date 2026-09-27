@@ -27,8 +27,9 @@
 # SBSP_CODEVIEW=1 in the environment configures the MinGW trees with
 # -DSBSP_CODEVIEW=ON (a .pdb beside every exe, for Visual Studio / WinDbg).
 #
-# Requires the MSYS2 mingw32 toolchain:
-#   pacman -S --needed mingw-w64-i686-gcc mingw-w64-i686-cmake mingw-w64-i686-ninja
+# Requires the MSYS2 mingw32 toolchain, and its Python for the playthrough
+# tests (configure stops without it; -DSBSP_PLAYTHROUGH=OFF opts out):
+#   pacman -S --needed mingw-w64-i686-gcc mingw-w64-i686-cmake mingw-w64-i686-ninja mingw-w64-i686-python
 
 set -e
 # presets live in port/, and cmake resolves --preset from the cwd

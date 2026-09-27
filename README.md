@@ -37,8 +37,12 @@ Then install the 32-bit compiler toolchain (same shell is fine, these are
 just packages):
 
 ```bash
-pacman -S --needed mingw-w64-i686-gcc mingw-w64-i686-cmake mingw-w64-i686-ninja mingw-w64-i686-vulkan-headers
+pacman -S --needed mingw-w64-i686-gcc mingw-w64-i686-cmake mingw-w64-i686-ninja mingw-w64-i686-vulkan-headers mingw-w64-i686-python
 ```
+
+Python runs the automated playthrough tests, and configure stops if it is
+missing. To build without those tests, configure with
+`-DSBSP_PLAYTHROUGH=OFF`.
 
 SDL3 needs special handling. MSYS2 is retiring its 32-bit environment and has
 removed `mingw-w64-i686-sdl3` from the package index, but the package file is
