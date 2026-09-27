@@ -83,7 +83,7 @@ int main()
 		checkPx(100, 200, 0x1234, "MoveImage source intact");
 	}
 
-	/* --- ClearImage oversized rects: libgpu CLAMPS, then GP0(02h) masks ---
+	/* --- ClearImage oversized rects: libgpu CLAMPS, then fills ------------
 		Disassembled from LIBGPU.LIB's ClearImage packet builder: w -> [0,1023],
 		h -> [0,511] BEFORE the fill command.  The old assertion here ("w=2048
 		masks to a no-op") modelled the raw hardware rule at the library layer,
@@ -93,14 +93,17 @@ int main()
 		resetEnv();
 		RECT big = { 512, 256, 2048, 254 };
 		ClearImage(&big, 255, 0, 0);
-		/*	w clamps to 1023 (libgpu), then clips to the VRAM edge instead of
-			wrapping - actor.cpp's green cache wipe must never cross into the
-			framebuffer columns (the level-loading green-overlay regression)  */
+		/*	w clamps to 1023 (libgpu), which is not 64-aligned, so the fill is
+			the GP0(60h) draw that clips at the VRAM edge instead of wrapping -
+			actor.cpp's green cache wipe must never cross into the framebuffer
+			columns (the level-loading green-overlay regression).  The row
+			checks sample column 512, inside the rect's columns.  */
 		checkPx(512, 256, 0x001F, "ClearImage w=2048 fills from its origin");
 		checkPx(1023, 256, 0x001F, "ClearImage w=2048 fills to the right edge");
 		checkPx(0, 256, 0x0000, "ClearImage does NOT wrap into the framebuffer");
-		checkPx(0, 0, 0x0000, "ClearImage did not touch rows above the rect");
-		checkPx(0, 510, 0x0000, "ClearImage h=254 stops at row 509");
+		checkPx(512, 255, 0x0000, "ClearImage did not touch the row above the rect");
+		checkPx(512, 509, 0x001F, "ClearImage h=254 fills row 509");
+		checkPx(512, 510, 0x0000, "ClearImage h=254 stops at row 509");
 
 		RECT ok = { 512, 256, 64, 32 };
 		ClearImage(&ok, 255, 0, 0);
@@ -337,6 +340,92 @@ int main()
 		RECT mz = { 40, 30, 0, 4 };
 		check(MoveImage(&mz, 300, 30) == -1, "MoveImage w=0 returns -1");
 		checkPx(300, 30, 0x0000, "MoveImage w=0 moves nothing");
+	}
+
+	/*	--- ClearImage: libgpu's 02h/60h split (issue #28) --------------------
+		After the clamp, x and w both 64-aligned emit the GP0(02h) fill (raw:
+		wraps at the VRAM edge); anything else is a GP0(60h) opaque rect with
+		the draw area set to all of VRAM and the offset zeroed around it -
+		exact to the pixel, untouched by the game's draw env, clipped only by
+		the VRAM edge.  */
+	{
+		resetEnv();
+		RECT un = { 520, 20, 16, 4 };			/* x not aligned: 60h */
+		ClearImage(&un, 255, 0, 0);
+		checkPx(519, 20, 0x0000, "ClearImage x=520 leaves 519 (not rounded to 512)");
+		checkPx(520, 20, 0x001F, "ClearImage x=520 fills from 520");
+		checkPx(535, 23, 0x001F, "ClearImage x=520 w=16 fills to 535");
+		checkPx(536, 20, 0x0000, "ClearImage x=520 w=16 stops at 535");
+		checkPx(520, 24, 0x0000, "ClearImage h=4 stops at row 23");
+
+		RECT w100 = { 512, 40, 100, 2 };		/* w not aligned: 60h */
+		ClearImage(&w100, 255, 0, 0);
+		checkPx(611, 40, 0x001F, "ClearImage w=100 fills to x=611");
+		checkPx(612, 40, 0x0000, "ClearImage w=100 is not rounded up to 112");
+
+		/*	an offset, clipped draw env: the 60h fill ignores it and leaves it  */
+		DRAWENV env;
+		SetDefDrawEnv(&env, 0, 0, 64, 64);
+		env.ofs[0] = 100;
+		env.ofs[1] = 50;
+		PutDrawEnv(&env);
+		RECT out = { 130, 10, 20, 5 };
+		ClearImage(&out, 0, 255, 0);
+		checkPx(130, 10, 0x03E0, "ClearImage ignores the draw clip and offset");
+		checkPx(149, 14, 0x03E0, "ClearImage fills its rect outside the clip");
+		checkPx(230, 60, 0x0000, "ClearImage did not add the draw offset");
+		check(g_gpu.clipX0 == 0 && g_gpu.clipY0 == 0
+			  && g_gpu.clipX1 == 63 && g_gpu.clipY1 == 63,
+			  "ClearImage leaves the draw area as it was");
+		check(g_gpu.ofsX == 100 && g_gpu.ofsY == 50,
+			  "ClearImage leaves the draw offset as it was");
+
+		/*	right edge: the 60h draw clips, the aligned 02h fill wraps  */
+		resetEnv();
+		RECT edgeU = { 1000, 30, 50, 2 };
+		ClearImage(&edgeU, 255, 0, 0);
+		checkPx(1023, 31, 0x001F, "unaligned ClearImage fills to the right edge");
+		checkPx(0, 30, 0x0000, "unaligned ClearImage clips at the edge");
+		checkPx(25, 31, 0x0000, "unaligned ClearImage does not wrap");
+
+		RECT edgeA = { 960, 40, 128, 2 };
+		ClearImage(&edgeA, 0, 0, 255);
+		checkPx(960, 40, 0x7C00, "aligned ClearImage fills from its origin");
+		checkPx(1023, 41, 0x7C00, "aligned ClearImage fills to the right edge");
+		checkPx(0, 40, 0x7C00, "aligned ClearImage wraps like GP0(02h)");
+		checkPx(63, 41, 0x7C00, "aligned ClearImage wraps its whole overhang");
+		checkPx(64, 40, 0x0000, "aligned ClearImage wraps no further");
+
+		/*	PutDrawEnv's isbg clear takes the same split, clipped by the env  */
+		resetEnv();
+		SetDefDrawEnv(&env, 520, 100, 40, 8);
+		env.isbg = 1;
+		setRGB0(&env, 255, 255, 255);
+		PutDrawEnv(&env);
+		checkPx(519, 100, 0x0000, "isbg clear x=520 leaves 519");
+		checkPx(520, 100, 0x7FFF, "isbg clear fills the clip rect");
+		checkPx(559, 107, 0x7FFF, "isbg clear fills to the clip's corner");
+		checkPx(560, 107, 0x0000, "isbg clear stops at the clip's right edge");
+		checkPx(559, 108, 0x0000, "isbg clear stops at the clip's bottom edge");
+
+		/*	ClearImage2 is the same executor (dfe set, which the shim ignores)  */
+		static const RECT shapes[] =
+		{
+			{ 512, 256, 2048, 254 }, { 520, 20, 16, 4 }, { 960, 40, 128, 2 },
+			{ 0, 0, 512, 512 }, { -8, -4, 40, 30 },
+		};
+		static uint16_t viaOne[VRAM_H][VRAM_W];
+		for (unsigned k = 0; k < sizeof(shapes) / sizeof(shapes[0]); k++)
+		{
+			RECT r = shapes[k];
+			memset(g_vram, 0, sizeof(g_vram));
+			ClearImage(&r, 200, 100, 50);
+			memcpy(viaOne, g_vram, sizeof(g_vram));
+			memset(g_vram, 0, sizeof(g_vram));
+			ClearImage2(&r, 200, 100, 50);
+			check(memcmp(viaOne, g_vram, sizeof(g_vram)) == 0,
+				  "ClearImage2 draws ClearImage's pixels");
+		}
 	}
 
 	/* --- texture window (E2): u -> (u & ~mask*8) | (offset&mask)*8 -------- */
