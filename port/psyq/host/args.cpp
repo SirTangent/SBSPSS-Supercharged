@@ -12,10 +12,10 @@
 	                    bonus level; 6-N also addresses bonus level N).
 	                    N: raw LvlTable index 0..24.
 	                    Env equivalent: SBSP_BOOT_LEVEL (same formats).
-	  --seed <n>        fixed setRndSeed value (host/seed.cpp; without it the
-	                    shim takes a replayed recording's `# seed`, else the
-	                    boot tick count, and --record-pad writes the result
-	                    down).  Env: SBSP_SEED.
+	  --seed <n>        fixed setRndSeed value (host/seed.cpp; without it a
+	                    replayed recording's `# seed`, else the game's own,
+	                    which is the same every boot; --record-pad writes a
+	                    given seed down).  Env: SBSP_SEED.
 	  --invincible      SBSP_INVINCIBLE=1: the DEBUG pause menu's
 	                    invincibleSponge, set at Port_RegisterGameGlobals (M8).
 	  --language <l>    text language for the boot-time
@@ -128,7 +128,7 @@ static int parseSeed(const char *s, const char *what)
 	long v = strtol(s, &end, 0);
 	if (end == s || *end)
 	{
-		fprintf(stderr, "[args] bad %s '%s' - using the boot tick count\n", what, s);
+		fprintf(stderr, "[args] bad %s '%s' - ignored\n", what, s);
 		return 0;
 	}
 	Port_SeedExplicit(v);
@@ -178,7 +178,7 @@ static void usage(void)
 		"  --level C-L | N       boot straight into a level (chapter 1-5,\n"
 		"                        level 1-5; L=5 = bonus; or LvlTable index 0-24)\n"
 		"  --seed <n>            fixed random seed        (SBSP_SEED)\n"
-		"                        (default: a replayed recording's # seed, else the boot tick)\n"
+		"                        (default: a replayed recording's # seed, else the game's own)\n"
 		"  --invincible          player takes no damage   (SBSP_INVINCIBLE=1)\n"
 		"  --language <l>        boot text language       (SBSP_LANGUAGE)\n"
 		"                        a name or its locale/textdbase.h enum index:\n"
@@ -209,7 +209,7 @@ static void usage(void)
 		"  --assert-continue     log asserts, keep going  (SBSP_ASSERT_CONTINUE=1)\n"
 		"  --mem-log             RamUsed high-water log   (SBSP_MEM_LOG=1)\n"
 		"Settings (sbsp.ini beside the exe, written with defaults on first run;\n"
-		"argument > environment > ini; a scripted run reads only an explicit --ini):\n"
+		"argument > environment > ini; --pad-file/--pad-script runs read only an explicit --ini):\n"
 		"  --ini <path>          settings file            (SBSP_INI)\n"
 		"  --window WxH|fullscreen  window size / borderless fullscreen (SBSP_WINDOW)\n"
 		"  --scale fit|integer|stretch  viewport scaling  (SBSP_SCALE)\n"
@@ -267,11 +267,21 @@ extern "C" int Port_HarnessRun(void);
 	(--level/--seed/--language) read their variables after this returns.
 	Location: --ini / SBSP_INI, else <exe dir>\sbsp.ini - where a tester
 	will look, and what makes an unpacked folder self-contained.  Defaults
-	are written there on the first run, but only for an interactive one.
-	A scripted run (Port_HarnessRun) takes only an explicit --ini: what it
-	draws must not depend on the key bindings, language or prompt icons in
-	whatever file sits beside the exe it was pointed at (issue #58), and it
-	must leave no files behind.  */
+	are written there on the first run, but only for an interactive one
+	(Port_HarnessRun: a scripted run must leave no files behind).  A run
+	whose INPUT is scripted (--pad-file / --pad-script - host/input.cpp's
+	g_scripted, the same test) takes only an explicit --ini: it ignores the
+	machine's keyboard and pad, and what it draws must not depend on the key
+	bindings, language or prompt icons in whatever file sits beside the exe
+	either (issue #58).  A developer playing live with --uncapped or
+	--exit-after is not scripted and keeps their settings.  */
+static int scriptedInput(void)
+{
+	const char *f = getenv("SBSP_PAD_FILE");
+	const char *s = getenv("SBSP_PAD_SCRIPT");
+	return (f && *f) || (s && *s);
+}
+
 static void loadIni(void)
 {
 	char exeDir[512], path[600];
@@ -283,8 +293,8 @@ static void loadIni(void)
 			fprintf(stderr, "[ini] cannot open %s\n", explicitPath);
 		return;
 	}
-	if (Port_HarnessRun())
-		return;					/* a scripted run: built-in defaults, no file read or written */
+	if (scriptedInput())
+		return;					/* scripted input: built-in defaults, no file read or written */
 
 	if (!Port_ExeDir(exeDir, sizeof(exeDir)))
 		return;					/* no path to ourselves: built-in defaults */
@@ -292,6 +302,8 @@ static void loadIni(void)
 
 	if (Port_IniLoad(path) >= 0)
 		return;
+	if (Port_HarnessRun())
+		return;					/* a scripted run leaves no files behind */
 	if (Port_IniWriteDefaults(path))
 		Port_IniLoad(path);
 	else

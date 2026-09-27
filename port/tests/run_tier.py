@@ -14,10 +14,11 @@ the recording's "# epoch" ram/CRC markers and requires identical [scene] and
 [frame] streams - the determinism proof, per route (--no-replay skips it).
 
 Runs are isolated from the machine (issue #58): every inherited SBSP_*
-variable is dropped (a route's "# env" is the whole environment), the game
-reads no sbsp.ini for a scripted run and ignores its live keyboard and pad,
-so a local ini or a plugged-in controller cannot move a frame CRC.  A
-"[ini] loaded" line in a run's log is therefore a failure.
+variable is dropped (a route's "# env" is the whole environment), and every
+run is a scripted-input run (--pad-file, or for the self-test a one-entry
+--pad-script), for which the game reads no sbsp.ini and ignores its live
+keyboard and pad - so a local ini or a plugged-in controller cannot move a
+frame CRC.  A "[ini] loaded" line in a run's log is therefore a failure.
 
 Tier 1 routes live in port/tests/routes/<name>.pad.  A route's header is
 plain pad-file comments the game ignores and this script reads:
@@ -490,12 +491,20 @@ def selftest(exe, seed, logdir):
     ]
     ok = True
     for name, env, want, tag in cases:
-        args = ["--level", "1-1", "--seed", str(seed), "--exit-after", "300"] + DETERMINISM
+        # --pad-script: nothing pressed, but a scripted-input run like every
+        # other one here (no sbsp.ini, live keyboard and pad ignored)
+        args = ["--level", "1-1", "--seed", str(seed), "--exit-after", "300",
+                "--pad-script", "0:0000"] + DETERMINISM
         log = Path(logdir) / f"selftest_{name}.log" if logdir else None
         res = run_game(exe, args, env, 120, log)
         tagged = any(l.startswith(tag) for l in res.lines)
         summary = any(l.startswith("[summary]") for l in res.lines)
-        good = res.code == want and tagged and summary
+        # the self-test provokes forbidden tags on purpose, so FORBIDDEN as a
+        # whole does not apply - but it must read no sbsp.ini, like every run
+        ini = [l for l in res.lines if l.startswith("[ini] loaded")]
+        good = res.code == want and tagged and summary and not ini
+        if ini:
+            print(f"       {ini[0]}")
         print(f"  {'PASS' if good else 'FAIL'} selftest {name}: exit {res.code} (want {want}), "
               f"{tag} {'seen' if tagged else 'MISSING'}, [summary] {'seen' if summary else 'MISSING'}")
         ok &= good

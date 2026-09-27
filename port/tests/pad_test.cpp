@@ -445,7 +445,11 @@ int main(void)
 	SDL_DetachVirtualJoystick(id);
 	pumpEvents();
 	check(SDL_GetGamepadFromID(id2) != NULL, "first pad removed: the second is adopted");
-	check(Port_InputPadActive() == 1, "an adopted pad owns the prompts");
+	/*	the game sees the device only as of the last input frame (the
+		latch the recorder shares) - and an adopted pad inherits the
+		prompts as they were; the pad was driving here  */
+	Port_InputFrame(vblank++);
+	check(Port_InputPadActive() == 1, "an adopted pad keeps the prompts the removed one had");
 	SDL_Joystick *joy2 = SDL_GetJoystickFromID(id2);
 	check(joy2 != NULL, "SDL_GetJoystickFromID(id2)");
 	if (joy2)
@@ -462,6 +466,9 @@ int main(void)
 	/*	-------- hotplug: detach -> the shim closes and the pad reads idle  */
 	SDL_DetachVirtualJoystick(id2);
 	pumpEvents();
+	/*	the unplug is handled, but the game is shown it only at the next
+		input frame - the latch the recorder's `# prompt` shares (#58)  */
+	check(Port_InputPadActive() == 1, "an unplug reaches the prompts only at the next input frame");
 	Port_InputFrame(vblank++);
 	check(packetMask(pad0) == 0, "packet idle after disconnect");
 	check(pad0[6] == 0x80, "sticks centred after disconnect");

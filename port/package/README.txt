@@ -87,10 +87,10 @@ Test sessions
 Run run-test-session.cmd (double-click it) instead of the exe.  It starts
 sbsp-debug.exe, records everything you press (buttons and stick, on either
 device), keeps the logs, and copies your memory card before and after and
-your settings after.  Play as you normally would; save in the game whenever
-you like - the card in saves\ is yours and persists between sessions, so a
-long play-through can be split over several sessions.  We can replay a
-session exactly on another build from what the folder holds.
+the settings you started with.  Play as you normally would; save in the
+game whenever you like - the card in saves\ is yours and persists between
+sessions, so a long play-through can be split over several sessions.  We
+can replay a session exactly on another build from what the folder holds.
 
 When you close the game the script prints the exit code and the summary
 line, and names the folder it made under sessions\.  Zip that folder and

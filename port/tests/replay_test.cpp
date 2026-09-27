@@ -8,19 +8,26 @@
 	    in it at all
 	  - a button still held when a scene opens, pressed again in the new
 	    scene's terms (a scene open releases every entry on replay)
-	  - the header: `# seed` (host/seed.cpp - a replay without --seed runs
-	    the same RNG), `# pace`, and the `# prompt` device switches
+	  - the header: `# seed` when the recording was given one (host/seed.cpp
+	    - a replay without --seed then runs the same RNG; with none given the
+	    game seeds itself identically every boot), `# pace`, and the
+	    `# prompt` device switches
 	  - a scripted run ignores the live devices: the replaying process holds
 	    SQUARE and the stick hard left the whole time, and none of it may
 	    reach the packet, the prompts or the recording
 	  - an epoch carries the game's RNG state: a replay forced onto the wrong
 	    seed must report a desync even though its picture and RamUsed match
 
-	Three processes, because the pad file is parsed once per process and the
-	recorder never closes its file: the parent spawns itself as "record"
-	(a virtual pad drives buttons and stick, A is written), checks A line by
-	line, spawns itself as "replay" (A played back, B written), and compares
-	B with A.  The children step vblanks with VSync(0) under SBSP_UNCAPPED=1,
+	A parent and six children, because the pad file is parsed once per
+	process and the recorder never closes its file: the parent spawns itself
+	as "record" (a virtual pad drives buttons and stick, --seed 4242, A is
+	written), checks A line by line, spawns "replay" (A played back, B
+	written) and compares B with A, then "wrongseed" (A with the seed + 1:
+	must desync), "record-unseeded" (no seed: C must carry no `# seed`) and
+	"replay" again on A with its rng fields stripped (an older recording:
+	must still replay clean), and "expect-desync" on that copy with an
+	epoch's crc doctored (its 3-field epochs must still be checked).  The
+	children step vblanks with VSync(0) under SBSP_UNCAPPED=1,
 	so Port_VBlankCount advances and Host_VBlank calls Port_InputFrame exactly
 	as in the game, and open scenes through Port_SceneEvent at chosen counts.
 	Headless: the dummy video driver; the test pumps SDL events itself, as
@@ -32,9 +39,11 @@
 #include <windows.h>
 #include <process.h>
 
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 #include "host/pump.h"		/* Port_VBlankCount */
 #include "host/diag.h"		/* Port_SceneEvent, Port_InputAtExit */
@@ -201,11 +210,11 @@ static void drive(SDL_Joystick *joy, bool replay)
 }
 
 /*	-------- the children  */
-enum Mode { RECORD, REPLAY, WRONG_SEED };
+enum Mode { RECORD, RECORD_UNSEEDED, REPLAY, WRONG_SEED, EXPECT_DESYNC };
 
 static int childMain(Mode mode)
 {
-	bool replay = mode != RECORD;
+	bool replay = mode == REPLAY || mode == WRONG_SEED || mode == EXPECT_DESYNC;
 	if (!sdlUp())
 		return 1;
 	setEnv("SBSP_UNCAPPED", "1");			/* before the first VSync: Port_Uncapped caches */
@@ -215,10 +224,13 @@ static int childMain(Mode mode)
 	long seed = 0;
 	check(Port_PadFileSeed(&seed) == (replay ? 1 : 0),
 		  replay ? "replay: the recording carries a seed" : "record: no recording, no seed to inherit");
+	if (mode == RECORD)
+		Port_SeedExplicit(4242);				/* what --seed 4242 does: `# seed 4242` */
 	if (mode == WRONG_SEED)
 		Port_SeedExplicit(seed + 1);			/* what --seed <other> does */
-	Port_BootSeed(&seed);
-	g_fakeRng = seed;
+	/*	main.cpp: setRndSeed(Port_BootSeed(&seed) ? seed : VidGetTickCount()),
+		and VidGetTickCount() is 0 at that point on every boot  */
+	g_fakeRng = Port_BootSeed(&seed) ? seed : 0;
 	Port_RegisterGameGlobals(&g_fakeRam, NULL, NULL, NULL, NULL, NULL, NULL, &g_fakeRng);
 	drive(joy, replay);
 	int bad = Port_InputAtExit();
@@ -226,6 +238,8 @@ static int childMain(Mode mode)
 		check(bad == 0, "replay: no desync, every entry satisfied");
 	if (mode == WRONG_SEED)
 		check(bad > 0, "wrong seed: the epoch's rng catches it though picture and RamUsed match");
+	if (mode == EXPECT_DESYNC)
+		check(bad > 0, "a doctored epoch is reported");
 	SDL_Quit();
 	return g_failures ? 1 : 0;
 }
@@ -257,7 +271,7 @@ static void checkRecording(const char *path)
 	{
 		{ "# recorded by sbsp --record-pad", true  },
 		{ abi,                              false },
-		{ "# seed ",                        true  },
+		{ "# seed 4242",                    false },	/* the recording was given one */
 		{ "# pace uncapped",                false },
 		{ "# prompt 1 pad",                 false },	/* a pad plugged in before the first frame */
 		{ "# scene FrontEnd#1 vblank=10",   false },
@@ -327,6 +341,10 @@ int main(int argc, char **argv)
 		return childMain(REPLAY);
 	if (argc > 1 && std::strcmp(argv[1], "wrongseed") == 0)
 		return childMain(WRONG_SEED);
+	if (argc > 1 && std::strcmp(argv[1], "record-unseeded") == 0)
+		return childMain(RECORD_UNSEEDED);
+	if (argc > 1 && std::strcmp(argv[1], "expect-desync") == 0)
+		return childMain(EXPECT_DESYNC);
 
 	char exe[MAX_PATH], tmp[MAX_PATH], a[MAX_PATH + 48], b[MAX_PATH + 48];
 	if (!GetModuleFileNameA(NULL, exe, sizeof(exe)) || !GetTempPathA(sizeof(tmp), tmp))
@@ -341,6 +359,13 @@ int main(int argc, char **argv)
 	std::remove(b);
 
 	clearEnv();
+
+	/*	0. no --seed and no recording: the hook leaves the seed to the game
+		(which seeds the same way every boot), and --record-pad writes no
+		`# seed` for such a run  */
+	long untouched = 99;
+	check(Port_BootSeed(&untouched) == 0 && untouched == 99,
+		  "no seed given, none recorded: Port_BootSeed answers 0 and leaves the value alone");
 
 	/*	1. record A: the virtual pad plays  */
 	setEnv("SBSP_RECORD_PAD", a);
@@ -379,8 +404,76 @@ int main(int argc, char **argv)
 	rc = spawnSelf(exe, "wrongseed");
 	check(rc == 0, "wrong-seed child exited 0 (it saw the desync it expected)");
 
+	/*	5. record C with no seed at all: the game seeds itself the same way
+		every boot, so there is no `# seed` to write - but the epochs still
+		carry the RNG  */
+	char c[MAX_PATH + 48], old[MAX_PATH + 48];
+	std::snprintf(c, sizeof(c), "%ssbsp_replay_test_%lu_C.pad", tmp, pid);
+	std::snprintf(old, sizeof(old), "%ssbsp_replay_test_%lu_old.pad", tmp, pid);
+	setEnv("SBSP_PAD_FILE", "");
+	setEnv("SBSP_RECORD_PAD", c);
+	rc = spawnSelf(exe, "record-unseeded");
+	check(rc == 0, "unseeded record child exited 0");
+	size_t nc = 0;
+	char *dc = slurp(c, &nc);
+	check(dc != NULL, "unseeded recording exists");
+	if (dc)
+	{
+		check(std::strstr(dc, "# seed") == NULL, "an unseeded recording carries no `# seed`");
+		check(std::strstr(dc, "# epoch 300 ") && std::strstr(dc, " rng="), "its epochs still carry rng");
+	}
+	std::free(dc);
+
+	/*	6. an older recording - A without its rng fields - still replays
+		clean, and its 3-field epochs are really parsed and checked: the same
+		copy with the epoch's crc doctored must be reported  */
+	char bent[MAX_PATH + 48];
+	std::snprintf(bent, sizeof(bent), "%ssbsp_replay_test_%lu_bent.pad", tmp, pid);
+	da = slurp(a, &na);
+	if (da)
+	{
+		std::string s(da, na), cut;
+		for (size_t i = 0; i < s.size();)
+		{
+			if (s.compare(i, 5, " rng=") == 0)
+			{
+				i += 5;
+				while (i < s.size() && std::isxdigit((unsigned char)s[i]))
+					i++;
+				continue;
+			}
+			cut += s[i++];
+		}
+		check(cut.find(" rng=") == std::string::npos && cut.find("# epoch 300 ") != std::string::npos,
+			  "the old-format copy has epochs without rng");
+		std::string doctored = cut;
+		size_t crc = doctored.find(" crc=", doctored.find("# epoch 300 "));
+		if (crc != std::string::npos)
+			doctored.replace(crc + 5, 8, doctored.compare(crc + 5, 8, "DEADBEEF") ? "DEADBEEF" : "FEEDFACE");
+		for (const auto &out : { std::make_pair(old, &cut), std::make_pair(bent, &doctored) })
+		{
+			FILE *f = std::fopen(out.first, "wb");
+			if (f)
+			{
+				std::fwrite(out.second->data(), 1, out.second->size(), f);
+				std::fclose(f);
+			}
+		}
+	}
+	std::free(da);
+	setEnv("SBSP_RECORD_PAD", "");
+	setEnv("SBSP_PAD_FILE", old);
+	rc = spawnSelf(exe, "replay");
+	check(rc == 0, "an older recording (no rng fields) replays clean");
+	setEnv("SBSP_PAD_FILE", bent);
+	rc = spawnSelf(exe, "expect-desync");
+	check(rc == 0, "an older recording's 3-field epoch is checked (a doctored crc is caught)");
+
 	std::remove(a);
 	std::remove(b);
+	std::remove(c);
+	std::remove(old);
+	std::remove(bent);
 
 	if (g_failures)
 	{

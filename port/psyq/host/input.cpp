@@ -43,17 +43,19 @@
 	Either one makes the run SCRIPTED (issue #58): the live keyboard and
 	gamepad are ignored - mask, sticks and the prompt-icon device alike -
 	so the run, and whatever it records, is a function of the script and
-	of nothing else on the machine it happens to run on.  (Port_HarnessRun,
-	host/crash.cpp, is the shell's wider predicate: it also skips the
-	exe-dir sbsp.ini for such a run.)
+	of nothing else on the machine it happens to run on.  (args.cpp's loadIni
+	applies the same test and reads no exe-dir sbsp.ini for such a run;
+	Port_HarnessRun, host/crash.cpp, is the shell's wider predicate - it
+	adds --uncapped and --exit-after - and only stops defaults being written.)
 
 	The `#` data lines come from SBSP_RECORD_PAD=<path>, which writes the
 	applied mask in the scene-relative form - pressing again whatever is
 	still held when a scene opens, since the release rule above would let
 	go of it on replay - plus `# scene` markers, one `# epoch` marker every
 	300 vblanks, a `# prompt` line whenever the prompt-icon device changes,
-	and a header: the exe's pointer size (`# abi`), the seed the run used
-	(`# seed`, adopted by a replay that has no --seed - host/seed.cpp) and
+	and a header: the exe's pointer size (`# abi`), the seed when one was
+	given (`# seed`, adopted by a replay that has no --seed; without one the
+	game seeds itself the same way every boot - host/seed.cpp) and
 	its pacing (`# pace`; a mismatch is reported once, because load
 	durations then differ and every offset after a load drifts).  An epoch
 	carries RamUsed, the display CRC and the game's random-number state
@@ -87,8 +89,14 @@ extern unsigned char *Port_PadMotor[2];		/* pads_shim.cpp - PadSetAct buffer */
 static SDL_Gamepad	*g_gamepad;
 
 /*	Which device the button prompts should describe (issue #43): 1 while the
-	gamepad is driving, 0 for the keyboard.  See Port_InputPadActive.  */
+	gamepad is driving, 0 for the keyboard.  See Port_InputPadActive.
+	g_padActive follows the devices as their events arrive - including in
+	Host_PausePoll, between two vblanks; g_promptPad is what the game is
+	shown, latched from it once per Port_InputFrame, which is also where the
+	recorder writes `# prompt` and a replay applies it, so a change lands on
+	the same frame in both (issue #58).  */
 static int			g_padActive;
+static int			g_promptPad;
 
 /*	Rumble (M6): last values armed on the device, so a steady game state
 	does not spam the driver every vblank, plus the small motor's smoothed
@@ -175,35 +183,31 @@ static int			g_replayPadActive;		/* the recording's prompt device, so far */
 	script alone, whatever is plugged into the machine running it.  */
 static int			g_scripted;
 
-static void addEntry(const PadEntry &e)
+/*	Append to one of the growable arrays above (entries, epochs, prompt
+	marks).  A pad file is unbounded, so running out of memory is possible
+	on a huge or corrupt one: say so and stop rather than write through a
+	NULL realloc.  */
+template <class T>
+static void push(T *&arr, int &count, int &cap, const T &v, int first)
 {
-	if (g_entryCount == g_entryCap)
+	if (count == cap)
 	{
-		g_entryCap = g_entryCap ? g_entryCap * 2 : 64;
-		g_entries  = (PadEntry *)realloc(g_entries, g_entryCap * sizeof(PadEntry));
+		int	n = cap ? cap * 2 : first;
+		T	*p = (T *)realloc(arr, (size_t)n * sizeof(T));
+		if (!p)
+		{
+			fprintf(stderr, "[replay] pad script: out of memory at %d items - aborting\n", count);
+			Port_Exit(PORT_EXIT_ORACLE);
+		}
+		arr = p;
+		cap = n;
 	}
-	g_entries[g_entryCount++] = e;
+	arr[count++] = v;
 }
 
-static void addEpoch(const EpochCheck &ep)
-{
-	if (g_epochCount == g_epochCap)
-	{
-		g_epochCap = g_epochCap ? g_epochCap * 2 : 16;
-		g_epochs   = (EpochCheck *)realloc(g_epochs, g_epochCap * sizeof(EpochCheck));
-	}
-	g_epochs[g_epochCount++] = ep;
-}
-
-static void addPrompt(const PromptMark &pm)
-{
-	if (g_promptCount == g_promptCap)
-	{
-		g_promptCap = g_promptCap ? g_promptCap * 2 : 16;
-		g_prompts   = (PromptMark *)realloc(g_prompts, g_promptCap * sizeof(PromptMark));
-	}
-	g_prompts[g_promptCount++] = pm;
-}
+static void addEntry(const PadEntry &e)		{ push(g_entries, g_entryCount, g_entryCap, e, 64); }
+static void addEpoch(const EpochCheck &ep)	{ push(g_epochs, g_epochCount, g_epochCap, ep, 16); }
+static void addPrompt(const PromptMark &pm)	{ push(g_prompts, g_promptCount, g_promptCap, pm, 16); }
 
 static void scriptParse(void)
 {
@@ -518,8 +522,11 @@ static void epochCheck(unsigned long vblank)
 		if (ram != ep.ram || crc != ep.crc || rng != ep.rng)
 		{
 			g_desyncs++;
-			fprintf(stderr, "[replay] desync at vblank %lu (line %d): ram %lu vs %lu, crc %08X vs %08X, "
-							"rng %08X vs %08X\n", vblank, ep.line, ram, ep.ram, crc, ep.crc, rng, ep.rng);
+			fprintf(stderr, "[replay] desync at vblank %lu (line %d): ram %lu vs %lu, crc %08X vs %08X",
+					vblank, ep.line, ram, ep.ram, crc, ep.crc);
+			if (ep.hasRng)				/* an older recording's epoch has none to compare */
+				fprintf(stderr, ", rng %08X vs %08X", rng, ep.rng);
+			fputc('\n', stderr);
 		}
 	}
 }
@@ -547,7 +554,8 @@ extern "C" int Port_InputAtExit(void)
 /*	SBSP_RECORD_PAD=<path>: the applied mask, on change, in the scene-
 	relative grammar above, plus `# scene` markers at each open, a `# prompt`
 	line when the prompt-icon device changes and an `# epoch` line every 300
-	vblanks, under a header of `# abi`, `# seed` and `# pace`.  Flushed per
+	vblanks, under a header of `# abi`, `# seed` (if one was given) and
+	`# pace`.  Flushed per
 	line so a crash still leaves a usable file.  */
 static FILE			*g_rec;
 static int			g_recTried;
@@ -567,15 +575,17 @@ static void recordFrame(unsigned long vblank, unsigned mask)
 			g_rec = fopen(path, "w");
 			if (g_rec)
 			{
-				long seed = 0;
-				Port_BootSeed(&seed);		/* host/seed.cpp: decides now if the game has not asked yet */
 				fprintf(g_rec, "# recorded by sbsp --record-pad (mask: START=0800 SELECT=0100 "
 							   "UP=1000 RIGHT=2000 DOWN=4000 LEFT=8000 CROSS=0040 "
 							   "CIRCLE=0020 SQUARE=0080 TRIANGLE=0010 L1=0004 R1=0008 L2=0001 R2=0002)\n"
-							   "# abi ptr=%d\n"
-							   "# seed %ld\n"
-							   "# pace %s\n",
-						(int)sizeof(void *), seed, Port_Uncapped() ? "uncapped" : "capped");
+							   "# abi ptr=%d\n", (int)sizeof(void *));
+				/*	host/seed.cpp decides now if the game has not asked yet.  No
+					seed given: the game seeds itself, identically every boot,
+					and so will the replay - there is nothing to write down.  */
+				long seed = 0;
+				if (Port_BootSeed(&seed))
+					fprintf(g_rec, "# seed %ld\n", seed);
+				fprintf(g_rec, "# pace %s\n", Port_Uncapped() ? "uncapped" : "capped");
 			}
 			else
 				fprintf(stderr, "[input] SBSP_RECORD_PAD: cannot write %s\n", path);
@@ -629,7 +639,7 @@ static void recordFrame(unsigned long vblank, unsigned mask)
 }
 
 /*****************************************************************************/
-/*	Open one pad; on success it owns the prompts until a key is pressed.  */
+/*	Open one pad.  Returns 1 on success.  */
 static int openGamepad(SDL_JoystickID id, const char *how)
 {
 	g_gamepad = SDL_OpenGamepad(id);
@@ -641,7 +651,6 @@ static int openGamepad(SDL_JoystickID id, const char *how)
 		return 0;
 	}
 	fprintf(stderr, "[input] gamepad %s: %s\n", how, SDL_GetGamepadName(g_gamepad));
-	g_padActive = 1;
 	return 1;
 }
 
@@ -649,10 +658,14 @@ extern "C" void Port_InputHandleEvent(const void *evv)
 {
 	const SDL_Event *ev = (const SDL_Event *)evv;
 	if (ev->type == SDL_EVENT_GAMEPAD_ADDED && !g_gamepad)
-		openGamepad(ev->gdevice.which, "connected");
+	{
+		if (openGamepad(ev->gdevice.which, "connected"))
+			g_padActive = 1;				/* a plugged-in pad owns the prompts until a key is pressed */
+	}
 	else if (ev->type == SDL_EVENT_GAMEPAD_REMOVED && g_gamepad &&
 			 ev->gdevice.which == SDL_GetGamepadID(g_gamepad))
 	{
+		int wasActive = g_padActive;
 		SDL_CloseGamepad(g_gamepad);
 		g_gamepad = NULL;
 		g_rumbleLow = g_rumbleHigh = 0;
@@ -662,12 +675,17 @@ extern "C" void Port_InputHandleEvent(const void *evv)
 
 		/*	SDL announces a pad once, when it arrives, so a second controller
 			that was ignored while the first was open would stay dead until
-			replugged (issue #58): adopt the first one still connected.  */
+			replugged (issue #58): adopt the first one still connected.  It
+			inherits the prompts as they were - a keyboard player whose idle
+			pad was swapped out keeps the key caps.  */
 		int n = 0;
 		SDL_JoystickID *ids = SDL_GetGamepads(&n);
 		for (int i = 0; ids && i < n; i++)
 			if (ids[i] != ev->gdevice.which && openGamepad(ids[i], "adopted"))
+			{
+				g_padActive = wasActive;
 				break;
+			}
 		SDL_free(ids);
 	}
 }
@@ -824,7 +842,7 @@ extern "C" int Port_InputPadActive(void)
 	if (g_promptMode != PROMPT_AUTO)
 		return g_promptMode == PROMPT_PAD;
 	scriptsParse();
-	return g_scripted ? g_replayPadActive : g_padActive;
+	return g_scripted ? g_replayPadActive : g_promptPad;
 }
 
 /*	The key cap to draw for a pad button name, or PORT_CAP_NONE for the
@@ -1056,6 +1074,7 @@ extern "C" void Port_InputFrame(unsigned long vblank)
 			flicker the icons.  */
 		if (gp && !kb)		g_padActive = 1;
 		else if (kb && !gp)	g_padActive = 0;
+		g_promptPad = g_padActive;		/* the game sees device changes only here */
 	}
 	unsigned mask = kb | gp | scriptMask(vblank);
 	epochCheck(vblank);
