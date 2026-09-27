@@ -4,7 +4,8 @@
 	  1. Run-level dequant (Mdec_RlDecodeBlock): DC scaling, AC formula,
 	     zigzag placement, qscale==0 linear mode, EOB/padding handling.
 	  2. IDCT (Mdec_Idct): DC flatness plus golden vectors from
-	     make_mdec_golden.py (independent psx-spx transcription).
+	     make_mdec_golden.py (independent psx-spx transcription), and the
+	     int8 output saturation (9-bit sign extension, then clamp).
 	  3. yuv_to_rgb (Mdec_YuvToRgb24): full-macroblock golden, byte order.
 	  4. DecDCTin/DecDCTout/DecDCToutCallback: end-to-end stream decode,
 	     fmv.cpp-style callback chaining through the trampoline (flat stack).
@@ -248,6 +249,30 @@ static void testYuv(void)
 		check(memcmp(rgb, golden, sizeof(golden)) == 0, "yuv: macroblock golden");
 }
 
+/*	The saturation vector, last in the golden file: outputs in every regime
+	of the 9-bit sign extension + clamp.  */
+static void testIdctSaturation(void)
+{
+	int16_t blk[64];
+	memset(blk, 0, sizeof(blk));
+	blk[0] = 300;
+	blk[1] = 1023;
+	blk[8] = 1023;
+	blk[9] = 1023;
+	blk[10] = -1023;
+	Mdec_Idct(blk);
+	bool inRange = true;
+	for (int i = 0; i < 64; i++)
+		inRange = inRange && blk[i] >= -128 && blk[i] <= 127;
+	check(inRange, "idct: every output saturated to -128..127");
+
+	if (!g_golden)
+		return;
+	int16_t golden[64];
+	if (goldenRead(golden, sizeof(golden), "idct saturation"))
+		check(memcmp(blk, golden, sizeof(golden)) == 0, "idct: saturation golden vector");
+}
+
 /*****************************************************************************/
 /*	fmv.cpp-style DecDCTout chaining: the callback re-enters DecDCTout for
 	the next slice.  Assert flat stack via the trampoline, correct data,
@@ -483,6 +508,7 @@ int main(void)
 	testRlDecode();
 	testIdct();
 	testYuv();
+	testIdctSaturation();
 	testPipeline();
 	testWholeFrame();
 	testOutBounds();
