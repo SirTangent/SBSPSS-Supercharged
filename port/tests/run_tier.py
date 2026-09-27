@@ -77,6 +77,7 @@ import difflib
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -484,7 +485,7 @@ def tier2(exe, seed, short, logdir, only):
     return ok
 
 
-def selftest(exe, seed, logdir):
+def selftest(exe, seed, logdir, territory="USA"):
     cases = [
         ("assert", {"SBSP_SELFTEST": "assert@100"}, 10, "[assert]"),
         ("fault", {"SBSP_SELFTEST": "fault@100"}, 11, "[crash]"),
@@ -511,6 +512,58 @@ def selftest(exe, seed, logdir):
               f"{tag} {'seen' if tagged else 'MISSING'}, [summary] {'seen' if summary else 'MISSING'}")
         ok &= good
     ok &= selftest_paced(exe, seed, logdir)
+    ok &= selftest_wav(exe, seed, logdir, territory)
+    return ok
+
+
+def selftest_wav(exe, seed, logdir, territory):
+    """--dump-audio leaves a valid WAV on every exit path (issue #62): the
+    header is patched after each vblank's write and the clean/assert exits
+    close it through an exit hook.  RIFF must equal the file size - 8, the
+    data chunk must be a whole number of vblanks (44100/hz frames of s16
+    stereo) and fit the file - exactly on the clean and assert paths, which
+    run the hook - and the PCM must not be silence."""
+    per_vblank = (44100 // (50 if territory == "EUR" else 60)) * 4
+    cases = [
+        ("clean", {}, 0, True),
+        ("assert", {"SBSP_SELFTEST": "assert@200"}, 10, True),
+        ("fault", {"SBSP_SELFTEST": "fault@200"}, 11, False),
+        ("hang", {"SBSP_SELFTEST": "hang@200", "SBSP_WATCHDOG": "3"}, 12, False),
+    ]
+    ok = True
+    tmp = tempfile.mkdtemp(prefix="sbsp_wav_")
+    try:
+        for name, env, want, exact in cases:
+            wav = Path(tmp) / f"{name}.wav"
+            args = ["--level", "1-1", "--seed", str(seed), "--exit-after", "300",
+                    "--pad-script", "0:0000", "--dump-audio", str(wav)] + DETERMINISM
+            log = Path(logdir) / f"selftest_wav_{name}.log" if logdir else None
+            res = run_game(exe, args, env, 120, log)
+            b = wav.read_bytes() if wav.exists() else b""
+            problems = []
+            if res.code != want:
+                problems.append(f"exit {res.code}, want {want}")
+            if len(b) < 44 or b[0:4] != b"RIFF" or b[8:16] != b"WAVEfmt " or b[36:40] != b"data":
+                problems.append(f"no WAV header ({len(b)} bytes)")
+                riff = data = 0
+            else:
+                riff, = struct.unpack_from("<I", b, 4)
+                data, = struct.unpack_from("<I", b, 40)
+                if riff != len(b) - 8:
+                    problems.append(f"RIFF size {riff} != file size - 8 ({len(b) - 8})")
+                if data == 0 or data % per_vblank:
+                    problems.append(f"data size {data} is not a whole number of {per_vblank}-byte vblanks")
+                if data > len(b) - 44 or (exact and data != len(b) - 44):
+                    problems.append(f"data size {data} {'!=' if exact else '>'} file size - 44 ({len(b) - 44})")
+                if not any(b[44:44 + data]):
+                    problems.append("PCM is all zero")
+            good = not problems
+            print(f"  {'PASS' if good else 'FAIL'} selftest wav {name}: exit {res.code}, "
+                  f"{len(b)} bytes, data {data} = {data / per_vblank:.2f} vblanks"
+                  + ("" if good else " - " + "; ".join(problems)))
+            ok &= good
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
     return ok
 
 
@@ -628,7 +681,7 @@ def main():
 
     ok = True
     if a.selftest:
-        ok &= selftest(exe, a.seed, a.logs)
+        ok &= selftest(exe, a.seed, a.logs, a.territory)
     if a.tier1:
         ok &= tier1(exe, a.seed, a.fast, a.logs, only_routes, not a.no_replay, a.territory)
     if a.tier2:

@@ -16,6 +16,11 @@
 	  Sample-exact reproducible output, works headless and on machines
 	  with no sound device.  The modes must not combine: every render
 	  ADVANCES the mixer, so two consumers would each get half the audio.
+	  The header is patched after every vblank's write (Wav_Sync), so
+	  the file is a valid WAV of whole vblanks however the process ends -
+	  a watchdog kill, a fault, TerminateProcess - and an exit hook
+	  (Port_OnExit; Port_Exit's _exit runs no atexit handler) closes it
+	  on the clean and assert paths.
 
 	  --no-audio / SBSP_NO_AUDIO=1 skips the device without dumping.
 
@@ -32,6 +37,7 @@
 
 #include "spu/spu_core.h"
 #include "host/wav_writer.h"
+#include "host/diag.h"			/* Port_OnExit */
 
 namespace
 {
@@ -59,8 +65,9 @@ void SDLCALL audioPull(void *userdata, SDL_AudioStream *stream,
 	}
 }
 
-void closeWavAtExit(void)
+void closeWav(int code)
 {
+	(void)code;
 	if (g_wavOpen)
 	{
 		Wav_Close(&g_wav);
@@ -92,7 +99,7 @@ extern "C" void Host_EnsureAudio(void)
 		if (Wav_Open(&g_wav, dump, 44100, 2))
 		{
 			g_wavOpen = 1;
-			atexit(closeWavAtExit);
+			Port_OnExit(closeWav, 0);	/* not fault-safe: fclose takes the stream lock */
 			fprintf(stderr, "[host] audio dump -> %s (no playback device)\n",
 					dump);
 		}
@@ -197,7 +204,9 @@ extern "C" void Host_AudioPause(int on)
 		SDL_ResumeAudioStreamDevice(g_stream);
 }
 
-/*	pump.cpp, once per emulated vblank, after the vblank callback chain  */
+/*	pump.cpp, once per emulated vblank, after the vblank callback chain and
+	before Host_VBlank - which can end the process (window close,
+	--exit-after, the self-test) and would take this vblank's audio with it  */
 extern "C" void Port_AudioVBlank(int vblankHz)
 {
 	if (!g_wavOpen)
@@ -215,4 +224,5 @@ extern "C" void Port_AudioVBlank(int vblankHz)
 		frames = 882;
 	Spu_RenderFrames(buf, frames);
 	Wav_Write(&g_wav, buf, frames);
+	Wav_Sync(&g_wav);
 }
