@@ -60,6 +60,11 @@ extern "C" uint32_t GPU_DisplayCRC32(int *masked);
 	assembles the same layout from DRAWENV.tpage/dtd.  */
 void GPU_ApplyTexpage(uint32_t tp);
 
+/*	gp0.cpp: the subset a textured polygon's tpage attribute reprograms -
+	texture page base, semi-transparency mode and depth, but not dither
+	(hardware leaves E1 bits 9-10 alone for the attribute).  */
+void GPU_ApplyPolyTexpage(uint32_t tp);
+
 /*	gp0.cpp: decode an E2 texture-window word into g_gpu (raw word plus the
 	sampler's mask/or form).  Shared with the GPU reset path.  */
 void GPU_ApplyTexWindow(uint32_t word);

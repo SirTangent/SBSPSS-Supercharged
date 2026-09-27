@@ -38,17 +38,30 @@ static void vtxFromWord(RasterVtx *v, uint32_t xy)
 	v->y = signext11(xy >> 16) + g_gpu.ofsY;
 }
 
-/*	The one decode of E1 draw-mode bits.  Reached three ways - a standalone
-	0xE1 word, a textured poly's tpage attribute, and PutDrawEnv (which
-	assembles the same bit layout out of DRAWENV.tpage/dtd) - so it lives
-	here rather than being spelled out at each.  */
+/*	The one decode of E1 draw-mode bits.  Reached two ways - a standalone
+	0xE1 word and PutDrawEnv (which assembles the same bit layout out of
+	DRAWENV.tpage/dtd) - so it lives here rather than being spelled out at
+	each.  */
 void GPU_ApplyTexpage(uint32_t tp)
+{
+	GPU_ApplyPolyTexpage(tp);
+	g_gpu.dither   = (tp >> 9) & 1;
+}
+
+/*	A textured polygon's tpage attribute (the high half of vertex 1's uv
+	word) reprograms only the texture page, semi-transparency mode and
+	depth.  Its bits 9-10 do NOT touch E1's dither and draw-to-display bits
+	(psx-spx; DuckStation's POLYGON_TEXPAGE_MASK is 0x9FF, Mednafen's
+	SetTPage leaves dtd alone) - getTPage never sets bit 9, so decoding it
+	here switched dither off at every POLY_FT/GT and for every gouraud prim
+	after it, though the game asks for dither all frame (vid.cpp dtd=1 and
+	the primplus E1 words).  Issue #60.  */
+void GPU_ApplyPolyTexpage(uint32_t tp)
 {
 	g_gpu.texBaseX = (tp & 0xF) << 6;
 	g_gpu.texBaseY = ((tp >> 4) & 1) << 8;
 	g_gpu.semiMode = (tp >> 5) & 3;
 	g_gpu.texDepth = (tp >> 7) & 3;
-	g_gpu.dither   = (tp >> 9) & 1;
 }
 
 /*****************************************************************************/
@@ -130,7 +143,7 @@ static int execPoly(const uint32_t *w, int avail)
 			}
 			else if (k == 1)
 			{
-				GPU_ApplyTexpage(uv >> 16);	/* poly tpage attribute programs E1 bits */
+				GPU_ApplyPolyTexpage(uv >> 16);	/* page, semi, depth - never dither */
 			}
 		}
 	}
