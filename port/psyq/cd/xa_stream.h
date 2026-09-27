@@ -10,6 +10,12 @@
 #include <sys/types.h>
 #include <libcd.h>
 
+/*	Silence queued ahead of a speech stream's first audio sector (issue
+	#59): 756 frames = 40ms at 18.9kHz, more than the <1 vblank a sector
+	can arrive late by being quantized to vblanks (315 frames at 60Hz, 378
+	at 50Hz), so the ring never runs dry mid-line.  */
+#define XA_PREROLL_FRAMES	756
+
 /*	engine entry points, called from cd.cpp's command dispatch  */
 void XaStream_SetFilter(int file, int chan);
 void XaStream_GetFilter(int *file, int *chan);	/* str_stream's SF gate */

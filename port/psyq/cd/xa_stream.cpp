@@ -48,6 +48,7 @@ int		g_filterFile = 1;
 int		g_filterChan = -1;
 int		g_mode;						/* last CdlSetmode byte, recorded only */
 int		g_playing;
+int		g_preroll;					/* ReadS armed the pre-roll (issue #59) */
 long	g_curSector;				/* next sector index within TRACK1.IXA */
 long	g_acc;						/* fractional sector clock, units of hz */
 int32_t	g_h1, g_h2;					/* ADPCM history for the current stream */
@@ -130,6 +131,25 @@ void deliverNext(void)
 			{
 				static int16_t pcm[XA_SECTOR_SAMPLES];
 				XaAdpcm_DecodeSector4bitMono(sec + 8, pcm, &g_h1, &g_h2);
+				/*	Pre-roll.  The channel's sectors are 32 apart - 4032
+					samples every 12.8 vblanks at 60Hz - but each lands on a
+					whole vblank, up to one late, while the mixer drains the
+					ring continuously from the first push: without a cushion
+					the ring ran dry ~213ms into every line, a 63-sample
+					click.  So a stream's first sector is preceded by
+					XA_PREROLL_FRAMES of silence (only into an empty ring -
+					nothing is ever delayed behind queued audio).  The end
+					of the line is still the terminator sector, so the
+					game sees no timing change.  */
+				if (g_preroll)
+				{
+					g_preroll = 0;
+					if (Spu_CdInCount() == 0)
+					{
+						static const int16_t zeros[XA_PREROLL_FRAMES] = { 0 };
+						Spu_CdInPush(zeros, XA_PREROLL_FRAMES);
+					}
+				}
 				Spu_CdInPush(pcm, XA_SECTOR_SAMPLES);
 			}
 		}
@@ -167,6 +187,7 @@ void deliverNext(void)
 void XaStream_ResetForTest(void)
 {
 	g_playing = 0;
+	g_preroll = 0;
 	g_bound   = 0;
 	g_fp      = NULL;
 	g_endLogged = g_codingLogged = 0;
@@ -217,13 +238,15 @@ void XaStream_ReadS(const CdlLOC *pos)
 	g_acc       = 0;
 	g_h1 = g_h2 = 0;
 	g_endLogged = 0;
+	g_preroll   = 1;
 	g_playing   = 1;
 }
 
 void XaStream_Pause(void)
 {
-	/*	hardware pause cuts the ADPCM feed immediately; the <=213ms already
-		decoded into the ring would otherwise linger past a menu pause.
+	/*	hardware pause cuts the ADPCM feed immediately; the ~250ms already
+		decoded into the ring (a sector plus the pre-roll) would otherwise
+		linger past a menu pause.
 		Resume re-reads from the game's own coarse 32-sector position, so
 		the discarded tail stays inside its position slack.  */
 	if (g_playing && trace())

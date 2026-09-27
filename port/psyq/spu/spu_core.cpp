@@ -283,7 +283,7 @@ void Spu_CdInClear(void)
 	g_cdRate = 18900;
 }
 
-unsigned Spu_CdInCountForTest(void)
+unsigned Spu_CdInCount(void)
 {
 	std::lock_guard<std::mutex> lock(g_spuMutex);
 	return g_cdHead - g_cdTail;
