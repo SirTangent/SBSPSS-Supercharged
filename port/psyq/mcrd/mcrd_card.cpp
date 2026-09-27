@@ -17,7 +17,8 @@
 	  blocks 1-15 = file data, 8192 bytes each.
 
 	The whole image lives in memory; every mutation rewrites the host file
-	via a temp-file + rename so a crash mid-write cannot corrupt the save.
+	via a temp-file + rename so a crash mid-write cannot corrupt the save,
+	and is undone in memory if that write fails (txBegin/txCommit).
 
 	Host-file policy (Card_Open, cardFlush): an existing card0.mcd is never
 	formatted or replaced behind the user's back.  Only a card that is
@@ -47,6 +48,7 @@
 static uint8_t	g_card[CARD_IMAGE_SIZE];
 static char		g_cardPath[512];
 static int		g_opened;			/* 0 = never, 1 = ok, -1 = host unusable */
+static uint8_t	g_undo[CARD_IMAGE_SIZE];	/* g_card before the mutation in flight */
 
 /*****************************************************************************/
 /*	little-endian field access inside a frame  */
@@ -133,6 +135,24 @@ static CardResult cardFlush(int replace)
 		return CARD_IO_ERROR;
 	}
 	return CARD_OK;
+}
+
+/*	Every mutation is a transaction: txBegin() before touching g_card,
+	txCommit() to persist it.  If the host file cannot be written, or
+	the mutation itself fails partway (txAbort), g_card goes back to what
+	it was, so the in-memory card always equals card0.mcd.  Without this
+	one failed first save left a zero-filled file in memory only: the
+	re-scan rejected it (no "SC" magic) and every retry's CreateFile of
+	the same name hit CARD_FILE_EXISTS until the game was restarted.  */
+static void txBegin(void)	{ memcpy(g_undo, g_card, CARD_IMAGE_SIZE); }
+static void txAbort(void)	{ memcpy(g_card, g_undo, CARD_IMAGE_SIZE); }
+
+static CardResult txCommit(void)
+{
+	CardResult r = cardFlush(1);
+	if (r != CARD_OK)
+		txAbort();
+	return r;
 }
 
 /*****************************************************************************/
@@ -250,14 +270,16 @@ CardResult Card_Open(void)
 
 CardResult Card_Format(void)
 {
+	txBegin();
 	formatImage();
-	return cardFlush(1);
+	return txCommit();
 }
 
 CardResult Card_Unformat(void)
 {
+	txBegin();
 	memset(frame(0), 0, CARD_FRAME_SIZE);
-	return cardFlush(1);
+	return txCommit();
 }
 
 /*****************************************************************************/
@@ -369,6 +391,7 @@ CardResult Card_CreateFile(const char *name, long blocks)
 	if (got < blocks)
 		return CARD_FULL;
 
+	txBegin();
 	for (int i = 0; i < blocks; i++)
 	{
 		uint8_t *d = dirFrame(chain[i]);
@@ -383,7 +406,7 @@ CardResult Card_CreateFile(const char *name, long blocks)
 		frameChecksum(d);
 		memset(blockData(chain[i]), 0, CARD_BLOCK_SIZE);
 	}
-	return cardFlush(1);
+	return txCommit();
 }
 
 CardResult Card_DeleteFile(const char *name)
@@ -392,6 +415,7 @@ CardResult Card_DeleteFile(const char *name)
 	if (!b)
 		return CARD_NO_FILE;
 
+	txBegin();
 	for (int hops = 0; b && hops < CARD_DATA_BLOCKS; hops++)
 	{
 		uint8_t *d = dirFrame(b);
@@ -401,7 +425,7 @@ CardResult Card_DeleteFile(const char *name)
 		frameChecksum(d);
 		b = next;
 	}
-	return cardFlush(1);
+	return txCommit();
 }
 
 /*****************************************************************************/
@@ -448,10 +472,16 @@ CardResult Card_ReadFile(const char *name, void *dst, long ofs, long bytes)
 
 CardResult Card_WriteFile(const char *name, const void *src, long ofs, long bytes)
 {
+	/*	fileSpan can fail after writing part of the span (it ran off the
+		end of the chain, or the chain is cyclic) - undo that part too  */
+	txBegin();
 	CardResult r = fileSpan(name, ofs, bytes, NULL, (const uint8_t *)src);
 	if (r != CARD_OK)
+	{
+		txAbort();
 		return r;
-	return cardFlush(1);
+	}
+	return txCommit();
 }
 
 /*****************************************************************************/

@@ -573,6 +573,80 @@ int main(void)
 		dropDir("mcrd_test_tmp4");
 	}
 
+	/*	-------- a save that cannot be persisted leaves the in-memory card
+		exactly as it was, so it keeps matching card0.mcd.  The card is
+		held open with no sharing, which makes cardFlush's MoveFileEx fail
+		the way a shell preview or cloud sync holding it would.  */
+	{
+		static const char *PATH = "mcrd_test_tmp5\\card0.mcd";
+		static const char *OTHER = "BASLUS-01352B";
+		static uint8_t pre[CARD_IMAGE_SIZE], disk[CARD_IMAGE_SIZE];
+		static unsigned char a1[8192], a2[8192], got[8192];
+		for (int i = 0; i < 8192; i++)
+		{
+			a1[i] = (unsigned char)(i * 3 + 1);
+			a2[i] = (unsigned char)(i * 5 + 2);
+		}
+		uint8_t *live = Card_ImageForTest();
+
+		freshCard("mcrd_test_tmp5");
+		check(MemCardCreateFile(0, (char *)FNAME, 1) == McErrNone, "rollback: save A created");
+		MemCardWriteFile(0, (char *)FNAME, (unsigned long *)a1, 0, 8192);
+		check(syncResult(McFuncWriteFile, "rollback write A") == McErrNone,
+			  "rollback: save A written");
+
+		/*	a write that runs off the end of the file's chain fails after
+			changing the first block - no lock needed for this one  */
+		memcpy(pre, live, CARD_IMAGE_SIZE);
+		static unsigned char two[2 * 8192];
+		memset(two, 0x5A, sizeof(two));
+		MemCardWriteFile(0, (char *)FNAME, (unsigned long *)two, 0, sizeof(two));
+		check(syncResult(McFuncWriteFile, "rollback overlong write") == McErrFileNotExist,
+			  "rollback: a write past the chain end fails");
+		check(memcmp(pre, live, CARD_IMAGE_SIZE) == 0,
+			  "rollback: its partial write was undone");
+
+		HANDLE h = lockNoShare(PATH);
+
+		check(MemCardCreateFile(0, (char *)OTHER, 1) == McErrCardNotExist,
+			  "rollback: CreateFile fails when the card cannot be written");
+		check(memcmp(pre, live, CARD_IMAGE_SIZE) == 0,
+			  "rollback: no orphan file left in memory");
+
+		MemCardWriteFile(0, (char *)FNAME, (unsigned long *)a2, 0, 8192);
+		check(syncResult(McFuncWriteFile, "rollback locked write") == McErrCardNotExist,
+			  "rollback: WriteFile completes with no-card");
+		memset(got, 0, sizeof(got));
+		MemCardReadFile(0, (char *)FNAME, (unsigned long *)got, 0, 8192);
+		check(syncResult(McFuncReadFile, "rollback read A") == McErrNone &&
+			  memcmp(got, a1, 8192) == 0, "rollback: A still reads its old bytes");
+
+		check(MemCardDeleteFile(0, (char *)FNAME) == McErrCardNotExist,
+			  "rollback: DeleteFile fails");
+		DIRENTRY list[15];
+		long n = -1;
+		MemCardGetDirentry(0, (char *)"*", list, &n, 0, 15);
+		check(n == 1 && strcmp(list[0].name, FNAME) == 0, "rollback: A still listed");
+
+		check(MemCardUnformat(0) == McErrCardNotExist, "rollback: Unformat fails");
+		check(MemCardFormat(0) == McErrCardNotExist, "rollback: Format fails");
+		check(memcmp(pre, live, CARD_IMAGE_SIZE) == 0,
+			  "rollback: the image is unchanged by every failed mutation");
+
+		unlock(h);
+		check(readAll(PATH, disk) == CARD_IMAGE_SIZE &&
+			  memcmp(pre, disk, CARD_IMAGE_SIZE) == 0,
+			  "rollback: memory still equals card0.mcd");
+		check(!exists("mcrd_test_tmp5\\card0.mcd.tmp"), "rollback: no temp file left");
+
+		check(MemCardCreateFile(0, (char *)OTHER, 1) == McErrNone,
+			  "rollback: once the card is writable the same create succeeds");
+		check(readAll(PATH, disk) == CARD_IMAGE_SIZE &&
+			  memcmp(live, disk, CARD_IMAGE_SIZE) == 0,
+			  "rollback: and is persisted");
+		dropDir("mcrd_test_tmp5");
+	}
+
 	if (g_failures)
 	{
 		std::printf("mcrd_test: %d failure(s)\n", g_failures);
