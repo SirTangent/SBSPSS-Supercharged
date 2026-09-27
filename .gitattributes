@@ -1,6 +1,10 @@
-'*.Ixa' filter=lfs diff=lfs merge=lfs -text
 *.Ixa filter=lfs diff=lfs merge=lfs -text
-*.exe filter=lfs diff=lfs merge=lfs -text
+# Executables are plain git blobs (the vintage PSY-Q and data tools, checked out
+# without LFS by CI); only the rebuilt lznp.exe is an LFS object.  Never run
+# `git add --renormalize` over them.
+*.[eE][xX][eE] -text
+port/tools/lznp.exe filter=lfs diff=lfs merge=lfs -text
 Graphics/UI/+key*.bmp filter=lfs diff=lfs merge=lfs -text
 port/art/keycaps/+key*.bmp filter=lfs diff=lfs merge=lfs -text
 docs/assets/issues/*.png filter=lfs diff=lfs merge=lfs -text
+docs/assets/supercharged-logo.* filter=lfs diff=lfs merge=lfs -text
