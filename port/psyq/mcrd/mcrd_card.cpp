@@ -18,12 +18,24 @@
 
 	The whole image lives in memory; every mutation rewrites the host file
 	via a temp-file + rename so a crash mid-write cannot corrupt the save.
+
+	Host-file policy (Card_Open, cardFlush): an existing card0.mcd is never
+	formatted or replaced behind the user's back.  Only a card that is
+	provably missing is created, and the create refuses to land on a file
+	that appeared meanwhile.  Anything that exists but cannot be loaded as
+	a 128KB image - unreadable (access denied, a sharing lock, a cloud
+	placeholder that will not hydrate, a read error) or the wrong size
+	(including 0 bytes) - is left alone and the session runs with no card.
+	A 128KB image that is not formatted loads as-is; only the game's own
+	format UI (Card_Format) writes over it.
 */
 /*	WIN32_LEAN_AND_MEAN keeps winsock out: its `#define s_addr S_un.S_addr`
 	rewrites the s_addr member of the EXEC struct in the PSY-Q <kernel.h>
 	included below, which is a compile error.  */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>			/* MoveFileExA - atomic replace, see cardFlush */
+#include <errno.h>
+#include <io.h>					/* _commit */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -74,8 +86,14 @@ static void resolvePath(void)
 	snprintf(g_cardPath, sizeof(g_cardPath), "%s\\card0.mcd", dir);
 }
 
-/*	"flush" itself is a PSY-Q macro (R3000.H) - hence the name  */
-static CardResult cardFlush(void)
+/*	Write the image to the host file.  `replace` is 1 for every save (the
+	card exists and is being updated) and 0 only when Card_Open creates a
+	missing card: then the move will not land on a file that appeared
+	since Card_Open looked, so nothing is ever overwritten that was not
+	loaded first.
+
+	"flush" itself is a PSY-Q macro (R3000.H) - hence the name  */
+static CardResult cardFlush(int replace)
 {
 	char tmp[520];
 	snprintf(tmp, sizeof(tmp), "%s.tmp", g_cardPath);
@@ -86,8 +104,14 @@ static CardResult cardFlush(void)
 		fprintf(stderr, "[mcrd] cannot write %s\n", tmp);
 		return CARD_IO_ERROR;
 	}
+	/*	The data must be on disk before the rename is: MOVEFILE_WRITE_THROUGH
+		only makes the move itself durable, so without the commit a power
+		cut right after a save can leave a renamed card0.mcd whose contents
+		never reached the disk.  */
 	size_t wrote = fwrite(g_card, 1, CARD_IMAGE_SIZE, f);
-	if (fclose(f) != 0 || wrote != CARD_IMAGE_SIZE)
+	int    ok    = wrote == CARD_IMAGE_SIZE && fflush(f) == 0 &&
+				   _commit(_fileno(f)) == 0;
+	if (fclose(f) != 0 || !ok)
 	{
 		fprintf(stderr, "[mcrd] short write to %s\n", tmp);
 		remove(tmp);
@@ -98,12 +122,13 @@ static CardResult cardFlush(void)
 		interrupted rename (the file held open by antivirus, a shell preview
 		or a second instance) leaves NO card0.mcd at all - the next launch
 		would find nothing, format a blank card and lose every save.  */
-	if (!MoveFileExA(tmp, g_cardPath,
-					 MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+	DWORD flags = MOVEFILE_WRITE_THROUGH | (replace ? MOVEFILE_REPLACE_EXISTING : 0);
+	if (!MoveFileExA(tmp, g_cardPath, flags))
 	{
-		fprintf(stderr, "[mcrd] cannot move %s into place (error %lu) - "
-						"the previous save is still intact\n",
-				tmp, (unsigned long)GetLastError());
+		fprintf(stderr, "[mcrd] cannot move %s into place (error %lu) - %s\n",
+				tmp, (unsigned long)GetLastError(),
+				replace ? "the previous save is still intact"
+						: "not creating the card over whatever is there now");
 		remove(tmp);
 		return CARD_IO_ERROR;
 	}
@@ -153,33 +178,67 @@ CardResult Card_Open(void)
 
 	resolvePath();
 
+	/*	Every refusal below latches g_opened = -1: the rest of the session
+		runs with no card (the game shows its own "no memory card" screens)
+		and the file is left for the user to sort out.  No retry - a card
+		that came and went mid-session would only confuse the game's scan.  */
+	errno = 0;
 	FILE *f = fopen(g_cardPath, "rb");
+	int   openErrno = errno;
+	DWORD openError = GetLastError();
 	if (f)
 	{
 		size_t got   = fread(g_card, 1, CARD_IMAGE_SIZE, f);
-		int    extra = (got == CARD_IMAGE_SIZE) && (fgetc(f) != EOF);
+		int    extra = !ferror(f) && got == CARD_IMAGE_SIZE && fgetc(f) != EOF;
+		int    bad   = ferror(f);
+		int    readErrno = errno;
+		DWORD  readError = GetLastError();
 		fclose(f);
-		if (got == CARD_IMAGE_SIZE && !extra)
+		if (!bad && got == CARD_IMAGE_SIZE && !extra)
 		{
 			g_opened = 1;
 			return CARD_OK;			/* may still be unformatted - that is a
 									   state the game handles, not an error */
 		}
-		/*	Something is there, but it is not a 128KB card image: a .vmp
-			(128-byte header + 128KB), a padded dump, or a file another
-			process is still writing.  Formatting over it would destroy
-			whatever it is on the strength of one stderr line, so refuse and
-			report no card - the game shows its own "no memory card" screens
-			and the file is left for the user to sort out.  */
-		fprintf(stderr, "[mcrd] %s is not a 128KB card image (%u bytes%s) - "
-						"refusing to overwrite it; no card this run\n",
-				g_cardPath, (unsigned)got, extra ? "+" : "");
+		if (bad)
+			/*	it opened, but the data would not come: a cloud placeholder
+				that failed to hydrate, a failing disk  */
+			fprintf(stderr, "[mcrd] read error on %s (errno %d, error %lu) - "
+							"leaving it alone; no card this run\n",
+					g_cardPath, readErrno, (unsigned long)readError);
+		else
+			/*	Something is there, but it is not a 128KB card image: a .vmp
+				(128-byte header + 128KB), a padded dump, a file another
+				process is still writing, or an empty file.  Formatting over
+				it would destroy whatever it is on the strength of one stderr
+				line.  */
+			fprintf(stderr, "[mcrd] %s is not a 128KB card image (%u bytes%s) - "
+							"refusing to overwrite it; no card this run\n",
+					g_cardPath, (unsigned)got, extra ? "+" : "");
+		g_opened = -1;
+		return CARD_IO_ERROR;
+	}
+
+	/*	fopen failed.  Only a card that is not there at all may be created:
+		the CRT must say ENOENT and Windows must agree the name does not
+		exist.  Anything else - access denied by an ACL restored from
+		another profile, a sharing lock, a placeholder the cloud provider
+		refuses to open - means a card0.mcd that may hold every save, and
+		formatting a blank one over it would lose them.  */
+	DWORD attrError = GetFileAttributesA(g_cardPath) == INVALID_FILE_ATTRIBUTES
+					? GetLastError() : ERROR_SUCCESS;
+	if (openErrno != ENOENT ||
+		(attrError != ERROR_FILE_NOT_FOUND && attrError != ERROR_PATH_NOT_FOUND))
+	{
+		fprintf(stderr, "[mcrd] cannot read %s (errno %d, error %lu) - "
+						"leaving it alone; no card this run\n",
+				g_cardPath, openErrno, (unsigned long)openError);
 		g_opened = -1;
 		return CARD_IO_ERROR;
 	}
 
 	formatImage();
-	if (cardFlush() != CARD_OK)
+	if (cardFlush(0) != CARD_OK)
 	{
 		g_opened = -1;				/* host unusable -> "no card" */
 		return CARD_IO_ERROR;
@@ -192,13 +251,13 @@ CardResult Card_Open(void)
 CardResult Card_Format(void)
 {
 	formatImage();
-	return cardFlush();
+	return cardFlush(1);
 }
 
 CardResult Card_Unformat(void)
 {
 	memset(frame(0), 0, CARD_FRAME_SIZE);
-	return cardFlush();
+	return cardFlush(1);
 }
 
 /*****************************************************************************/
@@ -324,7 +383,7 @@ CardResult Card_CreateFile(const char *name, long blocks)
 		frameChecksum(d);
 		memset(blockData(chain[i]), 0, CARD_BLOCK_SIZE);
 	}
-	return cardFlush();
+	return cardFlush(1);
 }
 
 CardResult Card_DeleteFile(const char *name)
@@ -342,7 +401,7 @@ CardResult Card_DeleteFile(const char *name)
 		frameChecksum(d);
 		b = next;
 	}
-	return cardFlush();
+	return cardFlush(1);
 }
 
 /*****************************************************************************/
@@ -392,7 +451,7 @@ CardResult Card_WriteFile(const char *name, const void *src, long ofs, long byte
 	CardResult r = fileSpan(name, ofs, bytes, NULL, (const uint8_t *)src);
 	if (r != CARD_OK)
 		return r;
-	return cardFlush();
+	return cardFlush(1);
 }
 
 /*****************************************************************************/

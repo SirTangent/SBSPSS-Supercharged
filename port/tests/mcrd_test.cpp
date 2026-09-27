@@ -13,6 +13,11 @@
 	Runs against SBSP_SAVE_DIR=./mcrd_test_tmp so a developer's real
 	%APPDATA%\SBSPSS card is never touched.
 */
+/*	CreateFileA and ACLs, to make a card unreadable.  WIN32_LEAN_AND_MEAN
+	keeps winsock's s_addr macro away from the PSY-Q headers below.  */
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <aclapi.h>				/* a deny-read ACE, see denyRead */
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -73,6 +78,111 @@ static void freshCard(const char *dir)
 	_putenv(env);
 	Card_ResetForTest();
 	check(Card_Open() == CARD_OK, "fresh card opens");
+}
+
+/*	up to CARD_IMAGE_SIZE bytes of a file into buf; -1 if it cannot be
+	opened, CARD_IMAGE_SIZE + 1 if it is longer than a card  */
+static long readAll(const char *path, uint8_t *buf)
+{
+	FILE *f = std::fopen(path, "rb");
+	if (!f)
+		return -1;
+	long got = (long)std::fread(buf, 1, CARD_IMAGE_SIZE, f);
+	if (got == CARD_IMAGE_SIZE && std::fgetc(f) != EOF)
+		got++;
+	std::fclose(f);
+	return got;
+}
+
+static void writeAll(const char *path, const uint8_t *buf, long bytes)
+{
+	FILE *f = std::fopen(path, "wb");
+	check(f != NULL, "test card file written");
+	if (f)
+	{
+		std::fwrite(buf, 1, bytes, f);
+		std::fclose(f);
+	}
+}
+
+/*	What another process holding the card does: open it with no sharing,
+	so fopen fails with EACCES (a sharing violation) and MoveFileEx cannot
+	replace it.  */
+static HANDLE lockNoShare(const char *path)
+{
+	HANDLE h = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING,
+						   FILE_ATTRIBUTE_NORMAL, NULL);
+	check(h != INVALID_HANDLE_VALUE, "card locked with no sharing");
+	return h;
+}
+
+static void unlock(HANDLE h)
+{
+	if (h != INVALID_HANDLE_VALUE)
+		CloseHandle(h);
+}
+
+/*	What an ACL restored from another profile does: add a DENY ACE for
+	FILE_READ_DATA to Everyone.  fopen fails with EACCES while the
+	directory still lets the file be replaced - the case that used to
+	format a blank card over it.  Returns the original security descriptor
+	for allowRead, or NULL.  */
+static PSECURITY_DESCRIPTOR denyRead(const char *path)
+{
+	PACL oldDacl = NULL, newDacl = NULL;
+	PSECURITY_DESCRIPTOR sd = NULL;
+	PSID everyone = NULL;
+	SID_IDENTIFIER_AUTHORITY world = SECURITY_WORLD_SID_AUTHORITY;
+	DWORD r = GetNamedSecurityInfoA((LPSTR)path, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+									NULL, NULL, &oldDacl, NULL, &sd);
+	if (r == ERROR_SUCCESS &&
+		!AllocateAndInitializeSid(&world, 1, SECURITY_WORLD_RID,
+								  0, 0, 0, 0, 0, 0, 0, &everyone))
+		r = GetLastError();
+	if (r == ERROR_SUCCESS)
+	{
+		EXPLICIT_ACCESSA ea;
+		memset(&ea, 0, sizeof(ea));
+		ea.grfAccessPermissions = FILE_READ_DATA;
+		ea.grfAccessMode        = DENY_ACCESS;
+		ea.grfInheritance       = NO_INHERITANCE;
+		ea.Trustee.TrusteeForm  = TRUSTEE_IS_SID;
+		ea.Trustee.TrusteeType  = TRUSTEE_IS_WELL_KNOWN_GROUP;
+		ea.Trustee.ptstrName    = (LPSTR)everyone;
+		r = SetEntriesInAclA(1, &ea, oldDacl, &newDacl);
+	}
+	if (r == ERROR_SUCCESS)
+		r = SetNamedSecurityInfoA((LPSTR)path, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+								  NULL, NULL, newDacl, NULL);
+	if (newDacl)
+		LocalFree(newDacl);
+	if (everyone)
+		FreeSid(everyone);
+	check(r == ERROR_SUCCESS, "card made unreadable by a deny-read ACE");
+	if (r != ERROR_SUCCESS && sd)
+	{
+		LocalFree(sd);
+		sd = NULL;
+	}
+	return sd;
+}
+
+static void allowRead(const char *path, PSECURITY_DESCRIPTOR sd)
+{
+	if (!sd)
+		return;
+	BOOL present = FALSE, defaulted = FALSE;
+	PACL dacl = NULL;
+	GetSecurityDescriptorDacl(sd, &present, &dacl, &defaulted);
+	check(SetNamedSecurityInfoA((LPSTR)path, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+								NULL, NULL, dacl, NULL) == ERROR_SUCCESS,
+		  "card's original ACL restored");
+	LocalFree(sd);
+}
+
+static bool exists(const char *path)
+{
+	return GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES;
 }
 
 static void dropDir(const char *dir)
@@ -401,6 +511,66 @@ int main(void)
 		check(n == 1 && strcmp(list[0].name, FNAME) == 0,
 			  "20-char: the delete took that file and left its neighbour");
 		dropDir("mcrd_test_tmp3");
+	}
+
+	/*	-------- Card_Open formats only a card that is not there.  One that
+		exists but cannot be read (held open with no sharing by another
+		process; read denied by its ACL) or is the wrong size (here: empty)
+		is refused and left alone; an unformatted 128KB image loads and
+		waits for the game's format UI.  */
+	{
+		static const char *PATH = "mcrd_test_tmp4\\card0.mcd";
+		static uint8_t before[CARD_IMAGE_SIZE], after[CARD_IMAGE_SIZE];
+
+		freshCard("mcrd_test_tmp4");
+		check(MemCardCreateFile(0, (char *)FNAME, 1) == McErrNone,
+			  "open policy: card holds a save");
+		check(readAll(PATH, before) == CARD_IMAGE_SIZE, "open policy: card on disk");
+
+		HANDLE h = lockNoShare(PATH);
+		Card_ResetForTest();
+		check(Card_Open() == CARD_IO_ERROR, "open policy: a locked card is refused");
+		MemCardExist(0);
+		check(syncResult(McFuncExist, "locked Exist") == McErrCardNotExist,
+			  "open policy: the game is told there is no card");
+		unlock(h);
+		check(Card_Open() == CARD_IO_ERROR,
+			  "open policy: the refusal holds for the rest of the session");
+		check(readAll(PATH, after) == CARD_IMAGE_SIZE &&
+			  memcmp(before, after, CARD_IMAGE_SIZE) == 0,
+			  "open policy: the locked card is byte-identical afterwards");
+		check(!exists("mcrd_test_tmp4\\card0.mcd.tmp"), "open policy: no temp file left");
+
+		/*	read denied, replace still allowed: the old code formatted a
+			blank card and moved it over this one  */
+		PSECURITY_DESCRIPTOR sd = denyRead(PATH);
+		Card_ResetForTest();
+		check(Card_Open() == CARD_IO_ERROR, "open policy: a read-denied card is refused");
+		allowRead(PATH, sd);
+		check(readAll(PATH, after) == CARD_IMAGE_SIZE &&
+			  memcmp(before, after, CARD_IMAGE_SIZE) == 0,
+			  "open policy: the read-denied card is byte-identical afterwards");
+		check(!exists("mcrd_test_tmp4\\card0.mcd.tmp"), "open policy: no temp file left (ACL)");
+
+		/*	128KB, but no "MC" header: loads, reports unformatted  */
+		memset(before, 0xAB, sizeof(before));
+		writeAll(PATH, before, CARD_IMAGE_SIZE);
+		Card_ResetForTest();
+		check(Card_Open() == CARD_OK, "open policy: a corrupt 128KB image loads");
+		MemCardAccept(0);
+		check(syncResult(McFuncAccept, "corrupt Accept") == McErrNotFormat,
+			  "open policy: the corrupt image reports unformatted");
+		check(readAll(PATH, after) == CARD_IMAGE_SIZE &&
+			  memcmp(before, after, CARD_IMAGE_SIZE) == 0,
+			  "open policy: the corrupt image is not rewritten");
+
+		/*	an empty file is a wrong-sized card, not a missing one  */
+		writeAll(PATH, before, 0);
+		Card_ResetForTest();
+		check(Card_Open() == CARD_IO_ERROR, "open policy: a 0-byte card is refused");
+		check(exists(PATH) && readAll(PATH, after) == 0,
+			  "open policy: the 0-byte card is left as it was");
+		dropDir("mcrd_test_tmp4");
 	}
 
 	if (g_failures)
