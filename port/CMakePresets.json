@@ -2,13 +2,18 @@
     "version": 8,
     "configurePresets": [
         {
-            "name": "base",
+            "name": "msys2-ninja",
             "hidden": true,
-            "generator": "Ninja",
-            "toolchainFile": "${sourceDir}/cmake/mingw32-toolchain.cmake",
             "cacheVariables": {
                 "CMAKE_MAKE_PROGRAM": "C:/msys64/mingw32/bin/ninja.exe"
             }
+        },
+        {
+            "name": "base",
+            "hidden": true,
+            "inherits": "msys2-ninja",
+            "generator": "Ninja",
+            "toolchainFile": "${sourceDir}/cmake/mingw32-toolchain.cmake"
         },
         {
             "name": "debug",
@@ -51,11 +56,9 @@
         {
             "name": "clangcl",
             "hidden": true,
+            "inherits": "msys2-ninja",
             "generator": "Ninja",
-            "toolchainFile": "${sourceDir}/cmake/clangcl-toolchain.cmake",
-            "cacheVariables": {
-                "CMAKE_MAKE_PROGRAM": "C:/msys64/mingw32/bin/ninja.exe"
-            }
+            "toolchainFile": "${sourceDir}/cmake/clangcl-toolchain.cmake"
         },
         {
             "name": "clangcl-debug",
