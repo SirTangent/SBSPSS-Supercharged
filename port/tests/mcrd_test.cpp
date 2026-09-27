@@ -6,8 +6,9 @@
 	free directory), the create/write/read/dirent round-trip the game's
 	save/load flow performs, multi-block chains, delete/reuse, the
 	Unformat -> McErrNotFormat -> Format recovery the in-game format UI
-	drives, capacity errors, and that every mutation is persisted to the
-	host file (what a relaunch would load).
+	drives, capacity errors, that every mutation is persisted to the host
+	file, and that a relaunch (Card_Open on that existing file) loads it
+	back and reads the save.
 
 	Runs against SBSP_SAVE_DIR=./mcrd_test_tmp so a developer's real
 	%APPDATA%\SBSPSS card is never touched.
@@ -151,6 +152,28 @@ int main(void)
 		check(got == CARD_IMAGE_SIZE, "on-disk image is 128KB");
 		check(memcmp(onDisk, img, CARD_IMAGE_SIZE) == 0,
 			  "on-disk image matches memory (relaunch loads this)");
+
+		/*	-------- relaunch: drop the open latch and load that file back
+			through Card_Open's existing-image branch, then walk the game's
+			scan (dirents, then the full read) on the loaded image  */
+		Card_ResetForTest();
+		check(Card_Open() == CARD_OK, "reopen: existing card image opens");
+		check(Card_IsFormatted() != 0, "reopen: loaded image is formatted");
+		check(memcmp(onDisk, img, CARD_IMAGE_SIZE) == 0,
+			  "reopen: loaded image equals the file on disk");
+
+		files = -1;
+		check(MemCardGetDirentry(0, (char *)"*", dir, &files, 0, 15) == McErrNone &&
+			  files == 1, "reopen: one file listed");
+		check(strcmp(dir[0].name, FNAME) == 0, "reopen: dirent name");
+		check(dir[0].size == 8192, "reopen: dirent size");
+
+		memset(back, 0, sizeof(back));
+		check(MemCardReadFile(0, dir[0].name, (unsigned long *)back, 0, 8192) == 1,
+			  "reopen: full read registers");
+		check(syncResult(McFuncReadFile, "reopen read") == McErrNone,
+			  "reopen: full read ok");
+		check(memcmp(save, back, 8192) == 0, "reopen: the save reads back");
 	}
 
 	/*	-------- multi-block chain + delete/reuse  */
