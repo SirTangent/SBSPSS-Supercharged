@@ -863,6 +863,8 @@ three oracles, `port/build-pc.sh parity64 [final|debug]`:
    `# abi ptr=<4|8>` (absent = 4), and `host/input.cpp` skips the ram half
    of the check - only that - when the recording's pointer size is not the
    exe's, saying so once (`[input] cross-ABI recording ...`).  Since
+   issue #67 `# build debug|final` follows it and does the same across
+   build types (RamUsed differs between DEBUG and FINAL too).  Since
    issue #58 the header goes on with `# seed` (only when the run was given
    one) and `# pace`, `# prompt` lines mark the prompt-icon device
    switches, and each epoch also carries
@@ -1021,6 +1023,25 @@ two paced runs of 1-1 that must agree frame for frame and open the level
 later than an instant run does (vblank 244 against 60 on the USA debug
 exe).  With `--no-audio` an uncapped run has no wall-clock input left,
 paced loads or not.
+
+**Recordings name their build.**  A DEBUG heap block carries guard words
+(`mem/memory.h` `MEM_BLOCK_HDR`), so FINAL's RamUsed runs about 3.3 KB
+below DEBUG's with identical screens (916,472 against 919,768 at vblank
+300 of the first tester session), and a DEBUG recording failed the `ram`
+half of every epoch on FINAL.  `--record-pad` now writes
+`# build debug|final` as the third line, after `# abi`, and a replay on
+the other build type skips `ram` exactly as a replay across ABIs does,
+saying so once (`[input] cross-build recording ...`).  A recording
+without the line - every one made before #67 - still compares `ram`:
+those came from both build types, so there is nothing safe to assume.
+An unknown word is refused at boot, like a bad `# abi`.  The desync line
+now names what differed, and prints `ram` even when it is not compared:
+
+    [replay] desync at vblank 300 (line 15) on crc: ram 916472 vs 919768 (not compared: cross-build), crc ...
+
+`replay_test` flips `# build` on a copy with a doctored `ram` (replays
+clean), doctors `ram` alone (caught) and writes `# build release`
+(refused, exit 13).
 
 ## Game-source changes (keyboard prompt icons, issue #43)
 

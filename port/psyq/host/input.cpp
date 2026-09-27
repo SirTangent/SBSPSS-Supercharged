@@ -53,7 +53,9 @@
 	still held when a scene opens, since the release rule above would let
 	go of it on replay - plus `# scene` markers, one `# epoch` marker every
 	300 vblanks, a `# prompt` line whenever the prompt-icon device changes,
-	and a header: the exe's pointer size (`# abi`), the seed when one was
+	and a header: the exe's pointer size and build type (`# abi`, `# build`;
+	RamUsed differs across either, so a replay across them compares the CRC
+	and rng alone - issue #67 for the build), the seed when one was
 	given (`# seed`, adopted by a replay that has no --seed; without one the
 	game seeds itself the same way every boot - host/seed.cpp) and
 	its pacing (`# pace capped|uncapped`, `# loads paced|instant`).  A load
@@ -85,6 +87,7 @@
 #include "gpu/gpu_core.h"
 #include "system/types.h"
 #include "system/asmport.h"		/* PORT_CAP_* - the prompt-icon contract */
+#include "system/info.h"			/* INF_Version - the `# build` header line */
 
 extern unsigned char *Port_PadBuffer[2];	/* pads_shim.cpp */
 extern unsigned char *Port_PadMotor[2];		/* pads_shim.cpp - PadSetAct buffer */
@@ -161,8 +164,31 @@ static int			g_desyncs;
 /*	Pointer size of the exe that made the recording (`# abi ptr=N`, written
 	by --record-pad since M9; absent = 4, every older recording is 32-bit).
 	RamUsed depends on it - x64 objects are bigger and the heap aligns to 16 -
-	so a recording replayed across ABIs compares the display CRC alone.  */
+	so a recording replayed across ABIs compares the display CRC and rng
+	alone.  */
 static int			g_recordingPtr = 4;
+/*	Build type of the exe that made the recording (`# build debug|final`,
+	written since issue #67; absent = unknown, and ram is compared as
+	before).  RamUsed depends on it as well - a DEBUG heap block carries
+	guard words (mem/memory.h MEM_BLOCK_HDR), about 3.3 KB over a level -
+	so a DEBUG recording replayed on FINAL, or the reverse, compares the
+	display CRC and rng alone, like one replayed across ABIs.  */
+static int			g_recordingBuild = -1;	/* -1 unknown, 0 debug, 1 final */
+
+static int thisBuildFinal(void)
+{
+	return _stricmp(INF_Version, "FINAL") == 0;
+}
+
+/*	why an epoch's ram is not compared, or NULL when it is  */
+static const char *ramSkipped(void)
+{
+	if (g_recordingPtr != (int)sizeof(void *))
+		return "cross-ABI";
+	if (g_recordingBuild >= 0 && g_recordingBuild != thisBuildFinal())
+		return "cross-build";
+	return NULL;
+}
 /*	The rest of a recording's data lines (issue #58).  Older exes read
 	none of them - every unrecognised `#` line is a comment - and this exe
 	reads a recording without them as before.  */
@@ -321,9 +347,9 @@ static void padFileParse(void)
 			s++;
 
 		/*	`# epoch <vblank> ram=<n> crc=<hex>`, `# abi ptr=<n>`,
-			`# seed <n>`, `# pace <word>`, `# loads <word>` and
-			`# prompt <vblank> <word>` are data; every other comment (a leading
-			`#`, or ` #` after an entry) is dropped.  */
+			`# build <word>`, `# seed <n>`, `# pace <word>`, `# loads <word>`
+			and `# prompt <vblank> <word>` are data; every other comment (a
+			leading `#`, or ` #` after an entry) is dropped.  */
 		if (*s == '#')
 		{
 			EpochCheck	ep = {};
@@ -351,6 +377,18 @@ static void padFileParse(void)
 					padFileFail(path, line, "bad `# abi ptr=' (expected 4 or 8)");
 				}
 				g_recordingPtr = ptr;
+			}
+			else if (sscanf(s, "# build %15s", word) == 1)
+			{
+				/*	refused like a bad `# abi`: an unknown word would otherwise
+					turn the ram check off or on by accident  */
+				if (strcmp(word, "debug") == 0)			g_recordingBuild = 0;
+				else if (strcmp(word, "final") == 0)	g_recordingBuild = 1;
+				else
+				{
+					fclose(f);
+					padFileFail(path, line, "bad `# build' (expected debug or final)");
+				}
 			}
 			else if (sscanf(s, "# seed %ld", &g_recordingSeed) == 1)
 				g_haveSeed = 1;
@@ -416,6 +454,9 @@ static void padFileParse(void)
 	if (g_epochCount && g_recordingPtr != (int)sizeof(void *))
 		fprintf(stderr, "[input] cross-ABI recording (ptr=%d, this exe %d): epoch ram not compared\n",
 				g_recordingPtr, (int)sizeof(void *));
+	if (g_epochCount && g_recordingBuild >= 0 && g_recordingBuild != thisBuildFinal())
+		fprintf(stderr, "[input] cross-build recording (%s, this exe %s): epoch ram not compared\n",
+				g_recordingBuild ? "final" : "debug", thisBuildFinal() ? "final" : "debug");
 	/*	A paced load costs the same emulated vblanks capped or uncapped
 		(cd/cd.cpp, issue #67).  What a capped run still has and an uncapped
 		one does not are the vblanks it fires while behind the wall clock -
@@ -537,13 +578,21 @@ static void epochCheck(unsigned long vblank)
 		unsigned long ram = g->ramUsed ? *g->ramUsed : 0;
 		uint32_t      crc = GPU_DisplayCRC32(NULL);
 		uint32_t      rng = (ep.hasRng && g->randomSeed) ? (uint32_t)*g->randomSeed : ep.rng;
-		if (g_recordingPtr != (int)sizeof(void *))
-			ram = ep.ram;				/* not comparable across ABIs, see g_recordingPtr */
-		if (ram != ep.ram || crc != ep.crc || rng != ep.rng)
+		const char   *skip   = ramSkipped();		/* see g_recordingPtr, g_recordingBuild */
+		const int		badRam = !skip && ram != ep.ram;
+		const int		badCrc = crc != ep.crc;
+		const int		badRng = rng != ep.rng;
+		if (badRam || badCrc || badRng)
 		{
+			/*	names what differed, and prints ram even when it is not
+				compared, so a cross-build heap difference is still visible  */
 			g_desyncs++;
-			fprintf(stderr, "[replay] desync at vblank %lu (line %d): ram %lu vs %lu, crc %08X vs %08X",
-					vblank, ep.line, ram, ep.ram, crc, ep.crc);
+			fprintf(stderr, "[replay] desync at vblank %lu (line %d) on%s%s%s: ram %lu vs %lu",
+					vblank, ep.line, badRam ? " ram" : "", badCrc ? " crc" : "", badRng ? " rng" : "",
+					ram, ep.ram);
+			if (skip)
+				fprintf(stderr, " (not compared: %s)", skip);
+			fprintf(stderr, ", crc %08X vs %08X", crc, ep.crc);
 			if (ep.hasRng)				/* an older recording's epoch has none to compare */
 				fprintf(stderr, ", rng %08X vs %08X", rng, ep.rng);
 			fputc('\n', stderr);
@@ -574,8 +623,8 @@ extern "C" int Port_InputAtExit(void)
 /*	SBSP_RECORD_PAD=<path>: the applied mask, on change, in the scene-
 	relative grammar above, plus `# scene` markers at each open, a `# prompt`
 	line when the prompt-icon device changes and an `# epoch` line every 300
-	vblanks, under a header of `# abi`, `# seed` (if one was given),
-	`# pace` and `# loads`.  Flushed per
+	vblanks, under a header of `# abi`, `# build`, `# seed` (if one was
+	given), `# pace` and `# loads`.  Flushed per
 	line so a crash still leaves a usable file.  */
 static FILE			*g_rec;
 static int			g_recTried;
@@ -599,6 +648,7 @@ static void recordFrame(unsigned long vblank, unsigned mask)
 							   "UP=1000 RIGHT=2000 DOWN=4000 LEFT=8000 CROSS=0040 "
 							   "CIRCLE=0020 SQUARE=0080 TRIANGLE=0010 L1=0004 R1=0008 L2=0001 R2=0002)\n"
 							   "# abi ptr=%d\n", (int)sizeof(void *));
+				fprintf(g_rec, "# build %s\n", thisBuildFinal() ? "final" : "debug");
 				/*	host/seed.cpp decides now if the game has not asked yet.  No
 					seed given: the game seeds itself, identically every boot,
 					and so will the replay - there is nothing to write down.  */

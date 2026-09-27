@@ -18,7 +18,7 @@
 	  - an epoch carries the game's RNG state: a replay forced onto the wrong
 	    seed must report a desync even though its picture and RamUsed match
 
-	A parent and six children, because the pad file is parsed once per
+	A parent and nine children, because the pad file is parsed once per
 	process and the recorder never closes its file: the parent spawns itself
 	as "record" (a virtual pad drives buttons and stick, --seed 4242, A is
 	written), checks A line by line, spawns "replay" (A played back, B
@@ -26,7 +26,11 @@
 	must desync), "record-unseeded" (no seed: C must carry no `# seed`) and
 	"replay" again on A with its rng fields stripped (an older recording:
 	must still replay clean), and "expect-desync" on that copy with an
-	epoch's crc doctored (its 3-field epochs must still be checked).  The
+	epoch's crc doctored (its 3-field epochs must still be checked), then
+	three copies of A about the build type (issue #67): `# build` flipped
+	and the epoch's ram doctored ("replay": ram is not compared across
+	builds), the ram doctored alone ("expect-desync": it is compared on the
+	same build) and an unknown `# build` word (refused at boot, exit 13).  The
 	children step vblanks with VSync(0) under SBSP_UNCAPPED=1,
 	so Port_VBlankCount advances and Host_VBlank calls Port_InputFrame exactly
 	as in the game, and open scenes through Port_SceneEvent at chosen counts.
@@ -56,6 +60,13 @@ extern "C" int	Port_BootSeed(long *seed);			/* host/seed.cpp */
 extern "C" void	Port_SeedExplicit(long seed);
 extern "C" void	PadInitDirect(unsigned char *pad1, unsigned char *pad2);
 extern "C" int	VSync(int mode);
+extern char		INF_Version[];				/* api/info.cpp: "DEBUG" or "FINAL", per tree */
+
+/*	what --record-pad writes after `# build` for this build  */
+static const char *thisBuild(void)
+{
+	return _stricmp(INF_Version, "FINAL") == 0 ? "final" : "debug";
+}
 
 static int g_failures;
 
@@ -265,12 +276,14 @@ static char *slurp(const char *path, size_t *n)
 static void checkRecording(const char *path)
 {
 	struct Want { const char *text; bool prefix; };
-	char abi[32];
+	char abi[32], build[32];
 	std::snprintf(abi, sizeof(abi), "# abi ptr=%d", (int)sizeof(void *));
+	std::snprintf(build, sizeof(build), "# build %s", thisBuild());
 	const Want want[] =
 	{
 		{ "# recorded by sbsp --record-pad", true  },
 		{ abi,                              false },
+		{ build,                            false },	/* issue #67 */
 		{ "# seed 4242",                    false },	/* the recording was given one */
 		{ "# pace uncapped",                false },
 		{ "# loads paced",                  false },	/* uncapped no longer means instant loads (#67) */
@@ -470,11 +483,64 @@ int main(int argc, char **argv)
 	rc = spawnSelf(exe, "expect-desync");
 	check(rc == 0, "an older recording's 3-field epoch is checked (a doctored crc is caught)");
 
+	/*	7. the build type (issue #67): a DEBUG heap block carries guard words,
+		so RamUsed differs between DEBUG and FINAL and a recording made on the
+		other build compares the CRC and rng alone - a doctored ram then
+		replays clean - while on this build the same doctored ram is caught.
+		An unknown `# build` word is refused at boot, like a bad `# abi`.  */
+	char xbuild[MAX_PATH + 48], ramd[MAX_PATH + 48], badb[MAX_PATH + 48];
+	std::snprintf(xbuild, sizeof(xbuild), "%ssbsp_replay_test_%lu_xbuild.pad", tmp, pid);
+	std::snprintf(ramd, sizeof(ramd), "%ssbsp_replay_test_%lu_ram.pad", tmp, pid);
+	std::snprintf(badb, sizeof(badb), "%ssbsp_replay_test_%lu_badbuild.pad", tmp, pid);
+	da = slurp(a, &na);
+	if (da)
+	{
+		std::string s(da, na);
+		const std::string mine  = std::string("# build ") + thisBuild();
+		const std::string other = std::string("# build ") + (std::strcmp(thisBuild(), "final") ? "final" : "debug");
+		const size_t bl = s.find(mine);
+		const size_t rl = s.find(" ram=0 ", s.find("# epoch 300 "));
+		check(bl != std::string::npos && rl != std::string::npos,
+			  "A carries this build's `# build` line and an epoch at 300 with ram=0");
+		if (bl != std::string::npos && rl != std::string::npos)
+		{
+			std::string ramOnly = s;					/* same length edits: offsets stay valid */
+			ramOnly.replace(rl, 7, " ram=1 ");
+			std::string cross = ramOnly;
+			cross.replace(bl, mine.size(), other);
+			std::string bad = s;
+			bad.replace(bl, mine.size(), "# build release");
+			for (const auto &out : { std::make_pair(xbuild, &cross), std::make_pair(ramd, &ramOnly),
+										   std::make_pair(badb, &bad) })
+			{
+				FILE *f = std::fopen(out.first, "wb");
+				if (f)
+				{
+					std::fwrite(out.second->data(), 1, out.second->size(), f);
+					std::fclose(f);
+				}
+			}
+		}
+	}
+	std::free(da);
+	setEnv("SBSP_PAD_FILE", xbuild);
+	rc = spawnSelf(exe, "replay");
+	check(rc == 0, "a recording from the other build type: ram is not compared (a doctored ram replays clean)");
+	setEnv("SBSP_PAD_FILE", ramd);
+	rc = spawnSelf(exe, "expect-desync");
+	check(rc == 0, "a recording from this build type: a doctored ram is caught");
+	setEnv("SBSP_PAD_FILE", badb);
+	rc = spawnSelf(exe, "replay");
+	check(rc == 13, "an unknown `# build` word is refused at boot (exit 13)");
+
 	std::remove(a);
 	std::remove(b);
 	std::remove(c);
 	std::remove(old);
 	std::remove(bent);
+	std::remove(xbuild);
+	std::remove(ramd);
+	std::remove(badb);
 
 	if (g_failures)
 	{
