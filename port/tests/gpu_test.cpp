@@ -197,8 +197,9 @@ int main()
 	}
 
 	/*	--- POLY_G3 gouraud interpolation ------------------------------------
-		Pins the barycentric path (which interpolates through a precomputed
-		reciprocal rather than a per-pixel divide).  Right-angled triangle
+		Pins the barycentric path (raster.cpp steps each attribute as an
+		exact floor(n / area) quotient-and-remainder DDA rather than a
+		per-pixel divide).  Right-angled triangle
 		a=(100,100) red, b=(164,100) green, c=(100,164) blue: the vertex pixel
 		must be the vertex colour exactly, and each edge midpoint the exact
 		mean of its two endpoints.  */
@@ -224,22 +225,47 @@ int main()
 	}
 
 	/*	--- gouraud at the maximum triangle size ------------------------------
-		The interpolation reciprocal is only exact while area*(area*255) fits
-		its shift; the biggest triangle the size-reject allows is the worst
-		case, so pin an exact vertex colour there too.  */
+		The colour DDA must be the exact floor(n / area) at every pixel, and
+		the biggest triangle the size-reject allows (area 1023*511 = 522753)
+		has the largest numerators and the longest runs of remainder carries.
+		With dither off, compare every pixel against an independent int64
+		reference: a pixel is inside when 511x + 1023y < 522753 (the
+		hypotenuse is a right/bottom edge, excluded), and each channel is
+		floor(255 * weight / area) >> 3 with the vertex weights
+		red 522753 - 511x - 1023y, green 1023y, blue 511x.  (A vertex pixel
+		alone could not fail: its numerator is exactly 255 * area.)  */
 	{
 		resetEnv();
 
-		uint32_t g3[7];
-		g3[0] = 0x06000000;
-		g3[1] = 0x30000000u | 0x0000FF;			/* red   at (0,0)     */
-		g3[2] = 0;
-		g3[3] = 0x00FF00;						/* green at (0,511)   */
-		g3[4] = (511 << 16) | 0;
-		g3[5] = 0xFF0000;						/* blue  at (1023,0)  */
-		g3[6] = 1023;
+		uint32_t g3[8];
+		g3[0] = 0x07000000;						/* tag: len 7 */
+		g3[1] = 0xE1000000;						/* dtd = 0 */
+		g3[2] = 0x30000000u | 0x0000FF;			/* red   at (0,0)     */
+		g3[3] = 0;
+		g3[4] = 0x00FF00;						/* green at (0,511)   */
+		g3[5] = (511 << 16) | 0;
+		g3[6] = 0xFF0000;						/* blue  at (1023,0)  */
+		g3[7] = 1023;
 		DrawPrim(g3);
 
+		const int64_t area = 1023 * 511;
+		long bad = 0;
+		for (int y = 0; y < VRAM_H && bad < 8; y++)
+			for (int x = 0; x < VRAM_W; x++)
+			{
+				int64_t wg = 1023 * (int64_t)y, wb = 511 * (int64_t)x;
+				int64_t wr = area - wg - wb;
+				uint16_t want = 0;
+				if (wr > 0)
+					want = (uint16_t)(((255 * wr / area) >> 3)
+									  | (((255 * wg / area) >> 3) << 5)
+									  | (((255 * wb / area) >> 3) << 10));
+				if (g_vram[y][x] != want && bad++ < 8)
+					std::printf("FAIL: G3 (1023x511) - vram[%d][%d] = %04x, "
+								"want %04x\n", y, x, g_vram[y][x], want);
+			}
+		if (bad)
+			g_failures++;
 		checkPx(0, 0, 0x001F, "G3 (1023x511): vertex colour still exact");
 	}
 
