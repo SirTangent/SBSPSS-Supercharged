@@ -242,7 +242,7 @@ void XaStream_Serve(uint32_t *madr, int sizeWords)
 			   bytes < (int)sizeof(g_staged) ? bytes : (int)sizeof(g_staged));
 }
 
-/*	Once per emulated vblank, from Port_Pump (pump.cpp) - BEFORE
+/*	Once per emulated vblank, from the pump's single-fire block (host/pump.cpp) - BEFORE
 	Port_AudioVBlank, so a dump-mode vblank's sectors are decoded before its
 	audio frames render (the determinism contract).  150 sectors/s against
 	the vblank rate: at 60Hz the accumulator delivers 2-3 sectors per call,

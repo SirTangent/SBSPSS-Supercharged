@@ -534,7 +534,7 @@ def selftest_paced(exe, seed, logdir):
         opens = [int(l.split("vblank=")[1]) for l in res.lines if l.startswith("[scene] ") and "vblank=" in l]
         return opens[0] if opens else None
 
-    ok = all(report_common(r, "selftest paced") for r in runs)
+    ok = all([report_common(r, "selftest paced") for r in runs])   # a list: every run reports, not just up to the first failure
     s1, s2 = stream(runs[0]), stream(runs[1])
     same = bool(s1) and s1 == s2
     v_paced, v_instant = first_open(runs[0]), first_open(runs[2])

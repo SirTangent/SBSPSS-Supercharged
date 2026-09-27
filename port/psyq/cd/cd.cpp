@@ -91,9 +91,10 @@ extern "C" int Port_CdPaced(void)
 }
 
 /*	Once per emulated vblank, from Port_CdVblank (xa_stream.cpp): inside
-	Port_Pump's single-fire block, after the game's own vblank work.  An idle
-	drive banks at most one vblank of clock (150 units: 2 sectors NTSC, 3
-	PAL), so a small read issued after an idle vblank completes inside the
+	the pump's single-fire block (host/pump.cpp pumpStep), after the game's
+	own vblank work.  An idle drive banks at most one vblank of clock (150
+	units: 2 sectors NTSC, 3 PAL), so a small read issued after an idle
+	vblank completes inside the
 	frame, as it would on the PlayStation, while a big one waits.  After one
 	idle vblank the bank is exactly 150 however long the drive sat idle, so
 	the cost of every read is a function of the vblank and read sequence
@@ -455,7 +456,26 @@ extern "C" int CdReadSync(int mode, u_char *result)
 	(void)result;
 	if (!paceOn())
 	{
-		Port_Pump();		/* PS1 interrupt-time work happens during reads */
+		/*	a bare pump: in a live capped run the vblanks that fall due during
+			an instant load fire here, as the PS1's interrupt would during the
+			read (host/pump.cpp); elsewhere only where a recording says  */
+		Port_Pump();
+		return 0;
+	}
+	/*	Inside a vblank's work no wait can advance the clock that completes
+		the read (host/pump.cpp: nested pumps are no-ops), so waiting there
+		would never end.  Nothing in the tree reads from a vblank or CD
+		callback; if something ever does, its read completes at once, as an
+		instant load would, and says so.  */
+	if (g_pending && Port_PumpNested())
+	{
+		static int warned;
+		if (!warned)
+		{
+			warned = 1;
+			fprintf(stderr, "[cd] CdReadSync inside vblank work: completing the read at once\n");
+		}
+		g_pending = 0;
 		return 0;
 	}
 

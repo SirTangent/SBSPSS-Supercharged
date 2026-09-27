@@ -263,7 +263,8 @@ static void handleHostEvent(const SDL_Event *ev)
 	}
 }
 
-/*	pump.cpp, at the top of every Port_Pump: while paused, wait for events
+/*	pump.cpp, at the top of every pump step (pumpStep, wait or bare, not
+	nested): while paused, wait for events
 	(100ms at a time, so the CPU is idle) and keep the window painted; do
 	NOTHING that is keyed by the vblank number - no input frame, no memory
 	watch, no dump, no frame CRC, no exit-after - those belong to a vblank

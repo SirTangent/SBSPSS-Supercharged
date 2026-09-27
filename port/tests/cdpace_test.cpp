@@ -35,7 +35,8 @@
 #include <sys/types.h>
 #include <libcd.h>
 
-#include "host/pump.h"		/* Port_VBlankCount, Port_SetVBlankHz, Port_CdPaced */
+#include "host/pump.h"		/* Port_VBlankCount, Port_SetVBlankHz */
+#include "cd/xa_stream.h"	/* Port_CdPaced */
 
 extern "C" void	Port_CdRebuildDirForTest(void);
 extern "C" int	VSync(int mode);

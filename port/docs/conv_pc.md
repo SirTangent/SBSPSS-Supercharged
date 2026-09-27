@@ -938,10 +938,11 @@ comments; this exe reads older recordings unchanged.
 with `<dir>` holding `card-before.mcd` renamed `card0.mcd`, and `<n>` the
 `vblanks=` of the session's `[summary]` (closing the window is not
 recorded, so `--exit-after` stands in for it).  Any exe replays it, DEBUG
-or FINAL, 32- or 64-bit: since issue #67 capped and uncapped runs see the
-same emulated time - a paced load costs the same vblanks, and a vblank
-fires only when the game waits - so the uncapped replay lands every frame
-where the session did (see "Replay judging" below).  Before #67 a
+or FINAL, 32- or 64-bit: since issue #67 a paced load costs the same
+vblanks everywhere, and every vblank a capped session fired outside a wait
+is in its recording (`# bare`), where the replay fires it too - so the
+uncapped replay lands every frame where the session did (see "Replay
+judging" below).  Before #67 a
 capped replay's loads took *about* as long as the session's, not exactly -
 measured on one machine, record and replay both capped with pacing on, the
 level load took 249 vblanks recording and 248 replaying on two levels out
@@ -1020,40 +1021,51 @@ later than an instant run does (vblank 244 against 60 on the USA debug
 exe).  With `--no-audio` an uncapped run has no wall-clock input left,
 paced loads or not.
 
-**Emulated time is waited time.**  With loads fixed, a capped recording
-still replayed 5 vblanks off uncapped on the machine measured.  A capped
-run fired a vblank at *any* pump once the wall clock said one was due, so
-whenever it had fallen behind - the boot stall, the first present at
-about 150 ms, is enough - its vblanks landed at bare pumps (`VSync(-1)`,
-`DrawSync`, `PadGetState`) that an uncapped run passes without one, and
-StopLoad's wait for the icon to wrap carried the offset into every later
-frame.  Now a vblank fires only in a wait step (`Port_PumpIdle`: VSync's
-wait, a paced `CdReadSync`, `StGetNext`), capped or uncapped, and a
-capped run that has fallen behind catches up through its next waits,
-which fire at once instead of waiting for the wall clock.  Both modes see
-the same vblanks at the same points of the game: two capped recordings of
-`pause_quit` and the uncapped replay of either are frame-identical and
-leave the same card.  The cost falls on a host that cannot sustain 60 Hz:
-it now runs the game slower instead of skipping frames
-(`getFramesSinceLast()` is 1 on every frame, as it always was uncapped),
-which the backlog rebase had already made the rule past 8 vblanks
-behind.  On the machine measured, the only late vblanks a capped run ever
-had were the 5-8 of the boot stall.  A loop that never waits would now
-spin forever - `VRamViewer` (DEBUG, hold SELECT) spins on `PadGetState`,
-and pads change only at a vblank - so after `PORT_SPIN_PUMPS` (10000)
-bare pumps in a row every further one is a one-vblank wait, until the
-game waits again; the Tier 1 routes and the short Tier 2 levels never
-pass 200.  `pump_test` checks both modes, with owed wall time, and the
-spin rule.  The `# pace` mismatch warning is gone: there is nothing left
-for it to warn about.
+**Vblanks outside a wait are recorded.**  With loads fixed, a capped
+recording still replayed 5 vblanks off uncapped on the machine measured.
+A capped run fires a vblank at *any* pump once the wall clock says one is
+due, so whenever it has fallen behind - the boot stall, the first present
+at about 150 ms, is enough - its vblanks land at bare pumps (`VSync(-1)`,
+`DrawSync`, `PadGetState`, the front of a wait) that an uncapped run
+passes without one, and StopLoad's wait for the icon to wrap carried the
+offset into every later frame.  The PR's first answer fired vblanks only
+in wait steps (`Port_PumpIdle`), capped or uncapped; review showed what
+that cost live play on a slow host: during any stretch of game code that
+does not wait - a level's set-up after its last read - nothing
+vblank-driven ran (the music's sequencer tick, `XM_Update`, is a vblank
+function; the loading icon; the window's events and presents), and the
+next waits then fast-forwarded through the backlog.  So a live capped
+run fires due vblanks at bare pumps again, exactly as before #67, and
+`--record-pad` writes each one down: `# bare <vblank> <k>`, the vblank
+fired at the k-th bare pump since the last wait step
+(`Port_VBlankBarePump`).  A scripted run - `--pad-file` or
+`--pad-script`: every replay and harness route - fires a vblank at a bare
+pump only where its recording says (`Port_ReplayBareVblank`), and any
+other uncapped run fires none there.  k counts the game's own calls
+(every bare pump is a `VSync`, `DrawSync`, `PadGetState` or unpaced
+`CdReadSync` the game made), never the wall clock, so the replay reaches
+the same k at the same point, and a recorded vblank the replay reaches any
+other way is a desync at exit.  A recording without `# bare` lines - every
+uncapped one, and every capped one made before this rule - fires none,
+so the harness baselines and the first tester sessions replay as before.
+A loop that never waits would spin forever where bare pumps fire nothing -
+`VRamViewer` (DEBUG, hold SELECT) spins on `PadGetState`, and pads change
+only at a vblank - so after `PORT_SPIN_PUMPS` (10000) bare pumps in a row
+every further one is a one-vblank wait, until the game waits again; the
+Tier 1 routes and the short Tier 2 levels never pass 200.  `pump_test`
+records a live capped run whose bare pumps catch up seven owed vblanks,
+replays it capped and uncapped (both replays' own recordings must equal
+it), and checks that an uncapped run and a scripted capped one fire
+nothing at bare pumps, plus the spin rule.  The `# pace` mismatch warning
+is gone: there is nothing left for it to warn about.
 
 **Why epochs stay absolute.**  #67 held a fallback in reserve: anchor each
 `# epoch` to the latest scene open (`Scene#n+off`, like the pad entries),
 so a replay that opened scenes late would still be judged at the right
 frame.  It was not needed.  With loads costed in emulated vblanks and
-vblanks fired only in waits, a replay opens every scene on the vblank the
-recording did, capped or uncapped, so an absolute epoch lands on the same
-frame; a drift is now itself a divergence, and anchoring would have hidden
+every vblank fired outside a wait recorded, a replay opens every scene on
+the vblank the recording did, capped or uncapped, so an absolute epoch
+lands on the same frame; a drift is now itself a divergence, and anchoring would have hidden
 it.  The grammar, and every recording made so far, stay as they were.
 
 **Recordings name their build.**  A DEBUG heap block carries guard words
@@ -1256,14 +1268,19 @@ Both inside `#if !defined(PSX_MIPS_ASM)` arms whose `#else` re-syncs the
 PS1 build's `__LINE__` with `#line`, so `Spongey.cpe` is unchanged; see
 "Replay judging (issue #67)" for the evidence.
 
-56. **`source/game/game.cpp` (`CGameScene::render_playing`), `source/system/asmport.h`** -
-    after `m_pauseMenu->render()`, `Port_PauseMenuDrawn(m_pauseMenu->isActive())`
-    tells the shim, once per rendered frame, whether the pause menu is in
-    it.  DEBUG draws that menu with one more line, so a replay on the other
-    build type does not compare an epoch's display CRC while the menu is
-    among the last three frames built (`host/input.cpp crcSkipped`).  At
-    render rather than in `think_playing`: that is the frame the CRC will
-    see, and `think_playing` can run three times in one frame (a teleport).
+56. **`source/game/game.cpp` (`CGameScene::render`), `source/system/asmport.h`** -
+    at the end of `render()`, `Port_PauseMenuDrawn(...)` tells the shim, once
+    per frame the Game scene renders, whether the pause menu is in it: the
+    menu is active and the state is one whose render goes through
+    `render_playing`, which draws it (every state but the boss intro and
+    the lives screen on the way to it).  DEBUG draws that menu with one
+    more line, so a replay on the other build type does not compare an
+    epoch's display CRC while the menu is among the last three frames
+    built (`host/input.cpp crcSkipped`).  At render rather than in
+    `think_playing`: that is the frame the CRC will see, and `think_playing`
+    can run three times in one frame (a teleport).  In `render()` rather
+    than `render_playing()`: every Game frame reports, so on the lives
+    screen or the boss intro the record ages out instead of standing still.
 
 57. **`source/memcard/saveload.cpp` (`CSaveLoadDatabase::allocateBuffer`)** -
     `memset(m_tempBuffer,0,m_bufferSize)` after the `MemAlloc`.  The buffer

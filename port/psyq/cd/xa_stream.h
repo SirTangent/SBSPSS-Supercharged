@@ -18,10 +18,8 @@ void XaStream_ReadS(const CdlLOC *pos);
 void XaStream_Pause(void);
 void XaStream_Serve(uint32_t *madr, int sizeWords);	/* CdGetSector body */
 
-/*	once per emulated vblank, from Port_Pump  */
+/*	once per emulated vblank, from the pump (host/pump.cpp)  */
 extern "C" void Port_CdVblank(int vblankHz);
-/*	the CdRead data clock (cd.cpp, issue #67), ticked by Port_CdVblank  */
-extern "C" void Port_CdDataVblank(int vblankHz);
 
 /*	The CD ready callback, typed the way the game actually defines it.
 	libcd.h's CdlCB types the first argument u_char, but the one handler the
@@ -39,6 +37,11 @@ typedef void (*PortCdCB)(int, u_char *);
 
 /*	provided by cd.cpp  */
 extern PortCdCB g_cdReadyCallback;
+/*	The CdRead data clock (issue #67): ticked by Port_CdVblank once per
+	emulated vblank.  Port_CdPaced is SBSP_CD_PACE != 0 (the default; off
+	with --no-cd-pace): CdReadSync waits for the emulated drive.  */
+extern "C" void Port_CdDataVblank(int vblankHz);
+extern "C" int  Port_CdPaced(void);
 int Port_CdXaTrackInfo(FILE **fp, long *startLBA, long *sectors);
 int Port_CdFileForLBA(long lba, FILE **fp, long *startLBA, long *sectors,
 					  int *bytesPerSector, const char **name);
