@@ -537,8 +537,11 @@ def selftest(exe, seed, logdir, territory="USA"):
                 "--pad-script", "0:0000"] + DETERMINISM
         log = Path(logdir) / f"selftest_{name}.log" if logdir else None
         res = run_game(exe, args, env, 120, log)
-        if skip and any(l.startswith(skip) for l in res.lines):
-            print(f"  SKIP selftest {name}: this CRT does not report it (exit {res.code})")
+        # msvcrt.dll (the MinGW exe's CRT) never calls the invalid-parameter
+        # handler; the clang-cl exes' static UCRT must, so no SKIP there
+        if skip and any(l.startswith(skip) for l in res.lines) and \
+                re.search(rb"(?i)msvcrt\.dll\0", Path(exe).read_bytes()):
+            print(f"  SKIP selftest {name}: msvcrt.dll does not report it (exit {res.code})")
             continue
         tagged = any(l.startswith(tag) for l in res.lines)
         # the exit code the process returned is the one [summary] states
