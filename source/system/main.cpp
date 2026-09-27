@@ -335,7 +335,7 @@ int 	main()
 #if	!defined(PSX_MIPS_ASM)
 	// PC: the shim's watches/[summary]/--invincible read these (conv_pc.md #26)
 	Port_RegisterGameGlobals(&MainRam.RamUsed,&MemNodeCount,&invincibleSponge,
-							 &CurrPrim,&EndPrim,&PrimListStart,&PrimListEnd);
+							 &CurrPrim,&EndPrim,&PrimListStart,&PrimListEnd,&s_randomSeed);
 #endif
 	CFileIO::GetAllFilePos();
 	InitSystem();

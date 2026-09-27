@@ -332,7 +332,11 @@ after it).  The guard is `port/build-psx.cmd` + a SHA-256 compare of
     `# seed`, else the boot tick - decided once, so the `--record-pad`
     header (which may ask first, the boot pumps before line 210) and the
     game agree, and a replay without `--seed` runs the same RNG stream as
-    the session it replays.  The game arm is unchanged.
+    the session it replays.  The game arm is unchanged.  The registration
+    also hands over `&s_randomSeed` (`utils/utils.cpp`, the RNG state) -
+    appended to the existing call's last line, so the PlayStation
+    preprocessor's line numbering is untouched - for the `rng=` field of
+    every `# epoch` ("Replaying a tester session").
 
 27. **`source/system/asmport.h` (scratchpad guard bytes)** - the PC-only
     `PORT_Scratchpad` declaration grows by `PORT_SCRATCHPAD_GUARD` (16)
@@ -852,9 +856,10 @@ three oracles, `port/build-pc.sh parity64 [final|debug]`:
    `# abi ptr=<4|8>` (absent = 4), and `host/input.cpp` skips the ram half
    of the check - only that - when the recording's pointer size is not the
    exe's, saying so once (`[input] cross-ABI recording ...`).  Since
-   issue #58 the header goes on with `# seed` and `# pace`, and `# prompt`
-   lines mark the prompt-icon device switches ("Replaying a tester
-   session", below).
+   issue #58 the header goes on with `# seed` and `# pace`, `# prompt`
+   lines mark the prompt-icon device switches, and each epoch also carries
+   the game's RNG state (`rng=`, compared across ABIs) - "Replaying a
+   tester session", below.
 3. **Memory card** - the `card0.mcd` a route leaves is kept beside its
    recording and the cross replay's must be byte-identical (the same-exe
    replay of a plain Tier 1 run now compares cards too).  The save structs
@@ -924,11 +929,30 @@ post-load `Scene#n+off` early - the `# pace` mismatch is reported once, and
 the `# epoch` checks are the oracle either way.  Two limits remain: a
 capped replay's loads take *about* as long as the session's, not exactly,
 and dropped frames on the recording machine (`getFramesSinceLast() > 1`)
-are not captured at all.  Making the CD clock count emulated vblanks under
-`--uncapped` (2.5 sectors per vblank) would remove the first; that is
-follow-up work for #55.  `replay_test` records a scripted session with a
+are not captured at all.  Measured on one machine, record and replay both
+capped with pacing on: the level load took 249 vblanks recording and 248
+replaying on two levels out of three, which shifts every later frame by one
+and fails every epoch; the third matched exactly, as did all three with
+`--no-cd-pace`.  Making the CD clock count emulated vblanks (2.5 sectors per
+vblank, whatever the wall clock does) would remove the first limit; that
+is follow-up work for #55.  `replay_test` records a scripted session with a
 virtual pad and requires the replay's own recording to be byte-identical;
 `pad_test` covers the stick fold and the second-pad adoption.
+
+**Epochs carry the RNG.**  Every level was recorded without `--seed` and
+replayed without one: all 25 x 3600 frames identical, every epoch clean.
+The negative control - each recording replayed with its seed + 1 - showed
+the epochs were too coarse to be trusted alone: the frames differed on all
+25 levels, but on 1-5, 2-3 and 5-5 (111, 601 and 166 differing frames)
+every difference fell between two epochs, which matched on RamUsed and the
+display CRC, and the replay exited 0.  An epoch is now
+`# epoch <vb> ram=<n> crc=<hex> rng=<hex>`, `rng` being the game's
+`s_randomSeed` at that vblank: a run that has drawn one different random
+number has diverged whatever is on screen, so the wrong-seed replays now
+fail on every level.  `long` is 32 bits on both Windows ABIs, so `rng`, like
+`crc`, is compared across them (only `ram` is not); an epoch without it -
+an older recording - skips it.  `replay_test` replays with the wrong seed
+against a constant picture and RamUsed and requires the desync.
 
 ## Game-source changes (keyboard prompt icons, issue #43)
 

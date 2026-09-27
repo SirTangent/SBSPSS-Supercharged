@@ -29,7 +29,7 @@
 	    1500:0800                 absolute vblank
 	    Map#2+30:2000             30 vblanks after the 2nd open of "Map"
 	    FMA:INTRO#1+10:0800       (FMA scripts use the [scene] FMA:<name>)
-	    # epoch 3000 ram=123456 crc=89ABCDEF
+	    # epoch 3000 ram=123456 crc=89ABCDEF rng=0123ABCD
 	    # seed 12345   # pace capped|uncapped   # prompt 3000 pad|keys
 	A scene open releases every button: an entry is in force only if it
 	came due at or after the most recent scene open (for a scene-relative
@@ -55,7 +55,14 @@
 	and a header: the exe's pointer size (`# abi`), the seed the run used
 	(`# seed`, adopted by a replay that has no --seed - host/seed.cpp) and
 	its pacing (`# pace`; a mismatch is reported once, because load
-	durations then differ and every offset after a load drifts).  Replaying
+	durations then differ and every offset after a load drifts).  An epoch
+	carries RamUsed, the display CRC and the game's random-number state
+	(`rng`, s_randomSeed): a run that has drawn a different random number
+	has diverged even while every difference is still off screen, and five
+	seconds between epochs was long enough for a wrong-seed replay to show
+	a different frame 111 times and still match every epoch (issue #58).
+	`long` is 32 bits on both Windows ABIs, so rng, like crc, is compared
+	across them; an epoch without it (an older recording) skips it.  Replaying
 	such a file re-checks the epochs and reports "[replay] desync".  A
 	malformed line, a desync, or a scene reference the run never reached
 	(reported at exit) makes the process exit 13.
@@ -127,6 +134,8 @@ struct EpochCheck
 	unsigned long	vblank;
 	unsigned long	ram;
 	uint32_t		crc;
+	uint32_t		rng;			/* s_randomSeed, when hasRng */
+	int				hasRng;
 	int				line;
 };
 
@@ -313,9 +322,12 @@ static void padFileParse(void)
 			PromptMark	pm = {};
 			char		word[16];
 			int			ptr;
-			if (sscanf(s, "# epoch %lu ram=%lu crc=%x", &ep.vblank, &ep.ram, &ep.crc) == 3)
+			int			nep = sscanf(s, "# epoch %lu ram=%lu crc=%x rng=%x",
+									 &ep.vblank, &ep.ram, &ep.crc, &ep.rng);
+			if (nep >= 3)
 			{
-				ep.line = line;
+				ep.hasRng = nep == 4;
+				ep.line   = line;
 				addEpoch(ep);
 			}
 			else if (sscanf(s, "# abi ptr=%d", &ptr) == 1)
@@ -500,13 +512,14 @@ static void epochCheck(unsigned long vblank)
 		const PortGameGlobals *g = Port_GameGlobals();
 		unsigned long ram = g->ramUsed ? *g->ramUsed : 0;
 		uint32_t      crc = GPU_DisplayCRC32(NULL);
+		uint32_t      rng = (ep.hasRng && g->randomSeed) ? (uint32_t)*g->randomSeed : ep.rng;
 		if (g_recordingPtr != (int)sizeof(void *))
 			ram = ep.ram;				/* not comparable across ABIs, see g_recordingPtr */
-		if (ram != ep.ram || crc != ep.crc)
+		if (ram != ep.ram || crc != ep.crc || rng != ep.rng)
 		{
 			g_desyncs++;
-			fprintf(stderr, "[replay] desync at vblank %lu (line %d): ram %lu vs %lu, crc %08X vs %08X\n",
-					vblank, ep.line, ram, ep.ram, crc, ep.crc);
+			fprintf(stderr, "[replay] desync at vblank %lu (line %d): ram %lu vs %lu, crc %08X vs %08X, "
+							"rng %08X vs %08X\n", vblank, ep.line, ram, ep.ram, crc, ep.crc, rng, ep.rng);
 		}
 	}
 }
@@ -606,8 +619,11 @@ static void recordFrame(unsigned long vblank, unsigned mask)
 	if (vblank % 300 == 0)
 	{
 		const PortGameGlobals *g = Port_GameGlobals();
-		fprintf(g_rec, "# epoch %lu ram=%lu crc=%08X\n", vblank,
+		fprintf(g_rec, "# epoch %lu ram=%lu crc=%08X", vblank,
 				g->ramUsed ? *g->ramUsed : 0ul, GPU_DisplayCRC32(NULL));
+		if (g->randomSeed)				/* NULL in the shim-only unit exes */
+			fprintf(g_rec, " rng=%08X", (uint32_t)*g->randomSeed);
+		fputc('\n', g_rec);
 	}
 	fflush(g_rec);
 }

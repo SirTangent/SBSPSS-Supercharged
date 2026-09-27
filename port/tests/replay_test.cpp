@@ -13,6 +13,8 @@
 	  - a scripted run ignores the live devices: the replaying process holds
 	    SQUARE and the stick hard left the whole time, and none of it may
 	    reach the packet, the prompts or the recording
+	  - an epoch carries the game's RNG state: a replay forced onto the wrong
+	    seed must report a desync even though its picture and RamUsed match
 
 	Three processes, because the pad file is parsed once per process and the
 	recorder never closes its file: the parent spawns itself as "record"
@@ -41,10 +43,20 @@ extern unsigned char *Port_PadBuffer[2];		/* pads_shim.cpp */
 extern "C" void	Port_InputHandleEvent(const void *ev);
 extern "C" int	Port_InputPadActive(void);
 extern "C" int	Port_PadFileSeed(long *seed);
+extern "C" int	Port_BootSeed(long *seed);			/* host/seed.cpp */
+extern "C" void	Port_SeedExplicit(long seed);
 extern "C" void	PadInitDirect(unsigned char *pad1, unsigned char *pad2);
 extern "C" int	VSync(int mode);
 
 static int g_failures;
+
+/*	The game's RNG, stood in for: seeded from Port_BootSeed as main.cpp does
+	and stepped once a frame with utils.h's getRndSeed formula, registered so
+	every `# epoch` carries it.  RamUsed stays 0 and the display CRC is a
+	constant here, so only this can tell two runs apart at an epoch - which
+	is exactly the case the wrong-seed child tests.  */
+static long				g_fakeRng;
+static unsigned long	g_fakeRam;
 
 static void check(bool ok, const char *what)
 {
@@ -184,12 +196,16 @@ static void drive(SDL_Joystick *joy, bool replay)
 			Port_SceneEvent("FrontEnd");
 		if (vb == 50)
 			Port_SceneEvent("Game");
+		g_fakeRng = (long)(0x015a4e35u * (unsigned long)g_fakeRng + 1u);	/* one draw a frame */
 	}
 }
 
 /*	-------- the children  */
-static int childMain(bool replay)
+enum Mode { RECORD, REPLAY, WRONG_SEED };
+
+static int childMain(Mode mode)
 {
+	bool replay = mode != RECORD;
 	if (!sdlUp())
 		return 1;
 	setEnv("SBSP_UNCAPPED", "1");			/* before the first VSync: Port_Uncapped caches */
@@ -199,10 +215,17 @@ static int childMain(bool replay)
 	long seed = 0;
 	check(Port_PadFileSeed(&seed) == (replay ? 1 : 0),
 		  replay ? "replay: the recording carries a seed" : "record: no recording, no seed to inherit");
+	if (mode == WRONG_SEED)
+		Port_SeedExplicit(seed + 1);			/* what --seed <other> does */
+	Port_BootSeed(&seed);
+	g_fakeRng = seed;
+	Port_RegisterGameGlobals(&g_fakeRam, NULL, NULL, NULL, NULL, NULL, NULL, &g_fakeRng);
 	drive(joy, replay);
-	int unsatisfied = Port_InputAtExit();
-	if (replay)
-		check(unsatisfied == 0, "replay: no desync, every entry satisfied");
+	int bad = Port_InputAtExit();
+	if (mode == REPLAY)
+		check(bad == 0, "replay: no desync, every entry satisfied");
+	if (mode == WRONG_SEED)
+		check(bad > 0, "wrong seed: the epoch's rng catches it though picture and RamUsed match");
 	SDL_Quit();
 	return g_failures ? 1 : 0;
 }
@@ -244,7 +267,7 @@ static void checkRecording(const char *path)
 		{ "# scene Game#1 vblank=50",       false },
 		{ "Game#1+1:2000",                  false },	/* still held: pressed again in Game's terms */
 		{ "Game#1+20:0000",                 false },	/* released at 70 */
-		{ "# epoch 300 ram=0 crc=",         true  },
+		{ "# epoch 300 ram=0 crc=",         true  },	/* ... rng=<the fake RNG>, checked below */
 	};
 	const int nWant = (int)(sizeof(want) / sizeof(want[0]));
 
@@ -268,6 +291,8 @@ static void checkRecording(const char *path)
 		}
 		bool ok = want[i].prefix ? std::strncmp(line, want[i].text, std::strlen(want[i].text)) == 0
 								 : std::strcmp(line, want[i].text) == 0;
+		if (ok && std::strncmp(line, "# epoch ", 8) == 0)
+			ok = std::strstr(line, " rng=") != NULL;	/* the game registered its RNG */
 		if (!ok)
 		{
 			std::snprintf(what, sizeof(what), "recording A line %d: got '%s', want '%s%s'",
@@ -297,9 +322,11 @@ static int spawnSelf(const char *exe, const char *mode)
 int main(int argc, char **argv)
 {
 	if (argc > 1 && std::strcmp(argv[1], "record") == 0)
-		return childMain(false);
+		return childMain(RECORD);
 	if (argc > 1 && std::strcmp(argv[1], "replay") == 0)
-		return childMain(true);
+		return childMain(REPLAY);
+	if (argc > 1 && std::strcmp(argv[1], "wrongseed") == 0)
+		return childMain(WRONG_SEED);
 
 	char exe[MAX_PATH], tmp[MAX_PATH], a[MAX_PATH + 48], b[MAX_PATH + 48];
 	if (!GetModuleFileNameA(NULL, exe, sizeof(exe)) || !GetTempPathA(sizeof(tmp), tmp))
@@ -343,6 +370,15 @@ int main(int argc, char **argv)
 	}
 	std::free(da);
 	std::free(db);
+
+	/*	4. replay A with the wrong seed and record nothing: same input, same
+		picture, same RamUsed - only the RNG differs, and the epoch must still
+		report it (a real wrong-seed replay matched every CRC-and-RAM epoch on
+		three levels in five, issue #58)  */
+	setEnv("SBSP_RECORD_PAD", "");
+	rc = spawnSelf(exe, "wrongseed");
+	check(rc == 0, "wrong-seed child exited 0 (it saw the desync it expected)");
+
 	std::remove(a);
 	std::remove(b);
 

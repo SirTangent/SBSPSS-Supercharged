@@ -160,7 +160,8 @@ extern "C" const char *Port_CurrentScene(void)
 extern "C" void Port_RegisterGameGlobals(unsigned long *ramUsed, int *memNodeCount,
 										 int *invincibleSponge,
 										 unsigned char **currPrim, unsigned char **endPrim,
-										 unsigned char **primListStart, unsigned char **primListEnd)
+										 unsigned char **primListStart, unsigned char **primListEnd,
+										 long *randomSeed)
 {
 	g_globals.ramUsed          = ramUsed;
 	g_globals.memNodeCount     = memNodeCount;
@@ -169,6 +170,7 @@ extern "C" void Port_RegisterGameGlobals(unsigned long *ramUsed, int *memNodeCou
 	g_globals.endPrim          = endPrim;
 	g_globals.primListStart    = primListStart;
 	g_globals.primListEnd      = primListEnd;
+	g_globals.randomSeed       = randomSeed;
 
 	/*	--invincible: the DEBUG pause menu's toggle (player.cpp
 		invincibleSponge, read by CPlayer::takeDamage) exists in both

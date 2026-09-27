@@ -48,11 +48,14 @@ struct PortGameGlobals
 	unsigned char	**endPrim;
 	unsigned char	**primListStart;
 	unsigned char	**primListEnd;
+	long			*randomSeed;		/* s_randomSeed      (utils/utils.cpp): the
+										   RNG state, in every `# epoch` line */
 };
 void	Port_RegisterGameGlobals(unsigned long *ramUsed, int *memNodeCount,
 								 int *invincibleSponge,
 								 unsigned char **currPrim, unsigned char **endPrim,
-								 unsigned char **primListStart, unsigned char **primListEnd);
+								 unsigned char **primListStart, unsigned char **primListEnd,
+								 long *randomSeed);
 const struct PortGameGlobals *Port_GameGlobals(void);
 
 /*	Once per vblank (Host_VBlank): RamUsed high-water (SBSP_MEM_LOG=1),
