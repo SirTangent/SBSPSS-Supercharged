@@ -18,7 +18,8 @@
 
 	Test tooling: SBSP_PAD_SCRIPT="vblank:HEXmask[,vblank:HEXmask...]"
 	injects buttons for automated runs.  Each entry applies from its vblank
-	until the next one comes due (by vblank, not by listing order); the
+	until the next one comes due (by vblank, not by listing order) or until
+	a scene opens, which releases every button (see below); the
 	mask is the active-HIGH 16-bit
 	(Button1<<8)|Button2 hardware word (LIBETC.H order), e.g. START=0800,
 	CROSS=0040, SELECT=0100, DOWN=4000.

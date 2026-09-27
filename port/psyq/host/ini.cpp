@@ -11,9 +11,11 @@
 	    command line  >  environment  >  sbsp.ini  >  built-in default
 
 	with zero changes to the consumers, which all getenv() lazily.
-	args.cpp calls Port_IniLoad from its priority-101 constructor, after
-	its own pre-scan of --save-dir / --ini and BEFORE its env and argument
-	passes, so an argument still overrides an ini value.
+	args.cpp calls Port_IniLoad (loadIni) from its priority-101
+	constructor AFTER its whole argument pass: every --flag has exported its
+	variable by then, so the "only if unset" rule sees arguments and the
+	inherited environment alike and an argument always beats an ini value.
+	Moving the call before the argument loop would invert that.
 
 	The key set is a WHITELIST (kKeys below), shared by the loader and the
 	default writer.  Harness switches (SBSP_UNCAPPED, SBSP_EXIT_AFTER,

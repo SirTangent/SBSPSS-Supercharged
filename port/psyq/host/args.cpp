@@ -41,8 +41,9 @@
 	  --exit-after <n>      SBSP_EXIT_AFTER
 	  --dump-audio <wav>    SBSP_DUMP_AUDIO (M5: deterministic mixer dump,
 	                        disables the playback device)
-	  --save-dir <path>     SBSP_SAVE_DIR (M6: memory-card image directory,
-	                        default %APPDATA%\SBSPSS)
+	  --save-dir <path>     SBSP_SAVE_DIR (M6: memory-card image directory;
+	                        default saves\ beside the exe if it exists, else
+	                        %APPDATA%\SBSPSS - host/hostpath.cpp)
 	  --pad-file <path>     SBSP_PAD_FILE   (M8: see host/input.cpp)
 	  --record-pad <path>   SBSP_RECORD_PAD (M8)
 	  --frame-crc           SBSP_FRAME_CRC=1 (M8: [frame] line per vblank)
