@@ -937,12 +937,11 @@ comments; this exe reads older recordings unchanged.
 
 with `<dir>` holding `card-before.mcd` renamed `card0.mcd`, and `<n>` the
 `vblanks=` of the session's `[summary]` (closing the window is not
-recorded, so `--exit-after` stands in for it).  Since issue #67 a paced
-load costs the same emulated vblanks capped or uncapped (see "Replay
-judging" below).  What a replay cannot reproduce are the vblanks a capped
-run fires while behind the wall clock - through the boot stall, or a
-dropped frame on the recording machine (`getFramesSinceLast() > 1`).
-Before #67 a
+recorded, so `--exit-after` stands in for it).  Any exe replays it, DEBUG
+or FINAL, 32- or 64-bit: since issue #67 capped and uncapped runs see the
+same emulated time - a paced load costs the same vblanks, and a vblank
+fires only when the game waits - so the uncapped replay lands every frame
+where the session did (see "Replay judging" below).  Before #67 a
 capped replay's loads took *about* as long as the session's, not exactly -
 measured on one machine, record and replay both capped with pacing on, the
 level load took 249 vblanks recording and 248 replaying on two levels out
@@ -1008,12 +1007,7 @@ emulated vblank.  `--no-cd-pace` keeps the old single pump.
 
 **`--uncapped` keeps pacing.**  `args.cpp` no longer puts `SBSP_CD_PACE=0`
 beside `SBSP_UNCAPPED=1` (`--uncapped` is now a plain switch), and a paced
-load lasts as long in both.  What a capped run still has and an uncapped
-one does not are the vblanks it fires at non-waiting pumps while behind
-the wall clock: the boot stall (the first present, about 150 ms) costs 5
-of them on the machine #67 was measured on, and StopLoad's wait for the
-loading icon to wrap carries the offset into every later frame.  The
-`# pace` mismatch line now says that.  `# pace
+load lasts as long in both.  `# pace
 uncapped` no longer implies instant loads, so a recording also says which
 it had (`# loads paced|instant`, after `# pace`); instant against paced
 drifts after every load and is reported once.  `run_tier.py` keeps
@@ -1023,6 +1017,33 @@ two paced runs of 1-1 that must agree frame for frame and open the level
 later than an instant run does (vblank 244 against 60 on the USA debug
 exe).  With `--no-audio` an uncapped run has no wall-clock input left,
 paced loads or not.
+
+**Emulated time is waited time.**  With loads fixed, a capped recording
+still replayed 5 vblanks off uncapped on the machine measured.  A capped
+run fired a vblank at *any* pump once the wall clock said one was due, so
+whenever it had fallen behind - the boot stall, the first present at
+about 150 ms, is enough - its vblanks landed at bare pumps (`VSync(-1)`,
+`DrawSync`, `PadGetState`) that an uncapped run passes without one, and
+StopLoad's wait for the icon to wrap carried the offset into every later
+frame.  Now a vblank fires only in a wait step (`Port_PumpIdle`: VSync's
+wait, a paced `CdReadSync`, `StGetNext`), capped or uncapped, and a
+capped run that has fallen behind catches up through its next waits,
+which fire at once instead of waiting for the wall clock.  Both modes see
+the same vblanks at the same points of the game: two capped recordings of
+`pause_quit` and the uncapped replay of either are frame-identical and
+leave the same card.  The cost falls on a host that cannot sustain 60 Hz:
+it now runs the game slower instead of skipping frames
+(`getFramesSinceLast()` is 1 on every frame, as it always was uncapped),
+which the backlog rebase had already made the rule past 8 vblanks
+behind.  On the machine measured, the only late vblanks a capped run ever
+had were the 5-8 of the boot stall.  A loop that never waits would now
+spin forever - `VRamViewer` (DEBUG, hold SELECT) spins on `PadGetState`,
+and pads change only at a vblank - so after `PORT_SPIN_PUMPS` (10000)
+bare pumps in a row every further one is a one-vblank wait, until the
+game waits again; the Tier 1 routes and the short Tier 2 levels never
+pass 200.  `pump_test` checks both modes, with owed wall time, and the
+spin rule.  The `# pace` mismatch warning is gone: there is nothing left
+for it to warn about.
 
 **Recordings name their build.**  A DEBUG heap block carries guard words
 (`mem/memory.h` `MEM_BLOCK_HDR`), so FINAL's RamUsed runs about 3.3 KB

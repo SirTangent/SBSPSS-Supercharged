@@ -23,11 +23,12 @@ rem                                      shim's tagged lines are in stderr)
 rem When you are done, zip that folder and send it with your notes.
 rem
 rem To replay one (developers): put card-before.mcd in an empty folder as
-rem card0.mcd, then
+rem card0.mcd (a first session has none: leave the folder empty), then
 rem   sbsp-debug.exe --pad-file <session>\session.pad --ini <session>\sbsp.ini
-rem                  --save-dir <that folder> --no-audio
-rem capped like the session was (see port/docs/conv_pc.md, "Replaying a
-rem tester session").
+rem                  --save-dir <that folder> --uncapped --no-audio
+rem                  --exit-after <vblanks= from the [summary] line> --frame-crc
+rem on any of the exes (see port/docs/conv_pc.md, "Replaying a tester
+rem session").
 setlocal
 cd /d "%~dp0"
 

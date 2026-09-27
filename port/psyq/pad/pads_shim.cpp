@@ -48,7 +48,7 @@ void PadStopCom(void)	{ }
 
 int PadGetState(int port)
 {
-	Port_Pump();		/* keeps VRamViewer's VSync-less loop alive */
+	Port_Pump();		/* VRamViewer's VSync-less loop lives on this: the spin rule, host/pump.cpp */
 	return (port >> 4) == 0 ? 6 : 0;	/* PadStateStable / PadStateDiscon */
 }
 

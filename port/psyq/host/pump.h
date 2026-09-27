@@ -1,8 +1,11 @@
 /*	Cooperative pump: the single place PS1 "interrupt time" happens on PC.
-	Blocking SDK calls (VSync, DrawSync, CdReadSync) call Port_Pump(), which
-	advances the emulated vblank counter from the wall clock and fires the
-	registered VSyncCallback once per elapsed vblank - reproducing the PS1's
-	callback-during-load behaviour single-threaded.
+	Blocking SDK calls (VSync, CdReadSync, StGetNext) wait with
+	Port_PumpIdle, which advances the emulated vblank counter - paced by the
+	wall clock unless uncapped - and fires the registered VSyncCallback once
+	per vblank, reproducing the PS1's callback-during-load behaviour
+	single-threaded.  Non-blocking calls (VSync(-1), DrawSync, PadGetState)
+	call Port_Pump, which polls but fires no vblank (issue #67; host/pump.cpp
+	explains the spin rule).
 */
 #ifndef PORT_PUMP_H
 #define PORT_PUMP_H
@@ -11,8 +14,11 @@
 extern "C" {
 #endif
 
-void			Port_Pump(void);			/* advance vblank clock, fire callbacks */
-void			Port_PumpIdle(void);		/* Sleep(1) + Port_Pump - use in wait loops */
+void			Port_Pump(void);			/* poll; no vblank (the spin rule aside) */
+void			Port_PumpIdle(void);		/* one wait step: the only place a vblank fires */
+/*	bare pumps in a row after which each further one is a one-vblank wait
+	(host/pump.cpp, the spin rule)  */
+#define PORT_SPIN_PUMPS	10000
 unsigned long	Port_VBlankCount(void);
 void			Port_SetVBlankHz(int hz);	/* 60 NTSC / 50 PAL (SetVideoMode) */
 int				Port_VBlankHz(void);		/* the rate last set: 60 or 50 (GetVideoMode, pace log, XM check) */

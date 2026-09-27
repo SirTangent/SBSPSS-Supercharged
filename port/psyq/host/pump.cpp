@@ -18,6 +18,11 @@
 extern "C" {
 int  VSync(int mode);
 int  VSyncCallback(void (*f)(void));
+/*	a vblank's work, in firing order - see pumpStep  */
+void Host_VBlank(unsigned long vblankNo);	/* host/window.cpp */
+void Port_RCnt2Vblank(int vblankHz);		/* api/libapi_stubs.cpp */
+void Port_CdVblank(int vblankHz);		/* cd/xa_stream.cpp */
+void Port_AudioVBlank(int vblankHz);		/* host/audio_out.cpp */
 }
 
 static void			(*g_vsyncCallback)(void);
@@ -46,22 +51,44 @@ static void clockInit(void)
 	}
 }
 
-/*	SBSP_UNCAPPED=1 (--uncapped, M8): emulated time advances only when the
-	game WAITS for it.  Each Port_PumpIdle - the body of every blocking
-	wait (VSync, DrawSync(0), CdReadSync...) - moves the target one vblank
-	ahead of the counter, so that wait iteration delivers exactly one
-	callback and returns; non-blocking pumps (VSync(-1), DrawSync(1),
-	PadGetState) deliver nothing, exactly as they would between two real
-	vblanks.  A game frame therefore costs one vblank, as on a capped host
-	keeping full rate (paceLog vbl/frame 1.0), only without the wall-clock
-	wait.  (Firing on EVERY pump instead made a frame cost as many vblanks
-	as it pumps - 5 - and the simulation diverged from a capped run.)  The
-	single-fire block, backlog rebase and re-entrancy guard in Port_Pump are
-	untouched: the target never gets more than one ahead.  With --no-audio
-	this removes every wall-clock input - a paced CD load counts emulated
-	vblanks too (cd/cd.cpp, issue #67) - so two runs with the same --seed
-	are bit-identical, with paced loads or with --no-cd-pace.  */
+/*	Emulated time is waited time.  A vblank fires only in a WAIT STEP -
+	Port_PumpIdle, the body of every blocking wait (VSync, CdReadSync,
+	StGetNext) - and at most one per step; a bare Port_Pump (VSync(-1),
+	DrawSync, PadGetState, the front of every wait) delivers nothing, as
+	nothing would happen between two real vblanks.  A game frame therefore
+	costs one vblank (paceLog vbl/frame 1.0).  (Firing on EVERY pump
+	instead made a frame cost as many vblanks as it pumps - 5 - and the
+	simulation diverged.)
+
+	SBSP_UNCAPPED=1 (--uncapped, M8): each wait step moves the target one
+	vblank ahead of the counter, so it delivers exactly one callback and
+	returns without the wall-clock wait.  Capped, a wait step fires when the
+	wall clock says the vblank is due.  Until issue #67 a capped run also
+	fired due vblanks at bare pumps whenever it had fallen behind - through
+	the boot stall (the first present, ~150ms: 5 vblanks on the machine
+	measured) or a slow frame - and they landed at points of the game an
+	uncapped run never saw, so a capped recording could not be replayed
+	uncapped.  Now both modes see the same vblanks at the same points.  A
+	capped run that has fallen behind catches up through its next waits
+	(each still fires one vblank, just without waiting for the wall clock),
+	so a host that cannot sustain 60Hz runs the game slower instead of
+	skipping frames - the backlog rebase below already made that the rule
+	past MAX_PENDING_VBLANKS.  With --no-audio nothing wall-clock is left - a
+	paced CD load counts emulated vblanks too (cd/cd.cpp) - so two runs with
+	the same --seed are bit-identical, capped or uncapped, paced loads or
+	--no-cd-pace.
+
+	The spin rule.  A loop that never waits - VRamViewer (vid.cpp) spins on
+	PadGetState, and pads only change at a vblank - would spin forever.
+	After PORT_SPIN_PUMPS bare pumps in a row every further bare pump is a
+	one-vblank wait, until the game waits for itself again.  That is still a
+	count of the game's own progress, never of the wall clock, so it is the
+	same in every mode.  Nothing else comes near it: every Tier 1 route and
+	the short Tier 2 levels, instant loads included, stay under 200 bare
+	pumps in a row.  */
 static unsigned long	g_uncappedTarget;
+static unsigned long	g_barePumps;		/* bare pumps since the last wait step */
+static int			g_inPump;			/* inside the single-fire block: see pumpStep */
 
 extern "C" int Port_Uncapped(void)
 {
@@ -71,7 +98,7 @@ extern "C" int Port_Uncapped(void)
 		const char *e = getenv("SBSP_UNCAPPED");
 		uncapped = (e && *e && *e != '0');
 		if (uncapped)
-			fprintf(stderr, "[pace] uncapped: vblanks advance one per pump, not by wall clock\n");
+			fprintf(stderr, "[pace] uncapped: vblanks advance one per wait, not by wall clock\n");
 	}
 	return uncapped;
 }
@@ -119,7 +146,7 @@ extern "C" double Port_NowSeconds(void)
 	return (double)(now.QuadPart - g_qpcOrigin.QuadPart) / (double)g_qpcFreq.QuadPart;
 }
 
-/*	Backlog cap.  Pending vblanks drain one per pump call, so the game
+/*	Backlog cap.  Pending vblanks drain one per wait step, so the game
 	tolerates a short lag; past this the host is simply not keeping up (or
 	was stopped dead by a debugger / laptop sleep) and the WALL CLOCK is
 	rebased onto the counter - see Port_Pump.  ~133ms at 60Hz, 160ms at 50Hz.  */
@@ -179,13 +206,10 @@ static void paceLog(void)
 		g_paceSec[i] = 0.0;
 }
 
-extern "C" void Port_Pump(void)
+/*	One pump: pause polling, backlog control and - in a wait step, when
+	one is due - one vblank.  */
+static void pumpStep(int wait)
 {
-	extern void Host_VBlank(unsigned long vblankNo);	/* host/window.cpp */
-	extern void Port_RCnt2Vblank(int vblankHz);			/* api/libapi_stubs.cpp */
-	extern void Port_CdVblank(int vblankHz);			/* cd/xa_stream.cpp */
-	extern void Port_AudioVBlank(int vblankHz);			/* host/audio_out.cpp */
-
 	/*	Nested pumps are a complete no-op.  Port_Pump can be reached from
 		inside g_vsyncCallback (anything the game's vblank work touches that
 		pumps - DrawSync, PadGetState, VSync), and on PS1 that work ran in
@@ -198,8 +222,7 @@ extern "C" void Port_Pump(void)
 		Requirement this places on vblank callbacks: they must not BLOCK on
 		the pump (a VSync(n) wait from inside one would never complete).
 		Nothing in the tree does - VidVSyncCallback only draws.  */
-	static int	inPump;
-	if (inPump)
+	if (g_inPump)
 		return;
 
 	/*	Paused (focus lost, M8 shell): the window is polled and NOTHING
@@ -250,10 +273,10 @@ extern "C" void Port_Pump(void)
 		the loop at ~1 real vsync, one pending vblank accumulates per
 		iteration, and a catch-up burst here made every VSync(0) fire twice).
 		The counter still tracks the wall clock - pending vblanks drain one
-		per call through the many pump sites a game frame passes.  */
-	if (g_vblank < target)
+		per wait step (see g_uncappedTarget for why only a wait fires).  */
+	if (wait && g_vblank < target)
 	{
-		inPump = 1;
+		g_inPump = 1;
 		g_vblank++;
 		if (g_vsyncCallback)
 			g_vsyncCallback();		/* game vblank work first (loading icon...) */
@@ -268,20 +291,46 @@ extern "C" void Port_Pump(void)
 		}
 		Port_AudioVBlank(g_hz);		/* WAV dump: this vblank's audio, if armed */
 		paceLog();
-		inPump = 0;
+		g_inPump = 0;
 	}
 }
 
-/*	Wait-loop body: yield the core for a tick, then pump.  Every blocking SDK
-	call spins on some deadline (a vblank number, a CD read completion); doing
-	that without the Sleep pins a core at 100% for the whole wait.  */
-extern "C" void Port_PumpIdle(void)
+/*	One wait step: the only place a vblank fires.  Uncapped, the wait
+	itself is what passes time; capped, yield the core for a tick and fire
+	if the wall clock says one is due - without the Sleep every blocking
+	wait would pin a core at 100%.  */
+static void waitStep(void)
 {
 	if (Port_Uncapped())
-		g_uncappedTarget = g_vblank + 1;	/* the wait itself is what passes time */
+		g_uncappedTarget = g_vblank + 1;
 	else
 		Sleep(1);
-	Port_Pump();
+	pumpStep(1);
+}
+
+/*	Wait-loop body: every blocking SDK call spins on some deadline (a vblank
+	number, a CD read completion) with this.  */
+extern "C" void Port_PumpIdle(void)
+{
+	g_barePumps = 0;
+	waitStep();
+}
+
+/*	A bare pump: VSync(-1), DrawSync, PadGetState, the front of every wait.
+	No vblank - unless the game has pumped PORT_SPIN_PUMPS times without
+	waiting, when this is a one-vblank wait (the spin rule, above).  A pump
+	nested inside the vblank work returns at once either way.  */
+extern "C" void Port_Pump(void)
+{
+	if (g_barePumps < PORT_SPIN_PUMPS)
+	{
+		g_barePumps++;
+		pumpStep(0);
+		return;
+	}
+	const unsigned long v = g_vblank;
+	while (g_vblank == v && !g_inPump)
+		waitStep();
 }
 
 extern "C" int VSync(int mode)
@@ -303,6 +352,7 @@ extern "C" int VSync(int mode)
 									  : g_lastVSyncVblank + (unsigned long)mode;
 	if (mode == 0)
 		g_vsync0Count++;	/* pace diagnostic - see paceLog */
+	g_barePumps = 0;		/* a wait: it ends any spin, so its front pump is a plain one */
 	Port_Pump();
 	while (g_vblank < until)
 		Port_PumpIdle();

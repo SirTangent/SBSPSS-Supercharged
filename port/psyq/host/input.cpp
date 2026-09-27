@@ -58,11 +58,11 @@
 	and rng alone - issue #67 for the build), the seed when one was
 	given (`# seed`, adopted by a replay that has no --seed; without one the
 	game seeds itself the same way every boot - host/seed.cpp) and
-	its pacing (`# pace capped|uncapped`, `# loads paced|instant`).  A load
-	costs the same emulated vblanks capped or uncapped (cd/cd.cpp, issue
-	#67); instant loads (--no-cd-pace) against paced ones do not agree,
-	and every offset after a load drifts.  Either mismatch is reported
-	once.  An epoch
+	its pacing (`# pace capped|uncapped`, `# loads paced|instant`).  Capped
+	and uncapped runs see the same emulated time (host/pump.cpp, issue #67),
+	so `# pace` is only a note; instant loads (--no-cd-pace) against paced
+	ones do not agree, every offset after a load drifts, and that mismatch
+	is reported once.  An epoch
 	carries RamUsed, the display CRC and the game's random-number state
 	(`rng`, s_randomSeed): a run that has drawn a different random number
 	has diverged even while every difference is still off screen, and five
@@ -194,7 +194,7 @@ static const char *ramSkipped(void)
 	reads a recording without them as before.  */
 static long			g_recordingSeed;		/* `# seed <n>`: what setRndSeed got */
 static int			g_haveSeed;
-static int			g_recordingPace = -1;	/* `# pace`: -1 unknown, 0 capped, 1 uncapped */
+
 static int			g_recordingLoads = -1;	/* `# loads`: -1 unknown, 0 instant, 1 paced */
 
 struct PromptMark						/* `# prompt <vblank> pad|keys` */
@@ -394,9 +394,10 @@ static void padFileParse(void)
 				g_haveSeed = 1;
 			else if (sscanf(s, "# pace %15s", word) == 1)
 			{
-				if (strcmp(word, "capped") == 0)		g_recordingPace = 0;
-				else if (strcmp(word, "uncapped") == 0)	g_recordingPace = 1;
-				else
+				/*	capped and uncapped see the same emulated time (host/pump.cpp,
+					issue #67), so a replay needs nothing from this line - but a bad
+					word means a damaged file  */
+				if (strcmp(word, "capped") != 0 && strcmp(word, "uncapped") != 0)
 				{
 					fclose(f);
 					padFileFail(path, line, "bad `# pace' (expected capped or uncapped)");
@@ -457,17 +458,10 @@ static void padFileParse(void)
 	if (g_epochCount && g_recordingBuild >= 0 && g_recordingBuild != thisBuildFinal())
 		fprintf(stderr, "[input] cross-build recording (%s, this exe %s): epoch ram not compared\n",
 				g_recordingBuild ? "final" : "debug", thisBuildFinal() ? "final" : "debug");
-	/*	A paced load costs the same emulated vblanks capped or uncapped
-		(cd/cd.cpp, issue #67).  What a capped run still has and an uncapped
-		one does not are the vblanks it fires while behind the wall clock -
-		through the boot stall, or a dropped frame - which the file does not
-		hold.  Instant loads against paced ones never agree on how long a
-		load lasts, and every entry after one lands on a different frame.
-		The epochs will say so; this says why, up front.  */
-	if (g_recordingPace >= 0 && g_recordingPace != (Port_Uncapped() != 0))
-		fprintf(stderr, "[input] recording was %s, this run is %s: vblanks a capped run "
-						"fired behind the wall clock are not in the file\n",
-				g_recordingPace ? "uncapped" : "capped", Port_Uncapped() ? "uncapped" : "capped");
+	/*	Capped against uncapped needs no word: both see the same emulated
+		time (host/pump.cpp, issue #67).  Instant loads against paced ones
+		never agree on how long a load lasts, and every entry after one lands
+		on a different frame.  The epochs will say so; this says why, up front.  */
 	if (g_recordingLoads >= 0 && g_recordingLoads != (Port_CdPaced() != 0))
 		fprintf(stderr, "[input] recording's loads were %s, this run's are %s (--no-cd-pace): "
 						"every offset after a load drifts\n",
