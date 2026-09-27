@@ -1511,6 +1511,76 @@ with; `gte_test` is unchanged.
     lives in str_test rather than vlc3_test because the frame has to come
     from the stream engine, and str_test has the synthetic disc.
 
+### Video fidelity fixes and the renderer revision (issue #60)
+
+Shim-only: `gpu/gp0.cpp`, `gpu/gpu_core.h`, `mdec/mdec.cpp`,
+`host/input.cpp` (plus one help line in `host/args.cpp`), the tests and
+the goldens.  Unlike the section above, these changes move pixels on
+purpose.
+
+**Dither.**  A textured polygon's tpage attribute went through the E1
+decode, which also took bit 9 as dither.  On hardware the attribute's
+bits 9-10 leave E1 alone (psx-spx; DuckStation masks the attribute with
+0x9FF, and Mednafen's SetTPage leaves dtd alone).  getTPage never sets
+bit 9, so every POLY_FT/GT turned dither off, for itself and for every
+gouraud prim after it, although the game asks for dither all frame
+(vid.cpp dtd=1 and the primplus E1 words).  `GPU_ApplyPolyTexpage` now
+decodes only the page, semi mode and depth for the attribute.
+- Tier 1 + tier 2: all 207 `[scene]` lines are unchanged, and 134,922 of
+  163,000 `[frame]` lines differ.  The change is a 1-LSB dither pattern;
+  on level 0 at vblank 650 the differing pixels are the sky flowers.
+- Cost (the user accepted it): a modulated sprite at the neutral 128
+  colour no longer folds to the raw path once it is dithered
+  (`foldNeutral`, raster.cpp).  FINAL, `--uncapped --pace-log --level 0`,
+  runs alternated with the previous exe:
+
+  | run | raster before | raster after | change |
+  |---|---|---|---|
+  | `--exit-after 1200`, vblanks 301-900, 3 runs | 0.466 / 0.465 / 0.463 s | 0.483 / 0.479 / 0.474 s | +2.9% |
+  | `--exit-after 3601`, vblanks 301-3600, 2 runs | 2.701 / 2.698 s | 2.719 / 2.735 s | +1.0% |
+
+  Wall time is unchanged.
+
+**IDCT saturation.**  Each IDCT output sample is sign-extended from 9
+bits and clamped to -128..127 before the colour conversion, as the MDEC
+does (DuckStation's rule, chosen by the user).  Before, a ringing sample
+past 127 went into the colour matrix unclamped.
+- `make_mdec_golden.py` applies the same rule and appends a saturation
+  vector that hits all five regimes.
+- The FMV CRC goldens for thq, climax and demo changed.  Intro's first 30
+  frames never leave the range, so its goldens did not.  FINAL
+  reproduces the DEBUG CRCs.
+- Against ffmpeg (`check_fmv_ffmpeg.py`, 30 frames a movie):
+
+  | movie | meanAbs before | meanAbs after |
+  |---|---|---|
+  | thq | 0.1081 | 0.1078 |
+  | climax | 0.2042 | 0.2027 |
+  | intro | 0.4884 | 0.4884 |
+  | demo | 0.4684 | 0.4596 |
+
+  The worst sample delta fell from 17 to 10.
+
+**The renderer revision.**  A replay compares the display CRC at every
+epoch, so a fix like the two above would make every older recording
+desync, #55's human sessions included, although the game itself replays
+exactly.
+- `GPU_RENDER_REVISION` (gpu_core.h) names the renderer's pixel
+  revision, and --record-pad writes it as `# render N` after `# build`.
+  It is 1 now; a recording without the line is revision 0.
+- When a recording's revision differs from the exe's, no epoch's crc is
+  compared (the reason reads "renderer revision"), but ram and rng still
+  are.  An `[input]` line says so at boot.
+- **Rule: bump `GPU_RENDER_REVISION` in any change that moves displayed
+  pixels on purpose**, and add a line to its comment.  A refactor that
+  keeps `--compare-frames` identical must not bump it.
+- `replay_test` covers the line, a missing line, another revision, ram
+  and rng still being caught, and a refused negative value.
+- The previous exe's tier 1 recordings (`port/build/lane2-base/art`, made
+  before these fixes) replay on the new exe with `run_tier.py --tier1
+  --replay-from <art> --compare-frames <the new exe's own logs>`: all 10
+  routes pass, with byte-identical cards, on DEBUG and FINAL.
+
 ## Game-source changes (keyboard prompt icons, issue #43)
 
 **The problem.**  Every "press this to do that" line in the game draws a pad
