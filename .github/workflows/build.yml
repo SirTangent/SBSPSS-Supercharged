@@ -173,9 +173,10 @@ jobs:
   # C:\Program Files, Visual Studio's x86 build tools + SDK (VS 2026 under
   # C:\Program Files\Microsoft Visual Studio\18 on windows-latest since
   # 2026-09), and the SDL3 VC /
-  # Vulkan-Headers packages port/cmake/deps_vc.cmake fetches.  Advisory
-  # while the toolchain is young (M8 PR 4 timebox): a failure here is a
-  # finding to look at, not a red PR.
+  # Vulkan-Headers packages port/cmake/deps_vc.cmake fetches.  A failure
+  # here fails the run like any other job (issue #41 item 7): it was
+  # advisory (continue-on-error) through the M8 PR 4 timebox, when its
+  # green tick meant nothing, and making it count is one of #39's gates.
   #
   # One job definition, two targets (M9): i686-pc-windows-msvc, and the
   # same tree as a true 64-bit exe (SBSP_PC64 - 4-byte pointer fields kept
@@ -189,7 +190,6 @@ jobs:
     needs: data
     runs-on: windows-latest
     timeout-minutes: 40
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
