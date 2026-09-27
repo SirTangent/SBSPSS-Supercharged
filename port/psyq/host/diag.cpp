@@ -276,17 +276,96 @@ extern "C" void Port_Assert(const char *expr, const char *file, int line)
 }
 
 /*****************************************************************************/
-extern "C" void Port_Exit(int code)
+/*	Exit hooks (issue #62): what used to be atexit's job - the WAV dump's
+	header, the rumble stop - for a process that only ever leaves through
+	_exit.  A fixed table and no allocation: a hook may be registered from a
+	static-init path, and Port_Exit may be running on a faulting thread.  */
+namespace
 {
-	static volatile LONG entered;
 
-	/*	Second caller (a fault while printing the summary, or the watchdog
-		thread racing the main thread): the first owns the summary.  */
+struct ExitHook
+{
+	void			(*volatile fn)(int code);	/* written last: the slot is live */
+	int				faultSafe;
+	DWORD			thread;						/* the registering thread */
+};
+
+enum { MAX_EXIT_HOOKS = 8 };
+ExitHook		g_exitHooks[MAX_EXIT_HOOKS];
+volatile LONG	g_exitHookClaims;
+
+/*	[summary]: the contract line run_tier.py parses.  On a fault or a
+	watchdog kill it bypasses the CRT: the faulting thread (or, for the
+	watchdog, whichever thread was mid-printf) may hold the stderr stream
+	lock, and fprintf would wait on it forever - so the line is formatted
+	on the stack and written to the handle in one WriteFile, with the
+	"\r\n" the text-mode stream would have produced, byte for byte.  */
+void writeSummary(int code, int lockFree)
+{
+	char	line[384];
+	int		n = snprintf(line, sizeof(line) - 2,
+						 "[summary] exit=%d vblanks=%lu scene=%s asserts=%lu "
+						 "peak_ram=%lu peak_memnodes=%d/256 peak_prim=%lu paused=%.1f",
+						 code, Port_VBlankCount(), g_currentScene, g_assertCount,
+						 g_peakRam, g_peakNodes, GPU_PrimPoolPeak(), Host_PausedSeconds());
+	if (n < 0)
+		n = 0;
+	if (n > (int)sizeof(line) - 3)
+		n = (int)sizeof(line) - 3;
+	if (!lockFree)
+	{
+		fprintf(stderr, "%.*s\n", n, line);
+		fflush(stderr);
+		return;
+	}
+	line[n++] = '\r';
+	line[n++] = '\n';
+	DWORD written;
+	HANDLE h = GetStdHandle(STD_ERROR_HANDLE);
+	if (h && h != INVALID_HANDLE_VALUE)
+		WriteFile(h, line, (DWORD)n, &written, NULL);
+}
+
+}
+
+extern "C" void Port_OnExit(void (*fn)(int code), int faultSafe)
+{
+	LONG slot = InterlockedIncrement(&g_exitHookClaims) - 1;
+	if (slot >= MAX_EXIT_HOOKS)
+	{
+		fprintf(stderr, "[diag] more than %d exit hooks - one will not run\n", MAX_EXIT_HOOKS);
+		return;
+	}
+	g_exitHooks[slot].faultSafe = faultSafe;
+	g_exitHooks[slot].thread    = GetCurrentThreadId();
+	MemoryBarrier();				/* the fields before the pointer that publishes them */
+	g_exitHooks[slot].fn        = fn;
+}
+
+extern "C" PORT_NORETURN void Port_Exit(int code)
+{
+	static volatile LONG	entered;
+	static volatile LONG	ownerCode;
+	static volatile DWORD	ownerThread;
+	const DWORD				self = GetCurrentThreadId();
+
+	/*	A second caller never decides the exit code: the first owns it and
+		the [summary] that states it.  On the owner's own thread this is a
+		re-fault inside a hook or the summary - nothing left to wait for, so
+		go now.  On another thread (the watchdog, a fault on SDL's audio
+		thread) the owner is probably still writing: give it 5s, then leave
+		with its code anyway - a hook stuck on a lock must not hang the
+		process.  (ownerThread still 0 means the owner is between its CAS
+		and the store below, necessarily on another thread.)  */
 	if (InterlockedCompareExchange(&entered, 1, 0) != 0)
 	{
-		fflush(stderr);
-		_exit(code);
+		if (ownerThread != self)
+			Sleep(5000);
+		_exit((int)ownerCode);
 	}
+	ownerCode   = code;
+	ownerThread = self;
+	MemoryBarrier();
 
 	/*	The game's own printf text is stdout, block-buffered whenever it is
 		redirected (the tester zip's stdout.txt, run_tier's pipe), and _exit
@@ -295,13 +374,26 @@ extern "C" void Port_Exit(int code)
 		may hold the CRT stream lock mid-printf and the watchdog is another
 		thread altogether, so flushing there could hang the exit; for those
 		the per-vblank flush in Host_VBlank bounds the loss to one frame.  */
-	if (code != PORT_EXIT_FAULT && code != PORT_EXIT_WATCHDOG)
+	const int crashing = (code == PORT_EXIT_FAULT || code == PORT_EXIT_WATCHDOG);
+	if (!crashing)
 		fflush(stdout);
 
-	fprintf(stderr, "[summary] exit=%d vblanks=%lu scene=%s asserts=%lu "
-					"peak_ram=%lu peak_memnodes=%d/256 peak_prim=%lu paused=%.1f\n",
-			code, Port_VBlankCount(), g_currentScene, g_assertCount,
-			g_peakRam, g_peakNodes, GPU_PrimPoolPeak(), Host_PausedSeconds());
-	fflush(stderr);
+	/*	The contract line first, then the hooks: a hook that hangs or
+		re-faults can no longer cost the run its [summary].  */
+	writeSummary(code, crashing);
+
+	LONG n = g_exitHookClaims;
+	if (n > MAX_EXIT_HOOKS)
+		n = MAX_EXIT_HOOKS;
+	for (LONG i = n - 1; i >= 0; i--)
+	{
+		const ExitHook	*h  = &g_exitHooks[i];
+		void			(*fn)(int) = h->fn;
+		if (!fn || h->thread != self)
+			continue;				/* not live yet, or another thread's state */
+		if (code == PORT_EXIT_FAULT && !h->faultSafe)
+			continue;
+		fn(code);
+	}
 	_exit(code);
 }
