@@ -3,6 +3,7 @@
 #
 #   port/build-pc.sh [<preset>|usa|eur|clangcl|clangcl64|all] [extra ninja args...]
 #   port/build-pc.sh test [usa|eur|clangcl|clangcl64]  build, then ctest -L unit and -L playthrough on each tree
+#                      (playthrough skipped, with a note, for a tree configured -DSBSP_PLAYTHROUGH=OFF)
 #   port/build-pc.sh soak [usa|eur|clangcl|clangcl64]  build, then the full Tier 1 + Tier 2 sweep on each tree
 #   port/build-pc.sh parity64 [debug|final]  build clang-cl x86 + x64, then the x64 A/B (streams, cross replay, cards)
 #
@@ -111,6 +112,16 @@ test_one()
         echo "=== ctest ($preset): playthrough SKIPPED - no sbsp.exe (SBSP_BUILD_GAME=OFF?) ==="
         return
     fi
+    # Likewise a tree configured with -DSBSP_PLAYTHROUGH=OFF (CMakeLists.txt,
+    # the no-Python opt-out) registers none on purpose.  The cache keeps the
+    # value across build_one's re-configure, so read it from there; any of
+    # CMake's false spellings counts.
+    pt=$(sed -n 's/^SBSP_PLAYTHROUGH:BOOL=//p' "build/$preset/CMakeCache.txt" 2>/dev/null | tr -d '\r' | tr '[:lower:]' '[:upper:]')
+    case "$pt" in
+        0|OFF|NO|FALSE|N|IGNORE|NOTFOUND|*-NOTFOUND)
+            echo "=== ctest ($preset): playthrough SKIPPED - opted out with -DSBSP_PLAYTHROUGH=OFF ==="
+            return ;;
+    esac
     echo "=== ctest ($preset): playthrough ==="
     ctest --test-dir "build/$preset" --output-on-failure -L playthrough --no-tests=error
 }
