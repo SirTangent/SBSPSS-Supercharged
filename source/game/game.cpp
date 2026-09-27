@@ -281,6 +281,13 @@ void 	CGameScene::render()
 			m_bossText->render();
 			break;
 	}
+#if !defined(PSX_MIPS_ASM)
+	// PC: once per Game frame, whether the pause menu (drawn by render_playing) is in it -
+	// DEBUG draws that menu with an extra line, so a cross-build replay skips crc under it (conv_pc.md #56)
+	Port_PauseMenuDrawn(m_pauseMenu->isActive()&&m_gamestate!=GAMESTATE_BOSS_INTRO&&m_gamestate!=GAMESTATE_SHOWING_LIVES_BUT_GOING_TO_BOSS_TEXT);
+#else
+#line 283	// keep the PS1 build's __LINE__ (ASSERTs below) byte-identical
+#endif
 }
 
 /*****************************************************************************/

@@ -119,7 +119,8 @@ is worth a note.  Keep SDL3.dll beside them; the 32-bit exes do not use it.
   run-test-session.cmd x64 final    ... on sbsp64.exe
 
 When you send a session, say which exe it was (session.pad also shows it:
-its second line is "# abi ptr=8" for a 64-bit recording, "ptr=4" otherwise).
+its second line is "# abi ptr=8" for a 64-bit recording, "ptr=4" otherwise,
+and its third line "# build debug" or "# build final").
 
 
 Trouble

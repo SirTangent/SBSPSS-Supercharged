@@ -12,6 +12,8 @@ Every run uses the determinism set (--uncapped --no-cd-pace --no-audio
 route is then replayed from that recording with the same seed, which checks
 the recording's "# epoch" ram/CRC markers and requires identical [scene] and
 [frame] streams - the determinism proof, per route (--no-replay skips it).
+--no-cd-pace keeps every baseline independent of load pacing; the self-test
+adds one pair of paced runs, which must agree too (issue #67).
 
 Runs are isolated from the machine (issue #58): every inherited SBSP_*
 variable is dropped (a route's "# env" is the whole environment), and every
@@ -508,6 +510,39 @@ def selftest(exe, seed, logdir):
         print(f"  {'PASS' if good else 'FAIL'} selftest {name}: exit {res.code} (want {want}), "
               f"{tag} {'seen' if tagged else 'MISSING'}, [summary] {'seen' if summary else 'MISSING'}")
         ok &= good
+    ok &= selftest_paced(exe, seed, logdir)
+    return ok
+
+
+def selftest_paced(exe, seed, logdir):
+    """Paced CD loads are emulated time (cd/cd.cpp, issue #67).  Everything
+    else here runs --no-cd-pace so its baselines stay put; this is the one
+    check that a paced load is deterministic too: two uncapped runs WITHOUT
+    --no-cd-pace must agree frame for frame, and must open the level later
+    than an instant-load run does, or pacing was never on."""
+    paced = [a for a in DETERMINISM if a != "--no-cd-pace"]
+    base = ["--level", "1-1", "--seed", str(seed), "--exit-after", "400", "--pad-script", "0:0000"]
+    runs = []
+    for name, extra in (("paced_1", paced), ("paced_2", paced), ("instant", DETERMINISM)):
+        log = Path(logdir) / f"selftest_{name}.log" if logdir else None
+        runs.append(run_game(exe, base + extra, {}, 120, log))
+
+    def stream(res):
+        return [l for l in res.lines if l.startswith("[frame] ") or l.startswith("[scene] ")]
+
+    def first_open(res):
+        opens = [int(l.split("vblank=")[1]) for l in res.lines if l.startswith("[scene] ") and "vblank=" in l]
+        return opens[0] if opens else None
+
+    ok = all([report_common(r, "selftest paced") for r in runs])   # a list: every run reports, not just up to the first failure
+    s1, s2 = stream(runs[0]), stream(runs[1])
+    same = bool(s1) and s1 == s2
+    v_paced, v_instant = first_open(runs[0]), first_open(runs[2])
+    later = v_paced is not None and v_instant is not None and v_paced > v_instant
+    ok = ok and same and later
+    print(f"  {'PASS' if ok else 'FAIL'} selftest paced loads: {len(s1)} [scene]/[frame] lines "
+          f"{'identical' if same else 'DIFFER'} across two runs, level opens at vblank "
+          f"{v_paced} paced vs {v_instant} instant")
     return ok
 
 

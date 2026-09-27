@@ -50,9 +50,10 @@
 	  --no-audio            SBSP_NO_AUDIO=1
 	  --pace-log            SBSP_PACE_LOG=1
 	  --uncapped            SBSP_UNCAPPED=1 (M8: host/pump.cpp - emulated time
-	                        passes only while the game waits; implies
-	                        SBSP_CD_PACE=0; with --no-audio --seed the run is
-	                        deterministic and faster than real time)
+	                        passes only while the game waits; with --no-audio
+	                        --seed the run is deterministic and faster than
+	                        real time.  CD loads stay paced: cd.cpp counts
+	                        them in emulated vblanks, issue #67)
 	  --assert-continue     SBSP_ASSERT_CONTINUE=1 (M8 shell)
 	  --mem-log             SBSP_MEM_LOG=1 (M8 shell)
 
@@ -160,16 +161,6 @@ static void parseLanguage(const char *s, const char *what)
 	fprintf(stderr, " - using english\n");
 }
 
-static int uncappedRequested(int argc, char **argv)
-{
-	const char *e = getenv("SBSP_UNCAPPED");
-	if (e && *e && *e != '0')
-		return 1;
-	for (int i = 1; i < argc; i++)
-		if (strcmp(argv[i], "--uncapped") == 0)
-			return 1;
-	return 0;
-}
 
 static void usage(void)
 {
@@ -193,7 +184,8 @@ static void usage(void)
 		"                        DOWN=4000 LEFT=8000 CROSS=0040 CIRCLE=0020 SQUARE=0080\n"
 		"                        TRIANGLE=0010 L1=0004 R1=0008 L2=0001 R2=0002\n"
 		"  --record-pad <path>   write the applied input  (SBSP_RECORD_PAD)\n"
-		"                        in --pad-file form, with # seed / # pace / # prompt\n"
+		"                        in --pad-file form, with # abi / # build / # seed /\n"
+		"                        # pace / # loads / # prompt\n"
 		"                        header lines and # epoch desync markers\n"
 		"  --frame-crc           [frame] <vbl> crc= line  (SBSP_FRAME_CRC=1)\n"
 		"  --dump-frames <list>  BMP dump vblanks         (SBSP_DUMP_FRAMES)\n"
@@ -205,7 +197,7 @@ static void usage(void)
 		"  --no-audio            no playback device       (SBSP_NO_AUDIO=1)\n"
 		"  --pace-log            frame-pacing stderr log + raster/present/rest split  (SBSP_PACE_LOG=1)\n"
 		"  --uncapped            vblanks not wall-paced   (SBSP_UNCAPPED=1)\n"
-		"                        (implies --no-cd-pace; + --no-audio --seed: deterministic)\n"
+		"                        (+ --no-audio --seed: deterministic, loads paced as capped)\n"
 		"  --assert-continue     log asserts, keep going  (SBSP_ASSERT_CONTINUE=1)\n"
 		"  --mem-log             RamUsed high-water log   (SBSP_MEM_LOG=1)\n"
 		"Settings (sbsp.ini beside the exe, written with defaults on first run;\n"
@@ -336,6 +328,7 @@ PORT_EARLY_CTOR(parseArgs)
 	static const struct { const char *arg; const char *setting; } switches[] =
 	{
 		{ "--no-cd-pace",      "SBSP_CD_PACE=0"         },
+		{ "--uncapped",        "SBSP_UNCAPPED=1"        },	/* loads stay paced (issue #67) */
 		{ "--pace-log",        "SBSP_PACE_LOG=1"        },
 		{ "--no-audio",        "SBSP_NO_AUDIO=1"        },
 		{ "--invincible",      "SBSP_INVINCIBLE=1"      },
@@ -345,15 +338,6 @@ PORT_EARLY_CTOR(parseArgs)
 	};
 	int levelFromArg = 0, seedFromArg = 0, languageFromArg = 0;
 
-	if (uncappedRequested(__argc, __argv))
-	{
-		/*	The CD read deadline (cd.cpp) is wall-clock; under --uncapped a
-			paced load would spin through vblanks at CPU speed.  */
-		_putenv("SBSP_UNCAPPED=1");
-		_putenv("SBSP_CD_PACE=0");
-		fprintf(stderr, "[args] uncapped: CD pacing off (SBSP_CD_PACE=0)\n");
-	}
-
 	for (int i = 1; i < __argc; i++)
 	{
 		const char *v;
@@ -362,8 +346,6 @@ PORT_EARLY_CTOR(parseArgs)
 			usage();
 			exit(0);
 		}
-		if (strcmp(__argv[i], "--uncapped") == 0)
-			continue;		/* handled up front - see uncappedRequested */
 		int matched = 0;
 		for (int s = 0; s < (int)(sizeof(switches) / sizeof(switches[0])); s++)
 		{

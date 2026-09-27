@@ -661,7 +661,8 @@ catch-up burst; the audio device is paused across the edge
 watchdog thread resets its stall count while `Port_Paused()`, and
 `[summary]` gains `paused=<seconds>`.  The M3 invariants (one vblank per
 pump, no nesting, backlog rebased not skipped, `Port_NowSeconds` off the
-fixed origin) are untouched; CD deadlines clamp to now on the next read.
+fixed origin) are untouched.  A paced CD read counts emulated vblanks
+(issue #67), so it waits out a pause with the game.
 
 **Input / audio knobs.**  The keyboard map is now one table in
 `input.cpp` (`Port_InputBindKeys` from `SBSP_KEY_<BUTTON>` via
@@ -862,6 +863,8 @@ three oracles, `port/build-pc.sh parity64 [final|debug]`:
    `# abi ptr=<4|8>` (absent = 4), and `host/input.cpp` skips the ram half
    of the check - only that - when the recording's pointer size is not the
    exe's, saying so once (`[input] cross-ABI recording ...`).  Since
+   issue #67 `# build debug|final` follows it and does the same across
+   build types (RamUsed differs between DEBUG and FINAL too).  Since
    issue #58 the header goes on with `# seed` (only when the run was given
    one) and `# pace`, `# prompt` lines mark the prompt-icon device
    switches, and each epoch also carries
@@ -930,23 +933,22 @@ When the first gamepad goes away the next one still plugged in is adopted
 (SDL announces a pad once).  Older exes read the new `#` lines as
 comments; this exe reads older recordings unchanged.
 
-    sbsp-debug.exe --pad-file <s>\session.pad --ini <s>\sbsp.ini --save-dir <dir> --no-audio
+    sbsp-debug.exe --pad-file <s>\session.pad --ini <s>\sbsp.ini --save-dir <dir> --uncapped --no-audio --exit-after <n> --frame-crc
 
-with `<dir>` holding `card-before.mcd` renamed `card0.mcd`.  Capped, like
-the session: a paced CD read costs wall-clock time (`cd/cd.cpp`, 150
-sectors/s), which is vblanks on a capped run and nothing on an uncapped one
-(`--uncapped` forces `SBSP_CD_PACE=0`), so an uncapped replay lands every
-post-load `Scene#n+off` early - the `# pace` mismatch is reported once, and
-the `# epoch` checks are the oracle either way.  Two limits remain: a
-capped replay's loads take *about* as long as the session's, not exactly,
-and dropped frames on the recording machine (`getFramesSinceLast() > 1`)
-are not captured at all.  Measured on one machine, record and replay both
-capped with pacing on: the level load took 249 vblanks recording and 248
-replaying on two levels out of three, which shifts every later frame by one
-and fails every epoch; the third matched exactly, as did all three with
-`--no-cd-pace`.  Making the CD clock count emulated vblanks (2.5 sectors per
-vblank, whatever the wall clock does) would remove the first limit; that
-is follow-up work for #55.  `replay_test` records a scripted session with a
+with `<dir>` holding `card-before.mcd` renamed `card0.mcd`, and `<n>` the
+`vblanks=` of the session's `[summary]` (closing the window is not
+recorded, so `--exit-after` stands in for it).  Any exe replays it, DEBUG
+or FINAL, 32- or 64-bit: since issue #67 a paced load costs the same
+vblanks everywhere, and every vblank a capped session fired outside a wait
+is in its recording (`# bare`), where the replay fires it too - so the
+uncapped replay lands every frame where the session did (see "Replay
+judging" below).  Before #67 a
+capped replay's loads took *about* as long as the session's, not exactly -
+measured on one machine, record and replay both capped with pacing on, the
+level load took 249 vblanks recording and 248 replaying on two levels out
+of three, which shifted every later frame by one and failed every epoch;
+the third matched exactly, as did all three with `--no-cd-pace`.
+`replay_test` records a scripted session with a
 virtual pad and requires the replay's own recording to be byte-identical;
 `pad_test` covers the stick fold and the second-pad adoption.
 
@@ -964,6 +966,164 @@ fail on every level.  `long` is 32 bits on both Windows ABIs, so `rng`, like
 `crc`, is compared across them (only `ram` is not); an epoch without it -
 an older recording - skips it.  `replay_test` replays with the wrong seed
 against a constant picture and RamUsed and requires the desync.
+
+### Replay judging (issue #67)
+
+Shim-side: `cd/cd.cpp`, `cd/xa_stream.cpp`, `host/args.cpp`,
+`host/input.cpp`, `host/pump.cpp`, the tests and the docs.  Game source:
+entries #56 (the pause-menu report) and #57 (the zeroed save buffer), both
+inside `!PSX_MIPS_ASM` arms with a `#line` re-sync.
+
+**Loads cost emulated vblanks.**  `CdRead` still copies its sectors at
+once; what changed is how long `CdReadSync` then reports "still reading".
+It used to be a wall-clock deadline (`Port_NowSeconds() + sectors/150`), so
+how many vblanks fired during a capped load was scheduling jitter - the
+249 against 248 above - and an uncapped run could not pace at all
+(`--uncapped` forced `SBSP_CD_PACE=0`).  Now `Port_CdDataVblank`, ticked
+from `Port_CdVblank` beside the XA and STR clocks, counts the drive's
+sectors in the XA engine's units: +150 per emulated vblank, one sector per
+`hz`, so 2.5 sectors per NTSC vblank and exactly 3 per PAL one.  An idle
+drive banks at most one vblank (2 sectors NTSC, 3 PAL), so the loader's
+one-sector tail reads finish inside the frame, as on the PlayStation.
+After one idle vblank the bank is the same however long the drive sat, so
+a read's cost is a function of the vblank and read sequence alone:
+
+| sectors | 1 | 2 | 3 | 4 | 30 | 150 |
+|---|---|---|---|---|---|---|
+| 60 Hz | 0 | 0 | 1 | 1 | 11 | 59 |
+| 50 Hz | 0 | 0 | 0 | 1 | | 49 |
+
+A real double-speed drive takes 60 and 50 vblanks for 150 sectors.
+`cdpace_test` pins the table, two reads chained before a wait, a long idle
+stretch, and a wall-clock sleep in the middle of a read (the old deadline
+would have expired in it).
+
+**Look before waiting.**  `CdReadSync` used to pump first and compare
+after.  In a capped run that pump could fire a vblank after the one that
+completed the read and before the game saw it complete, and StopLoad's
+`while(LoadTime) VSync(0)` then waits for the loading icon to wrap, so a
+one-vblank slip there can cost up to 59 more.  A paced `CdReadSync` now
+returns at once when nothing is pending, and otherwise takes exactly one
+`Port_PumpIdle` step per call: one vblank per call uncapped, one per
+wall-clock vblank capped, and either way the read completes on the same
+emulated vblank.  `--no-cd-pace` keeps the old single pump.
+
+**`--uncapped` keeps pacing.**  `args.cpp` no longer puts `SBSP_CD_PACE=0`
+beside `SBSP_UNCAPPED=1` (`--uncapped` is now a plain switch), and a paced
+load lasts as long in both.  `# pace
+uncapped` no longer implies instant loads, so a recording also says which
+it had (`# loads paced|instant`, after `# pace`); instant against paced
+drifts after every load and is reported once.  `run_tier.py` keeps
+`--no-cd-pace` in its determinism set, so every `--compare-frames`
+baseline and `--replay-from` artifact stays valid; its `--selftest` adds
+two paced runs of 1-1 that must agree frame for frame and open the level
+later than an instant run does (vblank 244 against 60 on the USA debug
+exe).  With `--no-audio` an uncapped run has no wall-clock input left,
+paced loads or not.
+
+**Vblanks outside a wait are recorded.**  With loads fixed, a capped
+recording still replayed 5 vblanks off uncapped on the machine measured.
+A capped run fires a vblank at *any* pump once the wall clock says one is
+due, so whenever it has fallen behind - the boot stall, the first present
+at about 150 ms, is enough - its vblanks land at bare pumps (`VSync(-1)`,
+`DrawSync`, `PadGetState`, the front of a wait) that an uncapped run
+passes without one, and StopLoad's wait for the icon to wrap carried the
+offset into every later frame.  The PR's first answer fired vblanks only
+in wait steps (`Port_PumpIdle`), capped or uncapped; review showed what
+that cost live play on a slow host: during any stretch of game code that
+does not wait - a level's set-up after its last read - nothing
+vblank-driven ran (the music's sequencer tick, `XM_Update`, is a vblank
+function; the loading icon; the window's events and presents), and the
+next waits then fast-forwarded through the backlog.  So a live capped
+run fires due vblanks at bare pumps again, exactly as before #67, and
+`--record-pad` writes each one down: `# bare <vblank> <k>`, the vblank
+fired at the k-th bare pump since the last wait step
+(`Port_VBlankBarePump`).  A scripted run - `--pad-file` or
+`--pad-script`: every replay and harness route - fires a vblank at a bare
+pump only where its recording says (`Port_ReplayBareVblank`), and any
+other uncapped run fires none there.  k counts the game's own calls
+(every bare pump is a `VSync`, `DrawSync`, `PadGetState` or unpaced
+`CdReadSync` the game made), never the wall clock, so the replay reaches
+the same k at the same point, and a recorded vblank the replay reaches any
+other way is a desync at exit.  A recording without `# bare` lines - every
+uncapped one, and every capped one made before this rule - fires none,
+so the harness baselines and the first tester sessions replay as before.
+A loop that never waits would spin forever where bare pumps fire nothing -
+`VRamViewer` (DEBUG, hold SELECT) spins on `PadGetState`, and pads change
+only at a vblank - so after `PORT_SPIN_PUMPS` (10000) bare pumps in a row
+every further one is a one-vblank wait, until the game waits again; the
+Tier 1 routes and the short Tier 2 levels never pass 200.  `pump_test`
+records a live capped run whose bare pumps catch up seven owed vblanks,
+replays it capped and uncapped (both replays' own recordings must equal
+it), and checks that an uncapped run and a scripted capped one fire
+nothing at bare pumps, plus the spin rule.  The `# pace` mismatch warning
+is gone: there is nothing left for it to warn about.
+
+**Why epochs stay absolute.**  #67 held a fallback in reserve: anchor each
+`# epoch` to the latest scene open (`Scene#n+off`, like the pad entries),
+so a replay that opened scenes late would still be judged at the right
+frame.  It was not needed.  With loads costed in emulated vblanks and
+every vblank fired outside a wait recorded, a replay opens every scene on
+the vblank the recording did, capped or uncapped, so an absolute epoch
+lands on the same frame; a drift is now itself a divergence, and anchoring would have hidden
+it.  The grammar, and every recording made so far, stay as they were.
+
+**Recordings name their build.**  A DEBUG heap block carries guard words
+(`mem/memory.h` `MEM_BLOCK_HDR`), so FINAL's RamUsed runs about 3.3 KB
+below DEBUG's with identical screens (916,472 against 919,768 at vblank
+300 of the first tester session), and a DEBUG recording failed the `ram`
+half of every epoch on FINAL.  `--record-pad` now writes
+`# build debug|final` as the third line, after `# abi`, and a replay on
+the other build type skips `ram` exactly as a replay across ABIs does,
+saying so once (`[input] cross-build recording ...`).  A recording
+without the line - every one made before #67 - still compares `ram`:
+those came from both build types, so there is nothing safe to assume.
+An unknown word is refused at boot, like a bad `# abi`.  The desync line
+now names what differed, and prints `ram` even when it is not compared:
+
+    [replay] desync at vblank 300 (line 15) on crc: ram 916472 vs 919768 (not compared: cross-build), crc ...
+
+`replay_test` flips `# build` on a copy with a doctored `ram` (replays
+clean), doctors `ram` alone (caught) and writes `# build release`
+(refused, exit 13).
+
+**The pause menu across builds.**  The first two sessions recorded on a #67
+zip - each a new game, 1-1 and a save, one on the 32-bit and one on the
+64-bit DEBUG exe, each with a pause of about nine seconds -
+replayed frame-identical on both DEBUG exes, but both FINAL exes failed
+the `crc` of the two epochs taken under the pause.  DEBUG's pause menu has
+one more line, "Invincible SpongeBob" (`game/pause.cpp`, `__VERSION_DEBUG__`),
+so the picture differs for exactly as long as the menu is up (539 and 510
+frames) while the game is in the same state (`rng` matched).  The game
+now reports every frame it renders (`Port_PauseMenuDrawn`, entry #56), and
+a replay on the other build type does not compare `crc` while the menu was
+in any of the last three frames built: the frame on screen at an epoch was
+built up to two frames before the latest.  In both sessions that window
+covered every differing frame, with one vblank to spare at each end.  A
+scene open forgets the menu, `rng` is still compared, and a replay on the
+same build type compares `crc` under the menu as before.  The desync line
+says `crc ... (not compared: cross-build pause menu)` when it applies.
+What this cannot excuse is a DEBUG-only *action*: turning Invincible
+SpongeBob on in that menu, or R2 in a level (`game.cpp`, DEBUG skips to the
+next level), changes the game itself, and a FINAL replay rightly reports it.
+`replay_test` doctors an epoch's `crc` and reports the menu around it: on
+the other build type it replays clean with the menu drawn up to two frames
+before the latest, and is caught three frames after, with no menu, after a
+scene open, and on the same build type.
+
+**Saves carry no stale heap.**  The same sessions' cards differed between
+DEBUG and FINAL, and between the two FINALs, in 7,375 bytes that no one
+reads.  `CSaveLoadDatabase::allocateBuffer` rounds the save buffer up to a
+whole 8 KB card block but fills only the header, the data and the MD5 at
+the end (0x331 bytes of content), so the rest of the block went to the
+card as whatever `MemAlloc` handed back: `0x3D` on DEBUG
+(`MEM_FILL_PATTERN`, `mem/memory.cpp`), old heap contents on FINAL,
+different again on x64 - and the MD5 covers them, so it differed too.
+Entry #57 zeroes the buffer on PC: the four exes now write byte-identical
+cards, the directory and save data unchanged.  A card saved by an older
+build still loads (its MD5 covers the bytes it has), but its tail no
+longer matches a replay's, so a session recorded before the change is
+judged on the save data rather than on the whole card.
 
 ## Game-source changes (keyboard prompt icons, issue #43)
 
@@ -1101,6 +1261,33 @@ says "Press the **X button** to continue" (the memory-card result screens) and
 make the PS1 build wrong; saying it correctly on each needs device-aware text
 (a runtime substitution in the shim, or a second string set), which is a
 larger change than an icon swap and is left for its own issue.
+
+## Game-source changes (replay judging, issue #67)
+
+Both inside `#if !defined(PSX_MIPS_ASM)` arms whose `#else` re-syncs the
+PS1 build's `__LINE__` with `#line`, so `Spongey.cpe` is unchanged; see
+"Replay judging (issue #67)" for the evidence.
+
+56. **`source/game/game.cpp` (`CGameScene::render`), `source/system/asmport.h`** -
+    at the end of `render()`, `Port_PauseMenuDrawn(...)` tells the shim, once
+    per frame the Game scene renders, whether the pause menu is in it: the
+    menu is active and the state is one whose render goes through
+    `render_playing`, which draws it (every state but the boss intro and
+    the lives screen on the way to it).  DEBUG draws that menu with one
+    more line, so a replay on the other build type does not compare an
+    epoch's display CRC while the menu is among the last three frames
+    built (`host/input.cpp crcSkipped`).  At render rather than in
+    `think_playing`: that is the frame the CRC will see, and `think_playing`
+    can run three times in one frame (a teleport).  In `render()` rather
+    than `render_playing()`: every Game frame reports, so on the lives
+    screen or the boss intro the record ages out instead of standing still.
+
+57. **`source/memcard/saveload.cpp` (`CSaveLoadDatabase::allocateBuffer`)** -
+    `memset(m_tempBuffer,0,m_bufferSize)` after the `MemAlloc`.  The buffer
+    is a whole 8 KB card block of which the save fills 0x331 bytes; the rest
+    went to the card, and into its MD5, as stale heap bytes that differ
+    between DEBUG, FINAL and x64.  Zeroed, every exe writes the same card.
+    The PlayStation build keeps writing its heap (retail behaviour).
 
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 

@@ -109,7 +109,7 @@ with Ninja. A clean build takes a few minutes. Output:
 | `debug` | `port\build\debug\sbsp.exe` | Asserts on, debug overlays and screen tools available, prim-pool overflow detection. Use this one while developing. |
 | `final` | `port\build\final\sbsp.exe` | The shipping configuration, heavier optimisation, asserts compiled out. |
 
-The same directories also contain `sbsp_headless.exe` and the fifteen
+The same directories also contain `sbsp_headless.exe` and the nineteen
 `*_test.exe` unit-test executables. `port\build-pc.cmd test` builds and then
 runs them all (ctest label `unit`) followed by the automated playthrough
 tiers (label `playthrough`: a scripted, faster-than-real-time run through

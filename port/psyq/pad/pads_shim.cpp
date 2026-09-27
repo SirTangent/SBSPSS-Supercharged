@@ -12,9 +12,11 @@
 
 	PadGetState also pumps: VRamViewer (vid.cpp:461) loops on PadUpdate
 	alone - no VSync, so without a pump here the viewer would spin on a
-	stale buffer with a frozen window.  Port_Pump is wall-clock gated (and
-	a nested call is a no-op), so the extra calls from the normal per-frame
-	PadUpdate are near-free.
+	stale buffer with a frozen window.  A bare Port_Pump fires a vblank only
+	when a live capped run is due one, or where a replay's recording says,
+	and a nested call is a no-op, so the extra calls from the normal
+	per-frame PadUpdate are near-free; the spin rule (host/pump.cpp) keeps
+	the viewer alive where bare pumps fire nothing.
 */
 #include "stub_log.h"
 #include "host/pump.h"
@@ -48,7 +50,7 @@ void PadStopCom(void)	{ }
 
 int PadGetState(int port)
 {
-	Port_Pump();		/* keeps VRamViewer's VSync-less loop alive */
+	Port_Pump();		/* VRamViewer's VSync-less loop lives on this: the spin rule, host/pump.cpp */
 	return (port >> 4) == 0 ? 6 : 0;	/* PadStateStable / PadStateDiscon */
 }
 

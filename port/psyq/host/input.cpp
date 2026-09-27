@@ -31,6 +31,7 @@
 	    FMA:INTRO#1+10:0800       (FMA scripts use the [scene] FMA:<name>)
 	    # epoch 3000 ram=123456 crc=89ABCDEF rng=0123ABCD
 	    # seed 12345   # pace capped|uncapped   # prompt 3000 pad|keys
+	    # bare 37 4               vblank 37 fired at the 4th bare pump
 	A scene open releases every button: an entry is in force only if it
 	came due at or after the most recent scene open (for a scene-relative
 	entry that also means its anchor occurrence is the current scene).
@@ -53,11 +54,22 @@
 	still held when a scene opens, since the release rule above would let
 	go of it on replay - plus `# scene` markers, one `# epoch` marker every
 	300 vblanks, a `# prompt` line whenever the prompt-icon device changes,
-	and a header: the exe's pointer size (`# abi`), the seed when one was
+	and a header: the exe's pointer size and build type (`# abi`, `# build`;
+	RamUsed differs across either, so a replay across them compares the CRC
+	and rng alone - issue #67 for the build - and across build types not
+	the CRC either while the pause menu, which DEBUG draws with one more
+	line, is on screen), the seed when one was
 	given (`# seed`, adopted by a replay that has no --seed; without one the
 	game seeds itself the same way every boot - host/seed.cpp) and
-	its pacing (`# pace`; a mismatch is reported once, because load
-	durations then differ and every offset after a load drifts).  An epoch
+	its pacing (`# pace capped|uncapped`, `# loads paced|instant`).  A live
+	capped run also fires a vblank at a bare pump when the wall clock says
+	one is due (host/pump.cpp, issue #67), and writes each down as `# bare
+	<vblank> <k>`: it fired at the k-th bare pump since the last wait step.
+	A scripted run fires a vblank at a bare pump only there, so a capped
+	recording replays exactly, capped or uncapped, and `# pace` is only a
+	note; instant loads (--no-cd-pace) against paced ones do not agree,
+	every offset after a load drifts, and that mismatch is reported once.
+	An epoch
 	carries RamUsed, the display CRC and the game's random-number state
 	(`rng`, s_randomSeed): a run that has drawn a different random number
 	has diverged even while every difference is still off screen, and five
@@ -66,8 +78,9 @@
 	`long` is 32 bits on both Windows ABIs, so rng, like crc, is compared
 	across them; an epoch without it (an older recording) skips it.  Replaying
 	such a file re-checks the epochs and reports "[replay] desync".  A
-	malformed line, a desync, or a scene reference the run never reached
-	(reported at exit) makes the process exit 13.
+	malformed line, a desync, a scene reference the run never reached or a
+	`# bare` vblank it reached some other way (both reported at exit) makes
+	the process exit 13.
 */
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL.h>
@@ -78,10 +91,12 @@
 #include <stdint.h>
 
 #include "host/diag.h"
-#include "host/pump.h"			/* Port_Uncapped - the `# pace` header line */
+#include "host/pump.h"			/* Port_Uncapped, Port_VBlankBarePump - `# pace`, `# bare` */
+#include "cd/xa_stream.h"		/* Port_CdPaced - `# loads` */
 #include "gpu/gpu_core.h"
 #include "system/types.h"
 #include "system/asmport.h"		/* PORT_CAP_* - the prompt-icon contract */
+#include "system/info.h"			/* INF_Version - the `# build` header line */
 
 extern unsigned char *Port_PadBuffer[2];	/* pads_shim.cpp */
 extern unsigned char *Port_PadMotor[2];		/* pads_shim.cpp - PadSetAct buffer */
@@ -158,14 +173,69 @@ static int			g_desyncs;
 /*	Pointer size of the exe that made the recording (`# abi ptr=N`, written
 	by --record-pad since M9; absent = 4, every older recording is 32-bit).
 	RamUsed depends on it - x64 objects are bigger and the heap aligns to 16 -
-	so a recording replayed across ABIs compares the display CRC alone.  */
+	so a recording replayed across ABIs compares the display CRC and rng
+	alone.  */
 static int			g_recordingPtr = 4;
+/*	Build type of the exe that made the recording (`# build debug|final`,
+	written since issue #67; absent = unknown, and ram is compared as
+	before).  RamUsed depends on it as well - a DEBUG heap block carries
+	guard words (mem/memory.h MEM_BLOCK_HDR), about 3.3 KB over a level -
+	so a DEBUG recording replayed on FINAL, or the reverse, compares the
+	display CRC and rng alone, like one replayed across ABIs.  */
+static int			g_recordingBuild = -1;	/* -1 unknown, 0 debug, 1 final */
+
+static int thisBuildFinal(void)
+{
+	return _stricmp(INF_Version, "FINAL") == 0;
+}
+
+/*	why an epoch's ram is not compared, or NULL when it is  */
+static const char *ramSkipped(void)
+{
+	if (g_recordingPtr != (int)sizeof(void *))
+		return "cross-ABI";
+	if (g_recordingBuild >= 0 && g_recordingBuild != thisBuildFinal())
+		return "cross-build";
+	return NULL;
+}
+
+/*	The DEBUG pause menu draws one line more than FINAL's ("Invincible
+	SpongeBob", game/pause.cpp), so while it is up a DEBUG and a FINAL run
+	show different pictures of the same game state, and an epoch taken under
+	it cannot match on crc across build types.  The Game scene reports every
+	frame it renders, in every state (Port_PauseMenuDrawn, CGameScene::render),
+	so the record ages on the lives screen and the boss intro too; a
+	cross-build replay does not compare crc while the menu was drawn in any
+	of the last three frames built - the frame on screen at an epoch was
+	built up to two frames before the latest - and still compares rng, which
+	a paused game leaves alone.  A scene open forgets the menu.  */
+static unsigned			g_pauseDrawn;		/* bit n: the menu was in the frame built n frames ago */
+static unsigned long	g_pauseScene;		/* Port_LastSceneOpenVblank() at the latest report */
+
+extern "C" void Port_PauseMenuDrawn(int drawn)
+{
+	unsigned long scene = Port_LastSceneOpenVblank();
+	if (scene != g_pauseScene)
+		g_pauseDrawn = 0;
+	g_pauseScene = scene;
+	g_pauseDrawn = ((g_pauseDrawn << 1) | (drawn != 0)) & 7;
+}
+
+/*	why an epoch's crc is not compared, or NULL when it is  */
+static const char *crcSkipped(void)
+{
+	if (g_recordingBuild >= 0 && g_recordingBuild != thisBuildFinal() &&
+		g_pauseDrawn && g_pauseScene == Port_LastSceneOpenVblank())
+		return "cross-build pause menu";
+	return NULL;
+}
 /*	The rest of a recording's data lines (issue #58).  Older exes read
 	none of them - every unrecognised `#` line is a comment - and this exe
 	reads a recording without them as before.  */
 static long			g_recordingSeed;		/* `# seed <n>`: what setRndSeed got */
 static int			g_haveSeed;
-static int			g_recordingPace = -1;	/* `# pace`: -1 unknown, 0 capped, 1 uncapped */
+
+static int			g_recordingLoads = -1;	/* `# loads`: -1 unknown, 0 instant, 1 paced */
 
 struct PromptMark						/* `# prompt <vblank> pad|keys` */
 {
@@ -176,6 +246,17 @@ static PromptMark	*g_prompts;
 static int			g_promptCount, g_promptCap;
 static int			g_promptNext;			/* replay cursor into g_prompts */
 static int			g_replayPadActive;		/* the recording's prompt device, so far */
+
+struct BareMark							/* `# bare <vblank> <k>` */
+{
+	unsigned long	vblank;					/* this vblank fired ... */
+	unsigned long	pumps;					/* ... at the k-th bare pump since a wait */
+	int				line;
+	int				fired;					/* the replay fired it there */
+};
+static BareMark		*g_bares;
+static int			g_bareCount, g_bareCap;
+static int			g_bareNext;				/* replay cursor into g_bares */
 
 /*	1 when SBSP_PAD_FILE / SBSP_PAD_SCRIPT supplies the input.  The live
 	keyboard and gamepad are then ignored entirely - mask, sticks and the
@@ -208,6 +289,7 @@ static void push(T *&arr, int &count, int &cap, const T &v, int first)
 static void addEntry(const PadEntry &e)		{ push(g_entries, g_entryCount, g_entryCap, e, 64); }
 static void addEpoch(const EpochCheck &ep)	{ push(g_epochs, g_epochCount, g_epochCap, ep, 16); }
 static void addPrompt(const PromptMark &pm)	{ push(g_prompts, g_promptCount, g_promptCap, pm, 16); }
+static void addBare(const BareMark &bm)		{ push(g_bares, g_bareCount, g_bareCap, bm, 16); }
 
 static void scriptParse(void)
 {
@@ -317,13 +399,15 @@ static void padFileParse(void)
 			s++;
 
 		/*	`# epoch <vblank> ram=<n> crc=<hex>`, `# abi ptr=<n>`,
-			`# seed <n>`, `# pace <word>` and `# prompt <vblank> <word>` are
-			data; every other comment (a leading `#`, or ` #` after an entry)
-			is dropped.  */
+			`# build <word>`, `# seed <n>`, `# pace <word>`, `# loads <word>`,
+			`# prompt <vblank> <word>` and `# bare <vblank> <k>` are data;
+			every other comment (a leading `#`, or ` #` after an entry) is
+			dropped.  */
 		if (*s == '#')
 		{
 			EpochCheck	ep = {};
 			PromptMark	pm = {};
+			BareMark	bm = {};
 			char		word[16];
 			int			ptr;
 			int			nep = sscanf(s, "# epoch %lu ram=%lu crc=%x rng=%x",
@@ -348,16 +432,39 @@ static void padFileParse(void)
 				}
 				g_recordingPtr = ptr;
 			}
+			else if (sscanf(s, "# build %15s", word) == 1)
+			{
+				/*	refused like a bad `# abi`: an unknown word would otherwise
+					turn the ram check off or on by accident  */
+				if (strcmp(word, "debug") == 0)			g_recordingBuild = 0;
+				else if (strcmp(word, "final") == 0)	g_recordingBuild = 1;
+				else
+				{
+					fclose(f);
+					padFileFail(path, line, "bad `# build' (expected debug or final)");
+				}
+			}
 			else if (sscanf(s, "# seed %ld", &g_recordingSeed) == 1)
 				g_haveSeed = 1;
 			else if (sscanf(s, "# pace %15s", word) == 1)
 			{
-				if (strcmp(word, "capped") == 0)		g_recordingPace = 0;
-				else if (strcmp(word, "uncapped") == 0)	g_recordingPace = 1;
-				else
+				/*	a replay fires the recording's vblanks where it did, `# bare`
+					ones included (host/pump.cpp, issue #67), so it needs nothing
+					from this line - but a bad word means a damaged file  */
+				if (strcmp(word, "capped") != 0 && strcmp(word, "uncapped") != 0)
 				{
 					fclose(f);
 					padFileFail(path, line, "bad `# pace' (expected capped or uncapped)");
+				}
+			}
+			else if (sscanf(s, "# loads %15s", word) == 1)
+			{
+				if (strcmp(word, "paced") == 0)			g_recordingLoads = 1;
+				else if (strcmp(word, "instant") == 0)	g_recordingLoads = 0;
+				else
+				{
+					fclose(f);
+					padFileFail(path, line, "bad `# loads' (expected paced or instant)");
 				}
 			}
 			else if (sscanf(s, "# prompt %lu %15s", &pm.vblank, word) == 2)
@@ -370,6 +477,19 @@ static void padFileParse(void)
 					padFileFail(path, line, "bad `# prompt' (expected pad or keys)");
 				}
 				addPrompt(pm);
+			}
+			else if (sscanf(s, "# bare %lu %lu", &bm.vblank, &bm.pumps) == 2)
+			{
+				/*	in vblank order, as the recorder writes them: the replay
+					walks them with one cursor (Port_ReplayBareVblank)  */
+				if (bm.vblank == 0 || bm.pumps == 0 ||
+					(g_bareCount && bm.vblank <= g_bares[g_bareCount - 1].vblank))
+				{
+					fclose(f);
+					padFileFail(path, line, "bad `# bare' (expected <vblank> <k>, both from 1, vblanks rising)");
+				}
+				bm.line = line;
+				addBare(bm);
 			}
 			continue;
 		}
@@ -397,20 +517,25 @@ static void padFileParse(void)
 		entries++;
 	}
 	fclose(f);
-	fprintf(stderr, "[input] SBSP_PAD_FILE %s: %d entries, %d epoch checks, %d prompt marks\n",
-			path, entries, g_epochCount, g_promptCount);
+	fprintf(stderr, "[input] SBSP_PAD_FILE %s: %d entries, %d epoch checks, %d prompt marks, "
+					"%d bare-pump vblanks\n",
+			path, entries, g_epochCount, g_promptCount, g_bareCount);
 	if (g_epochCount && g_recordingPtr != (int)sizeof(void *))
 		fprintf(stderr, "[input] cross-ABI recording (ptr=%d, this exe %d): epoch ram not compared\n",
 				g_recordingPtr, (int)sizeof(void *));
-	/*	A paced CD read costs wall-clock time, which is vblanks on a capped
-		run and nothing on an uncapped one (SBSP_CD_PACE=0 comes with
-		--uncapped), so the two do not agree on how long a load lasts, and
-		every entry after one lands on a different frame of the game.  The
-		epochs will say so; this says why, up front.  */
-	if (g_recordingPace >= 0 && g_recordingPace != (Port_Uncapped() != 0))
-		fprintf(stderr, "[input] recording was %s, this run is %s: load durations differ, "
-						"so every offset after a load drifts\n",
-				g_recordingPace ? "uncapped" : "capped", Port_Uncapped() ? "uncapped" : "capped");
+	if (g_epochCount && g_recordingBuild >= 0 && g_recordingBuild != thisBuildFinal())
+		fprintf(stderr, "[input] cross-build recording (%s, this exe %s): epoch ram not compared, "
+						"nor crc while the pause menu is up\n",
+				g_recordingBuild ? "final" : "debug", thisBuildFinal() ? "final" : "debug");
+	/*	Capped against uncapped needs no word: a replay fires the recording's
+		vblanks where it did, `# bare` ones included (host/pump.cpp, issue
+		#67).  Instant loads against paced ones
+		never agree on how long a load lasts, and every entry after one lands
+		on a different frame.  The epochs will say so; this says why, up front.  */
+	if (g_recordingLoads >= 0 && g_recordingLoads != (Port_CdPaced() != 0))
+		fprintf(stderr, "[input] recording's loads were %s, this run's are %s (--no-cd-pace): "
+						"every offset after a load drifts\n",
+				g_recordingLoads ? "paced" : "instant", Port_CdPaced() ? "paced" : "instant");
 }
 
 static void scriptsParse(void)
@@ -423,6 +548,27 @@ static void scriptsParse(void)
 	g_scripted = (script && *script) || (file && *file);
 	scriptParse();
 	padFileParse();
+}
+
+/*	host/pump.cpp, at every bare pump (Port_Pump): -1 when no script drives
+	the run (the pump then follows the wall clock or fires nothing, see
+	there), else 1 if the recording fired `vblank` at this bare pump - the
+	`barePumps`-th since the last wait step - and 0 if not.  The parse is
+	forced here because the first bare pump comes before PadInitDirect.  */
+extern "C" int Port_ReplayBareVblank(unsigned long vblank, unsigned long barePumps)
+{
+	scriptsParse();
+	if (!g_scripted)
+		return -1;
+	while (g_bareNext < g_bareCount && g_bares[g_bareNext].vblank < vblank)
+		g_bareNext++;						/* passed without firing: reported at exit */
+	if (g_bareNext < g_bareCount && g_bares[g_bareNext].vblank == vblank &&
+		g_bares[g_bareNext].pumps == barePumps)
+	{
+		g_bares[g_bareNext++].fired = 1;
+		return 1;
+	}
+	return 0;
 }
 
 /*	host/seed.cpp: the seed the recording ran with, if it says.  Safe
@@ -517,13 +663,24 @@ static void epochCheck(unsigned long vblank)
 		unsigned long ram = g->ramUsed ? *g->ramUsed : 0;
 		uint32_t      crc = GPU_DisplayCRC32(NULL);
 		uint32_t      rng = (ep.hasRng && g->randomSeed) ? (uint32_t)*g->randomSeed : ep.rng;
-		if (g_recordingPtr != (int)sizeof(void *))
-			ram = ep.ram;				/* not comparable across ABIs, see g_recordingPtr */
-		if (ram != ep.ram || crc != ep.crc || rng != ep.rng)
+		const char   *skip   = ramSkipped();		/* see g_recordingPtr, g_recordingBuild */
+		const char   *crcSkip = crcSkipped();	/* see g_pauseDrawn */
+		const int		badRam = !skip && ram != ep.ram;
+		const int		badCrc = !crcSkip && crc != ep.crc;
+		const int		badRng = rng != ep.rng;
+		if (badRam || badCrc || badRng)
 		{
+			/*	names what differed, and prints ram and crc even when they are
+				not compared, so a cross-build difference is still visible  */
 			g_desyncs++;
-			fprintf(stderr, "[replay] desync at vblank %lu (line %d): ram %lu vs %lu, crc %08X vs %08X",
-					vblank, ep.line, ram, ep.ram, crc, ep.crc);
+			fprintf(stderr, "[replay] desync at vblank %lu (line %d) on%s%s%s: ram %lu vs %lu",
+					vblank, ep.line, badRam ? " ram" : "", badCrc ? " crc" : "", badRng ? " rng" : "",
+					ram, ep.ram);
+			if (skip)
+				fprintf(stderr, " (not compared: %s)", skip);
+			fprintf(stderr, ", crc %08X vs %08X", crc, ep.crc);
+			if (crcSkip)
+				fprintf(stderr, " (not compared: %s)", crcSkip);
 			if (ep.hasRng)				/* an older recording's epoch has none to compare */
 				fprintf(stderr, ", rng %08X vs %08X", rng, ep.rng);
 			fputc('\n', stderr);
@@ -531,9 +688,10 @@ static void epochCheck(unsigned long vblank)
 	}
 }
 
-/*	Called from Port_Exit: unreached scene references and desyncs turn a
-	clean exit into 13 - a route that quietly never pressed half its
-	buttons must not pass.  */
+/*	Called from Port_Exit: unreached scene references, desyncs and bare-pump
+	vblanks the run passed without firing turn a clean exit into 13 - a
+	route that quietly never pressed half its buttons must not pass, and a
+	replay that reached a recorded vblank by another road has diverged.  */
 extern "C" int Port_InputAtExit(void)
 {
 	int bad = g_desyncs;
@@ -547,16 +705,26 @@ extern "C" int Port_InputAtExit(void)
 			bad++;
 		}
 	}
+	for (int i = 0; i < g_bareCount; i++)
+	{
+		const BareMark &b = g_bares[i];
+		if (!b.fired && b.vblank <= Port_VBlankCount())	/* not the ones past an --exit-after */
+		{
+			fprintf(stderr, "[replay] desync: line %d's vblank %lu did not fire at bare pump %lu\n",
+					b.line, b.vblank, b.pumps);
+			bad++;
+		}
+	}
 	return bad;
 }
 
 /*****************************************************************************/
 /*	SBSP_RECORD_PAD=<path>: the applied mask, on change, in the scene-
 	relative grammar above, plus `# scene` markers at each open, a `# prompt`
-	line when the prompt-icon device changes and an `# epoch` line every 300
-	vblanks, under a header of `# abi`, `# seed` (if one was given) and
-	`# pace`.  Flushed per
-	line so a crash still leaves a usable file.  */
+	line when the prompt-icon device changes, a `# bare` line for each vblank
+	fired outside a wait and an `# epoch` line every 300 vblanks, under a
+	header of `# abi`, `# build`, `# seed` (if one was given), `# pace` and
+	`# loads`.  Flushed per line so a crash still leaves a usable file.  */
 static FILE			*g_rec;
 static int			g_recTried;
 static unsigned		g_recLastMask;
@@ -579,6 +747,7 @@ static void recordFrame(unsigned long vblank, unsigned mask)
 							   "UP=1000 RIGHT=2000 DOWN=4000 LEFT=8000 CROSS=0040 "
 							   "CIRCLE=0020 SQUARE=0080 TRIANGLE=0010 L1=0004 R1=0008 L2=0001 R2=0002)\n"
 							   "# abi ptr=%d\n", (int)sizeof(void *));
+				fprintf(g_rec, "# build %s\n", thisBuildFinal() ? "final" : "debug");
 				/*	host/seed.cpp decides now if the game has not asked yet.  No
 					seed given: the game seeds itself, identically every boot,
 					and so will the replay - there is nothing to write down.  */
@@ -586,6 +755,7 @@ static void recordFrame(unsigned long vblank, unsigned mask)
 				if (Port_BootSeed(&seed))
 					fprintf(g_rec, "# seed %ld\n", seed);
 				fprintf(g_rec, "# pace %s\n", Port_Uncapped() ? "uncapped" : "capped");
+				fprintf(g_rec, "# loads %s\n", Port_CdPaced() ? "paced" : "instant");
 			}
 			else
 				fprintf(stderr, "[input] SBSP_RECORD_PAD: cannot write %s\n", path);
@@ -593,6 +763,11 @@ static void recordFrame(unsigned long vblank, unsigned mask)
 	}
 	if (!g_rec)
 		return;
+
+	/*	a vblank that fired outside a wait (a live capped run fell due at a
+		bare pump, host/pump.cpp): where, so the replay fires it there too  */
+	if (unsigned long k = Port_VBlankBarePump())
+		fprintf(g_rec, "# bare %lu %lu\n", vblank, k);
 
 	const char		*scene = Port_CurrentScene();
 	int				nth    = Port_SceneOpenCount(scene);

@@ -10,15 +10,15 @@
 	    scene's terms (a scene open releases every entry on replay)
 	  - the header: `# seed` when the recording was given one (host/seed.cpp
 	    - a replay without --seed then runs the same RNG; with none given the
-	    game seeds itself identically every boot), `# pace`, and the
-	    `# prompt` device switches
+	    game seeds itself identically every boot), `# pace`, `# loads`
+	    (issue #67), and the `# prompt` device switches
 	  - a scripted run ignores the live devices: the replaying process holds
 	    SQUARE and the stick hard left the whole time, and none of it may
 	    reach the packet, the prompts or the recording
 	  - an epoch carries the game's RNG state: a replay forced onto the wrong
 	    seed must report a desync even though its picture and RamUsed match
 
-	A parent and six children, because the pad file is parsed once per
+	A parent and nine children, because the pad file is parsed once per
 	process and the recorder never closes its file: the parent spawns itself
 	as "record" (a virtual pad drives buttons and stick, --seed 4242, A is
 	written), checks A line by line, spawns "replay" (A played back, B
@@ -26,7 +26,14 @@
 	must desync), "record-unseeded" (no seed: C must carry no `# seed`) and
 	"replay" again on A with its rng fields stripped (an older recording:
 	must still replay clean), and "expect-desync" on that copy with an
-	epoch's crc doctored (its 3-field epochs must still be checked).  The
+	epoch's crc doctored (its 3-field epochs must still be checked), then
+	three copies of A about the build type (issue #67): `# build` flipped
+	and the epoch's ram doctored ("replay": ram is not compared across
+	builds), the ram doctored alone ("expect-desync": it is compared on the
+	same build) and an unknown `# build` word (refused at boot, exit 13), and
+	last a doctored crc under a reported pause menu, which only a replay on
+	the other build type may overlook, and only while the menu is recent and
+	the scene has not changed (six children).  The
 	children step vblanks with VSync(0) under SBSP_UNCAPPED=1,
 	so Port_VBlankCount advances and Host_VBlank calls Port_InputFrame exactly
 	as in the game, and open scenes through Port_SceneEvent at chosen counts.
@@ -54,8 +61,16 @@ extern "C" int	Port_InputPadActive(void);
 extern "C" int	Port_PadFileSeed(long *seed);
 extern "C" int	Port_BootSeed(long *seed);			/* host/seed.cpp */
 extern "C" void	Port_SeedExplicit(long seed);
+extern "C" void	Port_PauseMenuDrawn(int drawn);	/* host/input.cpp, from game.cpp */
 extern "C" void	PadInitDirect(unsigned char *pad1, unsigned char *pad2);
 extern "C" int	VSync(int mode);
+extern char		INF_Version[];				/* api/info.cpp: "DEBUG" or "FINAL", per tree */
+
+/*	what --record-pad writes after `# build` for this build  */
+static const char *thisBuild(void)
+{
+	return _stricmp(INF_Version, "FINAL") == 0 ? "final" : "debug";
+}
 
 static int g_failures;
 
@@ -109,7 +124,7 @@ static void clearEnv(void)
 		"SBSP_FRAME_CRC", "SBSP_EXIT_AFTER", "SBSP_SELFTEST", "SBSP_DUMP_FRAMES",
 		"SBSP_DUMP_DIR", "SBSP_SEED", "SBSP_PROMPT_ICONS", "SBSP_PAD_DEADZONE",
 		"SBSP_MEM_LOG", "SBSP_PACE_LOG", "SBSP_RUMBLE", "SBSP_PAD_SCRIPT",
-		"SBSP_PAD_FILE", "SBSP_RECORD_PAD",
+		"SBSP_PAD_FILE", "SBSP_RECORD_PAD", "SBSP_CD_PACE",
 	};
 	for (const char *v : vars)
 		setEnv(v, "");
@@ -147,6 +162,23 @@ static SDL_Joystick *attachPad(void)
 	first sees each one on the next frame, so the re-pressed stick lands as
 	Game#1+1.  */
 enum { RUN_VBLANKS = 320 };
+
+/*	The pause menu (issue #67), as game.cpp reports it: once per frame the
+	Game scene renders, here after each vblank's VSync.  REPLAY_TEST_PAUSE
+	"<first>-<last>" draws it in the frames rendered after those vblanks;
+	REPLAY_TEST_MAP_AT <vb> opens a "Map" scene after that vblank, which
+	has no pause menu and so reports nothing from then on.  */
+static unsigned long g_pauseFirst = 1, g_pauseLast = 0, g_mapAt = 0;
+
+static void readPauseEnv(void)
+{
+	const char *p = std::getenv("REPLAY_TEST_PAUSE");
+	if (p && *p)
+		std::sscanf(p, "%lu-%lu", &g_pauseFirst, &g_pauseLast);
+	const char *m = std::getenv("REPLAY_TEST_MAP_AT");
+	if (m && *m)
+		g_mapAt = std::strtoul(m, NULL, 10);
+}
 
 static void drive(SDL_Joystick *joy, bool replay)
 {
@@ -205,6 +237,10 @@ static void drive(SDL_Joystick *joy, bool replay)
 			Port_SceneEvent("FrontEnd");
 		if (vb == 50)
 			Port_SceneEvent("Game");
+		if (g_mapAt && vb == g_mapAt)
+			Port_SceneEvent("Map");
+		if (vb >= 50 && (!g_mapAt || vb < g_mapAt))
+			Port_PauseMenuDrawn(vb >= g_pauseFirst && vb <= g_pauseLast);
 		g_fakeRng = (long)(0x015a4e35u * (unsigned long)g_fakeRng + 1u);	/* one draw a frame */
 	}
 }
@@ -218,6 +254,7 @@ static int childMain(Mode mode)
 	if (!sdlUp())
 		return 1;
 	setEnv("SBSP_UNCAPPED", "1");			/* before the first VSync: Port_Uncapped caches */
+	readPauseEnv();
 	SDL_Joystick *joy = attachPad();
 	if (!joy)
 		return 1;
@@ -265,14 +302,17 @@ static char *slurp(const char *path, size_t *n)
 static void checkRecording(const char *path)
 {
 	struct Want { const char *text; bool prefix; };
-	char abi[32];
+	char abi[32], build[32];
 	std::snprintf(abi, sizeof(abi), "# abi ptr=%d", (int)sizeof(void *));
+	std::snprintf(build, sizeof(build), "# build %s", thisBuild());
 	const Want want[] =
 	{
 		{ "# recorded by sbsp --record-pad", true  },
 		{ abi,                              false },
+		{ build,                            false },	/* issue #67 */
 		{ "# seed 4242",                    false },	/* the recording was given one */
 		{ "# pace uncapped",                false },
+		{ "# loads paced",                  false },	/* uncapped no longer means instant loads (#67) */
 		{ "# prompt 1 pad",                 false },	/* a pad plugged in before the first frame */
 		{ "# scene FrontEnd#1 vblank=10",   false },
 		{ "FrontEnd#1+10:0040",             false },	/* CROSS from vblank 20 */
@@ -469,11 +509,128 @@ int main(int argc, char **argv)
 	rc = spawnSelf(exe, "expect-desync");
 	check(rc == 0, "an older recording's 3-field epoch is checked (a doctored crc is caught)");
 
+	/*	7. the build type (issue #67): a DEBUG heap block carries guard words,
+		so RamUsed differs between DEBUG and FINAL and a recording made on the
+		other build compares the CRC and rng alone - a doctored ram then
+		replays clean - while on this build the same doctored ram is caught.
+		An unknown `# build` word is refused at boot, like a bad `# abi`.  */
+	char xbuild[MAX_PATH + 48], ramd[MAX_PATH + 48], badb[MAX_PATH + 48];
+	std::snprintf(xbuild, sizeof(xbuild), "%ssbsp_replay_test_%lu_xbuild.pad", tmp, pid);
+	std::snprintf(ramd, sizeof(ramd), "%ssbsp_replay_test_%lu_ram.pad", tmp, pid);
+	std::snprintf(badb, sizeof(badb), "%ssbsp_replay_test_%lu_badbuild.pad", tmp, pid);
+	da = slurp(a, &na);
+	if (da)
+	{
+		std::string s(da, na);
+		const std::string mine  = std::string("# build ") + thisBuild();
+		const std::string other = std::string("# build ") + (std::strcmp(thisBuild(), "final") ? "final" : "debug");
+		const size_t bl = s.find(mine);
+		const size_t rl = s.find(" ram=0 ", s.find("# epoch 300 "));
+		check(bl != std::string::npos && rl != std::string::npos,
+			  "A carries this build's `# build` line and an epoch at 300 with ram=0");
+		if (bl != std::string::npos && rl != std::string::npos)
+		{
+			std::string ramOnly = s;					/* same length edits: offsets stay valid */
+			ramOnly.replace(rl, 7, " ram=1 ");
+			std::string cross = ramOnly;
+			cross.replace(bl, mine.size(), other);
+			std::string bad = s;
+			bad.replace(bl, mine.size(), "# build release");
+			for (const auto &out : { std::make_pair(xbuild, &cross), std::make_pair(ramd, &ramOnly),
+										   std::make_pair(badb, &bad) })
+			{
+				FILE *f = std::fopen(out.first, "wb");
+				if (f)
+				{
+					std::fwrite(out.second->data(), 1, out.second->size(), f);
+					std::fclose(f);
+				}
+			}
+		}
+	}
+	std::free(da);
+	setEnv("SBSP_PAD_FILE", xbuild);
+	rc = spawnSelf(exe, "replay");
+	check(rc == 0, "a recording from the other build type: ram is not compared (a doctored ram replays clean)");
+	setEnv("SBSP_PAD_FILE", ramd);
+	rc = spawnSelf(exe, "expect-desync");
+	check(rc == 0, "a recording from this build type: a doctored ram is caught");
+	setEnv("SBSP_PAD_FILE", badb);
+	rc = spawnSelf(exe, "replay");
+	check(rc == 13, "an unknown `# build` word is refused at boot (exit 13)");
+
+	/*	8. the pause menu (issue #67): DEBUG draws one more line in it, so
+		across build types an epoch's crc is not compared while the menu is
+		in any of the last three frames rendered - and only then.  A copy
+		with the epoch at 300's crc doctored stands in for that picture.  */
+	char xcrc[MAX_PATH + 48], scrc[MAX_PATH + 48];
+	std::snprintf(xcrc, sizeof(xcrc), "%ssbsp_replay_test_%lu_xcrc.pad", tmp, pid);
+	std::snprintf(scrc, sizeof(scrc), "%ssbsp_replay_test_%lu_crc.pad", tmp, pid);
+	da = slurp(a, &na);
+	if (da)
+	{
+		std::string s(da, na);
+		const std::string mine  = std::string("# build ") + thisBuild();
+		const std::string other = std::string("# build ") + (std::strcmp(thisBuild(), "final") ? "final" : "debug");
+		const size_t bl = s.find(mine);
+		const size_t cl = s.find(" crc=", s.find("# epoch 300 "));
+		check(bl != std::string::npos && cl != std::string::npos,
+			  "A carries this build's `# build` line and an epoch at 300 with a crc");
+		if (bl != std::string::npos && cl != std::string::npos)
+		{
+			std::string same = s;						/* same length edits: offsets stay valid */
+			same.replace(cl + 5, 8, s.compare(cl + 5, 8, "DEADBEEF") ? "DEADBEEF" : "FEEDFACE");
+			std::string cross = same;
+			cross.replace(bl, mine.size(), other);
+			for (const auto &out : { std::make_pair(xcrc, &cross), std::make_pair(scrc, &same) })
+			{
+				FILE *f = std::fopen(out.first, "wb");
+				if (f)
+				{
+					std::fwrite(out.second->data(), 1, out.second->size(), f);
+					std::fclose(f);
+				}
+			}
+		}
+	}
+	std::free(da);
+	struct PauseCase { const char *file, *pause, *mapAt, *mode, *what; };
+	const PauseCase pauseCases[] =
+	{
+		{ xcrc, "290-299", "",    "replay",
+		  "other build, the pause menu up at the epoch: crc is not compared" },
+		{ xcrc, "290-297", "",    "replay",
+		  "other build, the menu last drawn two frames before the latest: still not compared" },
+		{ xcrc, "290-296", "",    "expect-desync",
+		  "other build, the menu gone for three frames: crc is compared again" },
+		{ xcrc, "",        "",    "expect-desync",
+		  "other build, no pause menu: crc is compared" },
+		{ xcrc, "290-298", "299", "expect-desync",
+		  "other build, a scene opened since the menu was drawn: crc is compared" },
+		{ scrc, "290-299", "",    "expect-desync",
+		  "same build, the pause menu up: crc is compared" },
+	};
+	for (const PauseCase &pc : pauseCases)
+	{
+		setEnv("SBSP_PAD_FILE", pc.file);
+		setEnv("REPLAY_TEST_PAUSE", pc.pause);
+		setEnv("REPLAY_TEST_MAP_AT", pc.mapAt);
+		rc = spawnSelf(exe, pc.mode);
+		check(rc == 0, pc.what);
+	}
+	setEnv("REPLAY_TEST_PAUSE", "");
+	setEnv("REPLAY_TEST_MAP_AT", "");
+
 	std::remove(a);
 	std::remove(b);
 	std::remove(c);
 	std::remove(old);
 	std::remove(bent);
+	std::remove(xbuild);
+	std::remove(ramd);
+	std::remove(badb);
+	std::remove(xcrc);
+	std::remove(scrc);
 
 	if (g_failures)
 	{

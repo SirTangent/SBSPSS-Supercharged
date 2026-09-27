@@ -11,9 +11,12 @@
 	program pre-filled on real hardware.  Here a static initialiser fills
 	PORT_Scratchpad with the virtual LBAs before main() runs.
 
-	Reads are synchronous; CdReadSync pumps the vblank clock once so
-	callback-time work (loading icon, XM_Update in later milestones) still
-	happens "during" loads.
+	Reads copy their data at once; the emulated drive then takes its time.
+	CdReadSync reports "still reading" until a double-speed drive (150
+	sectors/s) would have delivered the sectors, counted in EMULATED vblanks
+	by Port_CdDataVblank and never by the wall clock, so a load costs the
+	same vblanks on every run, capped or uncapped, and the vblank-time work
+	(loading icon, XM_Update) runs "during" it exactly as often (issue #67).
 */
 #include <stdint.h>
 #include <stdio.h>
@@ -63,8 +66,54 @@ static const int	SECTOR = 2048;
 
 static int		g_inited;
 static long		g_curLBA;
-static double	g_readDeadline;	/* CD pacing: when the in-flight read "completes" */
 static int		g_pace = -1;	/* -1 unparsed; SBSP_CD_PACE=0 disables */
+/*	CD pacing (issue #67): the emulated drive's sector clock, in the units
+	xa_stream.cpp uses - +150 per vblank, one sector per `hz` - so 2.5
+	sectors per NTSC vblank and exactly 3 per PAL one.  g_pending is what the
+	drive still owes the reads issued so far, g_acc the fractional clock.  */
+static long		g_pending;
+static long		g_acc;
+
+static int paceOn(void)
+{
+	if (g_pace < 0)
+	{
+		const char *e = getenv("SBSP_CD_PACE");
+		g_pace = !(e && *e == '0');
+	}
+	return g_pace;
+}
+
+/*	for --record-pad's `# loads` header line (host/input.cpp)  */
+extern "C" int Port_CdPaced(void)
+{
+	return paceOn();
+}
+
+/*	Once per emulated vblank, from Port_CdVblank (xa_stream.cpp): inside
+	the pump's single-fire block (host/pump.cpp pumpStep), after the game's
+	own vblank work.  An idle drive banks at most one vblank of clock (150
+	units: 2 sectors NTSC, 3 PAL), so a small read issued after an idle
+	vblank completes inside the
+	frame, as it would on the PlayStation, while a big one waits.  After one
+	idle vblank the bank is exactly 150 however long the drive sat idle, so
+	the cost of every read is a function of the vblank and read sequence
+	alone - the same on a capped run, an uncapped one and a replay.  */
+extern "C" void Port_CdDataVblank(int vblankHz)
+{
+	g_acc += 150;
+	if (!g_pending)
+	{
+		if (g_acc > 150)
+			g_acc = 150;
+		return;
+	}
+	while (g_acc >= vblankHz && g_pending)
+	{
+		g_acc -= vblankHz;
+		g_pending--;
+	}
+}
 
 extern "C" int Port_ExeDir(char *dst, size_t n);		/* host/hostpath.cpp */
 extern "C" int Port_FileExists(const char *path);
@@ -383,22 +432,21 @@ extern "C" int CdRead(int sectors, u_long *buf, int mode)
 	}
 
 	/*	CD pacing: the data is already in the buffer, but CdReadSync reports
-		"still reading" until a double-speed drive would have delivered it
-		(150 sectors/s).  This is what gives the loading icon its window -
+		"still reading" until the emulated drive has delivered it (see
+		Port_CdDataVblank).  This is what gives the loading icon its window -
 		with instant reads, zero vblanks elapse between StartLoad and
-		StopLoad and the game itself skips the icon.  SBSP_CD_PACE=0 turns
-		it off for instant loads.  */
-	if (g_pace < 0)
+		StopLoad and the game itself skips the icon.  Whatever the clock has
+		banked is spent first.  SBSP_CD_PACE=0 (--no-cd-pace) turns pacing off
+		for instant loads.  */
+	if (paceOn())
 	{
-		const char *e = getenv("SBSP_CD_PACE");
-		g_pace = !(e && *e == '0');
-	}
-	if (g_pace)
-	{
-		double now = Port_NowSeconds();
-		if (g_readDeadline < now)
-			g_readDeadline = now;
-		g_readDeadline += (double)paced / 150.0;
+		const long hz = Port_VBlankHz();
+		while (paced && g_acc >= hz)
+		{
+			g_acc -= hz;
+			paced--;
+		}
+		g_pending += paced;
 	}
 	return 1;
 }
@@ -406,24 +454,52 @@ extern "C" int CdRead(int sectors, u_long *buf, int mode)
 extern "C" int CdReadSync(int mode, u_char *result)
 {
 	(void)result;
-	Port_Pump();		/* PS1 interrupt-time work happens during reads */
-	if (mode == 0)
-	{	/* blocking wait - PumpIdle, not Pump: a bare spin burns a whole core
-		   for the duration of every load */
-		while (Port_NowSeconds() < g_readDeadline)
-			Port_PumpIdle();
+	if (!paceOn())
+	{
+		/*	a bare pump: in a live capped run the vblanks that fall due during
+			an instant load fire here, as the PS1's interrupt would during the
+			read (host/pump.cpp); elsewhere only where a recording says  */
+		Port_Pump();
+		return 0;
+	}
+	/*	Inside a vblank's work no wait can advance the clock that completes
+		the read (host/pump.cpp: nested pumps are no-ops), so waiting there
+		would never end.  Nothing in the tree reads from a vblank or CD
+		callback; if something ever does, its read completes at once, as an
+		instant load would, and says so.  */
+	if (g_pending && Port_PumpNested())
+	{
+		static int warned;
+		if (!warned)
+		{
+			warned = 1;
+			fprintf(stderr, "[cd] CdReadSync inside vblank work: completing the read at once\n");
+		}
+		g_pending = 0;
 		return 0;
 	}
 
-	if (Port_NowSeconds() < g_readDeadline)
-	{
-		/*	the live caller (cdfile.cpp:45) is `while (CdReadSync(1,0) > 0);` -
-			a bare spin.  Yield a tick before reporting busy so a paced load
-			costs milliseconds of one core rather than all of it.  */
-		Port_PumpIdle();
-		return 1;
+	/*	Paced: look before waiting.  Pumping first, as this did while the
+		deadline was wall-clock, could fire a vblank after the one that
+		completed the read and before the game saw it complete; StopLoad's
+		`while(LoadTime) VSync(0)` then waits for the icon to wrap, so a one-
+		vblank slip could cost up to 59 more (issue #67).  Every vblank a paced
+		read waits through comes from Port_PumpIdle below - one per call
+		uncapped, one per wall-clock vblank capped - and either way the read
+		completes on the same emulated vblank.  */
+	if (mode == 0)
+	{	/* blocking wait - PumpIdle, not Pump: a bare spin burns a whole core
+		   for the duration of every load */
+		while (g_pending)
+			Port_PumpIdle();
+		return 0;
 	}
-	return 0;
+	if (!g_pending)
+		return 0;
+	/*	the live caller (cdfile.cpp:45) is `while (CdReadSync(1,0) > 0);` - a
+		bare spin.  One wait step per call; its vblank may finish the read.  */
+	Port_PumpIdle();
+	return g_pending ? 1 : 0;
 }
 
 extern "C" int CdSync(int mode, u_char *result)
