@@ -277,7 +277,7 @@ static int scriptedInput(void)
 
 static void loadIni(void)
 {
-	char exeDir[512], path[600];
+	char exeDir[1024], path[1100];
 
 	const char *explicitPath = getenv("SBSP_INI");
 	if (explicitPath && *explicitPath)

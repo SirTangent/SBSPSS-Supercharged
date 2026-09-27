@@ -19,6 +19,9 @@
 #
 cmake_minimum_required(VERSION 3.28)
 project(sbspss LANGUAGES C CXX)
+# every exe links psyq/host/sbsp.rc (the manifest, see sbsp_exe_link); both
+# toolchain files name the resource compiler (windres / llvm-rc)
+enable_language(RC)
 
 set(SBSP_VARIANT   "DEBUG" CACHE STRING "Game build variant: DEBUG or FINAL")
 set(SBSP_TERRITORY "USA"   CACHE STRING "Territory: USA or EUR")
@@ -130,9 +133,19 @@ endif()
 # <exe>.pdb from the /Z7 objects; SDL3 is a DLL in the official VC package
 # (it ships no static lib), so it is copied beside each exe to keep "runs
 # from its build dir" true on both toolchains.
+#
+# And one application manifest for all of them, psyq/host/sbsp.rc ->
+# sbsp.manifest (issue #62): activeCodePage UTF-8, so narrow paths carry any
+# character.  MinGW's own default-manifest.o gives way to it (same resource
+# slot); lld-link is told to generate none, or the exe would carry two.
+set(SBSP_RC ${CMAKE_CURRENT_SOURCE_DIR}/psyq/host/sbsp.rc)
+set_source_files_properties(${SBSP_RC} PROPERTIES
+    INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/psyq/host     # finds sbsp.manifest
+    OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/psyq/host/sbsp.manifest)
 function(sbsp_exe_link target)
+    target_sources(${target} PRIVATE ${SBSP_RC})
     if(SBSP_MSVC)
-        target_link_options(${target} PRIVATE /DEBUG)
+        target_link_options(${target} PRIVATE /DEBUG /MANIFEST:NO)
         if(TARGET SDL3::SDL3-shared)
             add_custom_command(TARGET ${target} POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
