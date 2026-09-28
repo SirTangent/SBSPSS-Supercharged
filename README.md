@@ -41,9 +41,21 @@ pacman -S --needed mingw-w64-i686-gcc mingw-w64-i686-cmake mingw-w64-i686-ninja 
 ```
 
 Python runs the automated playthrough tests, and configure stops if it is
-missing. To build without those tests, configure with
-`-DSBSP_PLAYTHROUGH=OFF`; `port\build-pc.cmd test` then skips them with a
-note.
+missing. To build without those tests, set `SBSP_PLAYTHROUGH=OFF` in the
+environment before running the build script (section 4):
+
+```bat
+set SBSP_PLAYTHROUGH=OFF
+port\build-pc.cmd test usa
+```
+
+In PowerShell that is `$env:SBSP_PLAYTHROUGH = "OFF"`, and in a bash shell
+`SBSP_PLAYTHROUGH=OFF port/build-pc.sh test usa`. `test` then runs the unit
+tests and skips the playthrough tests with a note. Each build directory
+remembers the setting until the script runs again with
+`SBSP_PLAYTHROUGH=ON`. Configuring by hand instead, the switch is
+`cmake --preset debug -DSBSP_PLAYTHROUGH=OFF`, run in `port\` from an
+**MSYS2 MINGW32** shell.
 
 SDL3 needs special handling. MSYS2 is retiring its 32-bit environment and has
 removed `mingw-w64-i686-sdl3` from the package index, but the package file is

@@ -3,7 +3,7 @@
 #
 #   port/build-pc.sh [<preset>|usa|eur|clangcl|clangcl64|all] [extra ninja args...]
 #   port/build-pc.sh test [usa|eur|clangcl|clangcl64]  build, then ctest -L unit and -L playthrough on each tree
-#                      (playthrough skipped, with a note, for a tree configured -DSBSP_PLAYTHROUGH=OFF)
+#                      (playthrough skipped, with a note, for a tree configured SBSP_PLAYTHROUGH=OFF)
 #   port/build-pc.sh soak [usa|eur|clangcl|clangcl64]  build, then the full Tier 1 + Tier 2 sweep on each tree
 #   port/build-pc.sh parity64 [debug|final]  build clang-cl x86 + x64, then the x64 A/B (streams, cross replay, cards)
 #
@@ -28,8 +28,14 @@
 # SBSP_CODEVIEW=1 in the environment configures the MinGW trees with
 # -DSBSP_CODEVIEW=ON (a .pdb beside every exe, for Visual Studio / WinDbg).
 #
+# SBSP_PLAYTHROUGH=OFF in the environment configures every tree with
+# -DSBSP_PLAYTHROUGH=OFF (no Python needed, no playthrough tests registered):
+#   SBSP_PLAYTHROUGH=OFF port/build-pc.sh test usa
+# Unlike SBSP_CODEVIEW it is only passed when set, so the tree keeps what it
+# was last configured with; SBSP_PLAYTHROUGH=ON turns the tests back on.
+#
 # Requires the MSYS2 mingw32 toolchain, and its Python for the playthrough
-# tests (configure stops without it; -DSBSP_PLAYTHROUGH=OFF opts out):
+# tests (configure stops without it; SBSP_PLAYTHROUGH=OFF opts out):
 #   pacman -S --needed mingw-w64-i686-gcc mingw-w64-i686-cmake mingw-w64-i686-ninja mingw-w64-i686-python
 
 set -e
@@ -91,9 +97,12 @@ build_one()
     shift                       # the rest is extra ninja args, not the preset
     check_data "$preset"
     echo "=== configure+build: $preset ==="
+    # extra args go to the build, so the configure-time switches come from the
+    # environment; SBSP_PLAYTHROUGH only when set (see the header)
     case "$preset" in
-        clangcl-*) cmake --preset "$preset" ;;
-        *)         cmake --preset "$preset" -DSBSP_CODEVIEW="${SBSP_CODEVIEW:-0}" ;;
+        clangcl-*) cmake --preset "$preset" ${SBSP_PLAYTHROUGH:+"-DSBSP_PLAYTHROUGH=$SBSP_PLAYTHROUGH"} ;;
+        *)         cmake --preset "$preset" -DSBSP_CODEVIEW="${SBSP_CODEVIEW:-0}" \
+                       ${SBSP_PLAYTHROUGH:+"-DSBSP_PLAYTHROUGH=$SBSP_PLAYTHROUGH"} ;;
     esac
     cmake --build --preset "$preset" "$@"
 }
@@ -113,13 +122,14 @@ test_one()
         return
     fi
     # Likewise a tree configured with -DSBSP_PLAYTHROUGH=OFF (CMakeLists.txt,
-    # the no-Python opt-out) registers none on purpose.  The cache keeps the
-    # value across build_one's re-configure, so read it from there; any of
-    # CMake's false spellings counts.
+    # the no-Python opt-out; SBSP_PLAYTHROUGH=OFF in the environment, or a
+    # hand configure) registers none on purpose.  The cache keeps the value
+    # across build_one's re-configure, so read it from there; any of CMake's
+    # false spellings counts.
     pt=$(sed -n 's/^SBSP_PLAYTHROUGH:BOOL=//p' "build/$preset/CMakeCache.txt" 2>/dev/null | tr -d '\r' | tr '[:lower:]' '[:upper:]')
     case "$pt" in
         0|OFF|NO|FALSE|N|IGNORE|NOTFOUND|*-NOTFOUND)
-            echo "=== ctest ($preset): playthrough SKIPPED - opted out with -DSBSP_PLAYTHROUGH=OFF ==="
+            echo "=== ctest ($preset): playthrough SKIPPED - opted out with SBSP_PLAYTHROUGH=OFF (SBSP_PLAYTHROUGH=ON to re-enable) ==="
             return ;;
     esac
     echo "=== ctest ($preset): playthrough ==="

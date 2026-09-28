@@ -53,10 +53,27 @@ find_package(Python3 COMPONENTS Interpreter)
 # register none of them (issue #41): skipping them has to be asked for.
 option(SBSP_PLAYTHROUGH "Register the playthrough tests (needs Python 3)" ON)
 if(SBSP_BUILD_GAME AND SBSP_PLAYTHROUGH AND NOT Python3_Interpreter_FOUND)
+    # name the command that reaches configure: build-pc.sh/.cmd hand their
+    # extra args to the build, so the opt-out is an environment variable there
+    get_filename_component(_sbsp_tree "${CMAKE_BINARY_DIR}" NAME)
+    get_filename_component(_sbsp_tree_parent "${CMAKE_BINARY_DIR}" DIRECTORY)
+    if(NOT _sbsp_tree_parent STREQUAL "${CMAKE_CURRENT_SOURCE_DIR}/build")
+        set(_sbsp_tree "<preset>")
+    endif()
+    if(MINGW)
+        set(_sbsp_py_hint "Install it (MSYS2: pacman -S mingw-w64-i686-python)")
+        set(_sbsp_hand "from an MSYS2 MINGW32 shell in port/")
+    else()
+        set(_sbsp_py_hint "Install Python 3 for Windows (python.org) and put it on PATH")
+        set(_sbsp_hand "in port/")
+    endif()
     message(FATAL_ERROR
         "Python 3 not found, and the playthrough tests (tests/run_tier.py) need it.  "
-        "Install it (MSYS2: pacman -S mingw-w64-i686-python), or configure with "
-        "-DSBSP_PLAYTHROUGH=OFF to build without registering them.")
+        "${_sbsp_py_hint}, or build without registering them:\n"
+        "  SBSP_PLAYTHROUGH=OFF port/build-pc.sh ${_sbsp_tree}\n"
+        "  (Command Prompt: set SBSP_PLAYTHROUGH=OFF, then port\\build-pc.cmd ${_sbsp_tree})\n"
+        "or, configuring by hand ${_sbsp_hand}:\n"
+        "  cmake --preset ${_sbsp_tree} -DSBSP_PLAYTHROUGH=OFF")
 endif()
 
 # The generated headers gate everything (BigLump.h / Sprites.h / trans.h / ...).
