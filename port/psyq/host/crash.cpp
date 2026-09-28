@@ -82,9 +82,11 @@ static void readLinkBase(void)
 
 static LONG WINAPI crashFilter(EXCEPTION_POINTERS *ep)
 {
-	/*	A fault inside this report (a stack overflow re-faulting in
-		fprintf) re-enters the filter on the same thread: skip straight to
-		the exit, whose summary needs no CRT lock on this path.  */
+	/*	A fault inside this report (a stack overflow re-faulting while it
+		formats) re-enters the filter on the same thread: skip straight to
+		the exit, whose summary needs no CRT lock on this path.  The report
+		lines take none either (Port_StderrRaw): the faulting thread may
+		have been mid-printf, holding the stderr stream lock.  */
 	static volatile DWORD	reporting;
 	const DWORD				self = GetCurrentThreadId();
 	if (reporting == self)
@@ -106,34 +108,43 @@ static LONG WINAPI crashFilter(EXCEPTION_POINTERS *ep)
 				 (unsigned long)(addr - base), (void *)(g_linkBase + (addr - base)));
 	else
 		snprintf(where, sizeof(where), "rva=- link=-");
-	fprintf(stderr, "[crash] code=0x%08lX addr=%p %s scene=%s vblank=%lu ram=%lu memnodes=%d\n",
-			(unsigned long)rec->ExceptionCode, rec->ExceptionAddress, where,
-			Port_CurrentScene(), Port_VBlankCount(),
-			g->ramUsed ? *g->ramUsed : 0ul,
-			g->memNodeCount ? *g->memNodeCount : 0);
+	Port_StderrRaw("[crash] code=0x%08lX addr=%p %s scene=%s vblank=%lu ram=%lu memnodes=%d",
+				   (unsigned long)rec->ExceptionCode, rec->ExceptionAddress, where,
+				   Port_CurrentScene(), Port_VBlankCount(),
+				   g->ramUsed ? *g->ramUsed : 0ul,
+				   g->memNodeCount ? *g->memNodeCount : 0);
 	if (rec->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && rec->NumberParameters >= 2)
-		fprintf(stderr, "[crash] access violation: %s %p\n",
-				rec->ExceptionInformation[0] ? "write" : "read",
-				(void *)rec->ExceptionInformation[1]);
+		Port_StderrRaw("[crash] access violation: %s %p",
+					   rec->ExceptionInformation[0] ? "write" : "read",
+					   (void *)rec->ExceptionInformation[1]);
 	Port_Exit(PORT_EXIT_FAULT);
 }
 
 /*	The CRT's own ways to end a process, none of which raises an SEH
 	exception the filter would see: abort() (and std::terminate's default,
 	which is abort), an invalid CRT argument, a pure virtual call.  Each
-	reports like a fault and leaves with the same exit code, 11.  */
+	reports like a fault and leaves with the same exit code, 11 - and, like
+	one, past the stderr stream lock: abort() can come from any thread,
+	mid-printf on another.  */
 PORT_NORETURN static void crashReport(const char *kind)
 {
 	const PortGameGlobals *g = Port_GameGlobals();
-	fprintf(stderr, "[crash] kind=%s scene=%s vblank=%lu ram=%lu memnodes=%d\n",
-			kind, Port_CurrentScene(), Port_VBlankCount(),
-			g->ramUsed ? *g->ramUsed : 0ul,
-			g->memNodeCount ? *g->memNodeCount : 0);
+	Port_StderrRaw("[crash] kind=%s scene=%s vblank=%lu ram=%lu memnodes=%d",
+				   kind, Port_CurrentScene(), Port_VBlankCount(),
+				   g->ramUsed ? *g->ramUsed : 0ul,
+				   g->memNodeCount ? *g->memNodeCount : 0);
 	Port_Exit(PORT_EXIT_FAULT);
 }
 
 static void __cdecl onSigabrt(int sig)
 {
+	/*	Both CRTs reset SIGABRT to SIG_DFL before calling the handler, so
+		re-arm first: a second abort() - another thread, or a fault-safe
+		exit hook this report's Port_Exit runs - must land here again and
+		become an ordinary second Port_Exit caller.  At SIG_DFL it would
+		end the process with the CRT's own exit code 3 while [summary]
+		says 11.  */
+	signal(SIGABRT, onSigabrt);
 	(void)sig;
 	crashReport("abort");
 }
@@ -169,17 +180,24 @@ extern "C" void Port_CrashInit(void)
 	std::set_terminate(onTerminate);
 	_set_invalid_parameter_handler(onInvalidParameter);
 #if defined(_MSC_VER)
-	/*	msvcrt.dll has neither.  Without _set_abort_behavior the UCRT's
-		abort() would pop its message box and fast-fail to Windows Error
-		Reporting instead of reaching the SIGABRT handler's exit.  */
+	/*	msvcrt.dll has neither.  The UCRT's abort() raises SIGABRT before
+		it looks at the abort-behavior flags, so onSigabrt sees every
+		abort() while it is armed; the flags only decide what happens when
+		no handler is installed (the instant between the CRT's reset and
+		onSigabrt's re-arm).  Clearing _CALL_REPORTFAULT makes that an
+		_exit(3) instead of a __fastfail to Windows Error Reporting that
+		prints nothing.  _WRITE_ABORT_MSG's "abort() has been called"
+		report exists only in the debug CRT, and these builds link the
+		release one (/MT), so clearing it changes nothing here.  */
 	_set_purecall_handler(onPurecall);
 	_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
 
 	/*	Room for the filter to run on after EXCEPTION_STACK_OVERFLOW: the
-		guard page is gone by then, and fprintf needs more than the few KB
-		Windows leaves.  This thread only (it is the game's main thread,
-		Port_RegisterGameGlobals); SDL's audio thread keeps the default.  */
+		guard page is gone by then, and formatting the report needs more
+		than the few KB Windows leaves.  This thread only (it is the game's
+		main thread, Port_RegisterGameGlobals); SDL's audio thread keeps the
+		default.  */
 	ULONG guarantee = 64 * 1024;
 	if (!SetThreadStackGuarantee(&guarantee))
 		fprintf(stderr, "[crash] SetThreadStackGuarantee failed (%lu)\n", (unsigned long)GetLastError());
@@ -204,8 +222,9 @@ static DWORD WINAPI watchdogThread(LPVOID arg)
 		}
 		if (++stalled >= limit)
 		{
-			fprintf(stderr, "[watchdog] no vblank progress for %ds (%s, vblank %lu)\n",
-					stalled, Port_CurrentScene(), now);
+			/*	past the stderr lock: the stuck thread may hold it  */
+			Port_StderrRaw("[watchdog] no vblank progress for %ds (%s, vblank %lu)",
+						   stalled, Port_CurrentScene(), now);
 			Port_Exit(PORT_EXIT_WATCHDOG);
 		}
 	}

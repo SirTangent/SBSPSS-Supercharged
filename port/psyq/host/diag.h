@@ -49,6 +49,13 @@ PORT_NORETURN void Port_Exit(int code);
 	Allocation-free: at most 8, more are refused with a warning.  */
 void	Port_OnExit(void (*fn)(int code), int faultSafe);
 
+/*	printf one line to stderr past the CRT stream lock: formatted on the
+	stack (at most 381 chars), written with one WriteFile, "\r\n" appended
+	- the bytes fprintf to text-mode stderr would write.  For the fault and
+	watchdog paths only, where another thread may hold that lock; anywhere
+	else it could interleave with buffered fprintf output.  */
+void	Port_StderrRaw(const char *fmt, ...);
+
 /*	Game-side hooks; the game sees these through source/system/asmport.h.  */
 void	Port_SceneEvent(const char *sceneName);
 void	Port_FmaEvent(int fmaScript);

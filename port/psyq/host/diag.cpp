@@ -9,6 +9,7 @@
 */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -76,11 +77,20 @@ void recurse(volatile char *prev)
 	frame[1] = frame[0];
 }
 
+/*	SBSP_SELFTEST=abort-in-hook: a fault-safe exit hook that aborts, so the
+	abort's own Port_Exit meets a second abort() - SIGABRT must still be
+	armed, and the second report is an ordinary second Port_Exit caller.  */
+void abortHook(int code)
+{
+	(void)code;
+	abort();
+}
+
 /*	SBSP_SELFTEST=<mode>@<vblank>: exercise one exit path on purpose so
 	run_tier.py can prove the exit codes (10/11/12) and their log lines
 	without a throwaway build.  Modes: assert, fault, hang, and the CRT
 	terminations host/crash.cpp routes to exit 11 (issue #62): abort,
-	terminate, invalid-param, stack-overflow.  */
+	abort-in-hook, terminate, invalid-param, stack-overflow.  */
 void selfTest(void)
 {
 	static int			parsed;
@@ -112,6 +122,11 @@ void selfTest(void)
 			Sleep(1);		/* never pumps: only the watchdog thread can end this */
 	else if (strcmp(mode, "abort") == 0)
 		abort();
+	else if (strcmp(mode, "abort-in-hook") == 0)
+	{
+		Port_OnExit(abortHook, 1);
+		abort();
+	}
 	else if (strcmp(mode, "terminate") == 0)
 		std::terminate();
 	else if (strcmp(mode, "invalid-param") == 0)
@@ -308,6 +323,31 @@ extern "C" void Port_Assert(const char *expr, const char *file, int line)
 }
 
 /*****************************************************************************/
+/*	One stderr line that bypasses the CRT (issue #62): formatted on the
+	stack and written to the handle in one WriteFile, with the "\r\n" the
+	text-mode stream would have produced, so the bytes match fprintf's.
+	fprintf would wait forever on a stream lock that a faulting thread (or
+	the thread the watchdog interrupted) holds mid-printf.  */
+extern "C" void Port_StderrRaw(const char *fmt, ...)
+{
+	char	line[384];
+	va_list	ap;
+	va_start(ap, fmt);
+	int		n = vsnprintf(line, sizeof(line) - 2, fmt, ap);
+	va_end(ap);
+	if (n < 0)
+		n = 0;
+	if (n > (int)sizeof(line) - 3)
+		n = (int)sizeof(line) - 3;
+	line[n++] = '\r';
+	line[n++] = '\n';
+	DWORD written;
+	HANDLE h = GetStdHandle(STD_ERROR_HANDLE);
+	if (h && h != INVALID_HANDLE_VALUE)
+		WriteFile(h, line, (DWORD)n, &written, NULL);
+}
+
+/*****************************************************************************/
 /*	Exit hooks (issue #62): what used to be atexit's job - the WAV dump's
 	header, the rumble stop - for a process that only ever leaves through
 	_exit.  A fixed table and no allocation: a hook may be registered from a
@@ -327,35 +367,28 @@ ExitHook		g_exitHooks[MAX_EXIT_HOOKS];
 volatile LONG	g_exitHookClaims;
 
 /*	[summary]: the contract line run_tier.py parses.  On a fault or a
-	watchdog kill it bypasses the CRT: the faulting thread (or, for the
-	watchdog, whichever thread was mid-printf) may hold the stderr stream
-	lock, and fprintf would wait on it forever - so the line is formatted
-	on the stack and written to the handle in one WriteFile, with the
-	"\r\n" the text-mode stream would have produced, byte for byte.  */
+	watchdog kill it goes out through Port_StderrRaw, past the CRT stream
+	lock the faulting thread (or, for the watchdog, whichever thread was
+	mid-printf) may hold.  */
 void writeSummary(int code, int lockFree)
 {
 	char	line[384];
-	int		n = snprintf(line, sizeof(line) - 2,
+	int		n = snprintf(line, sizeof(line),
 						 "[summary] exit=%d vblanks=%lu scene=%s asserts=%lu "
 						 "peak_ram=%lu peak_memnodes=%d/256 peak_prim=%lu paused=%.1f",
 						 code, Port_VBlankCount(), g_currentScene, g_assertCount,
 						 g_peakRam, g_peakNodes, GPU_PrimPoolPeak(), Host_PausedSeconds());
 	if (n < 0)
 		n = 0;
-	if (n > (int)sizeof(line) - 3)
-		n = (int)sizeof(line) - 3;
-	if (!lockFree)
+	if (n > (int)sizeof(line) - 1)
+		n = (int)sizeof(line) - 1;
+	if (lockFree)
 	{
-		fprintf(stderr, "%.*s\n", n, line);
-		fflush(stderr);
+		Port_StderrRaw("%.*s", n, line);
 		return;
 	}
-	line[n++] = '\r';
-	line[n++] = '\n';
-	DWORD written;
-	HANDLE h = GetStdHandle(STD_ERROR_HANDLE);
-	if (h && h != INVALID_HANDLE_VALUE)
-		WriteFile(h, line, (DWORD)n, &written, NULL);
+	fprintf(stderr, "%.*s\n", n, line);
+	fflush(stderr);
 }
 
 }

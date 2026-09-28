@@ -524,6 +524,9 @@ def selftest(exe, seed, logdir, territory="USA"):
         ("assert-continue", {"SBSP_SELFTEST": "assert@100", "SBSP_ASSERT_CONTINUE": "1"}, 0, "[assert]", None),
         # the CRT terminations that raise no SEH exception (issue #62)
         ("abort", {"SBSP_SELFTEST": "abort@100"}, 11, "[crash] kind=abort", None),
+        # a second abort() from a fault-safe exit hook: SIGABRT must still be
+        # armed, or the CRT ends the process with 3 under a [summary] of 11
+        ("abort-in-hook", {"SBSP_SELFTEST": "abort-in-hook@100"}, 11, "[crash] kind=abort", None),
         ("terminate", {"SBSP_SELFTEST": "terminate@100"}, 11, "[crash] kind=terminate", None),
         ("invalid-param", {"SBSP_SELFTEST": "invalid-param@100"}, 11, "[crash] kind=invalid-parameter",
          "[selftest] invalid-param returned"),
@@ -544,8 +547,10 @@ def selftest(exe, seed, logdir, territory="USA"):
             print(f"  SKIP selftest {name}: msvcrt.dll does not report it (exit {res.code})")
             continue
         tagged = any(l.startswith(tag) for l in res.lines)
-        # the exit code the process returned is the one [summary] states
-        summary = res.summary.get("exit") == str(want)
+        # the exit code the process returned is the one [summary] states,
+        # and there is exactly one [summary], whoever else called Port_Exit
+        summaries = sum(1 for l in res.lines if l.startswith("[summary]"))
+        summary = res.summary.get("exit") == str(want) and summaries == 1
         # the self-test provokes forbidden tags on purpose, so FORBIDDEN as a
         # whole does not apply - but it must read no sbsp.ini, like every run
         ini = [l for l in res.lines if l.startswith("[ini] loaded")]
@@ -558,6 +563,7 @@ def selftest(exe, seed, logdir, territory="USA"):
         print(f"  {'PASS' if good else 'FAIL'} selftest {name}: exit {res.code} (want {want}), "
               f"{tag} {'seen' if tagged else 'MISSING'}, [summary] "
               f"{'exit=' + res.summary['exit'] if 'exit' in res.summary else 'MISSING'}"
+              f"{'' if summaries == 1 else f' ({summaries} of them)'}"
               f"{', link = ImageBase + rva' if name == 'fault' and not link else ''}")
         ok &= good
     ok &= selftest_paced(exe, seed, logdir)

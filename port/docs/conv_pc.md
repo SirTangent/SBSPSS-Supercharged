@@ -1154,10 +1154,11 @@ sleeps 5 s, then calls `_exit(ownerCode)`.  The process exit code therefore
 always equals the one `[summary]` states - `run_tier --selftest` now checks
 that, not only that a summary exists.  On FAULT and WATCHDOG the summary is
 formatted on the stack and written with one `WriteFile` to the stderr
-handle: the faulting thread (or whichever thread the watchdog interrupted)
-may hold the CRT's stderr lock mid-`fprintf`.  The bytes are the ones the
-text-mode stream wrote, CRLF included.  `exit_test` runs each rule in a
-child process.
+handle (`Port_StderrRaw`): the faulting thread (or whichever thread the
+watchdog interrupted) may hold the CRT's stderr lock mid-`fprintf`.  The
+`[crash]` and `[watchdog]` lines before it go out the same way.  The bytes
+are the ones the text-mode stream wrote, CRLF included.  `exit_test` runs
+each rule in a child process.
 
 **The WAV dump is valid on every path.**  `Wav_Sync` patches both size
 fields to the data so far, seeks back to the end and flushes; the first
@@ -1193,12 +1194,20 @@ no SEH exception now report too, as `[crash] kind=<k>` and exit 11 like a
 fault: `abort()` via `signal(SIGABRT)`, `std::terminate` via
 `std::set_terminate`, invalid CRT arguments via
 `_set_invalid_parameter_handler` (both CRTs), pure virtual calls via
-`_set_purecall_handler` (MSVC only), and `_set_abort_behavior(0,
-_WRITE_ABORT_MSG | _CALL_REPORTFAULT)` so the UCRT's `abort` reaches the
-SIGABRT handler instead of a message box and a fast-fail.  The main thread
+`_set_purecall_handler` (MSVC only).  Both CRTs reset SIGABRT to
+`SIG_DFL` before calling the handler, so it re-arms itself first: a second
+`abort()` (another thread, or a fault-safe exit hook) is then an ordinary
+second `Port_Exit` caller instead of the CRT's own `_exit(3)` under a
+`[summary]` of 11.  The UCRT's `abort` raises SIGABRT before it consults
+the abort-behavior flags, so `_set_abort_behavior(0, _WRITE_ABORT_MSG |
+_CALL_REPORTFAULT)` only matters when no handler is installed: it turns
+the `__fastfail` to Windows Error Reporting into `_exit(3)`.  The
+`_WRITE_ABORT_MSG` message box exists only in the debug CRT, and these
+builds link the release `/MT` one.  The main thread
 reserves 64 KB with `SetThreadStackGuarantee`, so a stack overflow is
 reported; a fault inside the report itself goes straight to `Port_Exit`.
-`SBSP_SELFTEST` gained `abort`, `terminate`, `invalid-param`
+`SBSP_SELFTEST` gained `abort`, `abort-in-hook` (a fault-safe exit hook
+that aborts again: exit 11, one `[summary]`), `terminate`, `invalid-param`
 (`_close(-1)`) and `stack-overflow`; the fault case also checks
 `link == ImageBase + rva` against the exe's PE header.  MinGW's msvcrt.dll
 never calls the invalid-parameter handler (`_close(-1)`, `strcpy_s(NULL)`,
