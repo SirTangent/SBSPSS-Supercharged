@@ -576,19 +576,23 @@ def selftest_wav(exe, seed, logdir, territory):
     header is patched after each vblank's write and the clean/assert exits
     close it through an exit hook.  RIFF must equal the file size - 8, the
     data chunk must be a whole number of vblanks (44100/hz frames of s16
-    stereo) and fit the file - exactly on the clean and assert paths, which
-    run the hook - and the PCM must not be silence."""
+    stereo) and fit the file - exactly, on the clean and assert paths - and
+    the PCM must not be silence.  The per-vblank sync alone already leaves
+    the file exact, so the file cannot prove the hook ran: those two paths
+    must also log "[host] audio dump closed: <frames>" matching the data
+    chunk, and the fault and watchdog paths must not (the hook is not
+    fault-safe, and the watchdog thread runs no main-thread hook)."""
     per_vblank = (44100 // (50 if territory == "EUR" else 60)) * 4
     cases = [
         ("clean", {}, 0, True),
         ("assert", {"SBSP_SELFTEST": "assert@200"}, 10, True),
         ("fault", {"SBSP_SELFTEST": "fault@200"}, 11, False),
         ("hang", {"SBSP_SELFTEST": "hang@200", "SBSP_WATCHDOG": "3"}, 12, False),
-    ]
+    ]   # (name, env, exit code, the exit hook closes it)
     ok = True
     tmp = tempfile.mkdtemp(prefix="sbsp_wav_")
     try:
-        for name, env, want, exact in cases:
+        for name, env, want, hooked in cases:
             wav = Path(tmp) / f"{name}.wav"
             args = ["--level", "1-1", "--seed", str(seed), "--exit-after", "300",
                     "--pad-script", "0:0000", "--dump-audio", str(wav)] + DETERMINISM
@@ -608,13 +612,23 @@ def selftest_wav(exe, seed, logdir, territory):
                     problems.append(f"RIFF size {riff} != file size - 8 ({len(b) - 8})")
                 if data == 0 or data % per_vblank:
                     problems.append(f"data size {data} is not a whole number of {per_vblank}-byte vblanks")
-                if data > len(b) - 44 or (exact and data != len(b) - 44):
-                    problems.append(f"data size {data} {'!=' if exact else '>'} file size - 44 ({len(b) - 44})")
+                if data > len(b) - 44 or (hooked and data != len(b) - 44):
+                    problems.append(f"data size {data} {'!=' if hooked else '>'} file size - 44 ({len(b) - 44})")
                 if not any(b[44:44 + data]):
                     problems.append("PCM is all zero")
+            closed = [l for l in res.lines if l.startswith("[host] audio dump closed:")]
+            if hooked:
+                m = re.match(r"\[host\] audio dump closed: (\d+) frames$", closed[-1] if closed else "")
+                if not m:
+                    problems.append("no '[host] audio dump closed' line - the exit hook did not run")
+                elif int(m.group(1)) * 4 != data:
+                    problems.append(f"hook closed {m.group(1)} frames, data chunk holds {data // 4}")
+            elif closed:
+                problems.append(f"the exit hook ran on this path: {closed[0]!r}")
             good = not problems
             print(f"  {'PASS' if good else 'FAIL'} selftest wav {name}: exit {res.code}, "
-                  f"{len(b)} bytes, data {data} = {data / per_vblank:.2f} vblanks"
+                  f"{len(b)} bytes, data {data} = {data / per_vblank:.2f} vblanks, "
+                  f"hook {'closed it' if closed else 'did not run'}"
                   + ("" if good else " - " + "; ".join(problems)))
             ok &= good
     finally:

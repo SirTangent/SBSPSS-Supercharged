@@ -1165,14 +1165,18 @@ fields to the data so far, seeks back to the end and flushes; the first
 seek pushes the PCM out before the header claims it.  `Port_AudioVBlank`
 calls it after every vblank's write, so a dump is a WAV of whole vblanks
 however the process ends, `TerminateProcess` included, and the exit hook
-closes it on the clean and assert paths.  `Port_AudioVBlank` now runs
+closes it on the clean and assert paths, logging `[host] audio dump closed:
+<frames>`.  `Port_AudioVBlank` now runs
 before `Host_VBlank` in `pumpStep`: `Host_VBlank` can end the process
 (window close, `--exit-after`, the self-test) and took the last vblank's
 audio with it.  The content is unchanged - the vblank callback (that
 vblank's `XM_Update`) and the XA clock have already run - and so is the
 first vblank a dump sees, since audio comes up with the video at the first
 GPU touch (`ResetGraph`), after `SetVideoMode` has set the rate.
-`selftest_wav` checks the clean, assert, fault and watchdog paths.
+`selftest_wav` checks the clean, assert, fault and watchdog paths.  Since
+the file is exact without the hook, the closed line is what proves the hook
+ran: the self-test requires it on clean and assert and rejects it on fault
+and watchdog.
 
 **Rumble stops at exit.**  Rumble is armed in 100 ms windows only SDL's
 event pump expires, so a process that ended inside one (Alt+F4, an assert or

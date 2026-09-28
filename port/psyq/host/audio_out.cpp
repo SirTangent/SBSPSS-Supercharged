@@ -65,6 +65,9 @@ void SDLCALL audioPull(void *userdata, SDL_AudioStream *stream,
 	}
 }
 
+/*	The exit hook.  Says so on stderr: Wav_Sync after every vblank already
+	leaves the file exact, so the WAV alone cannot show that the hook ran -
+	run_tier's selftest_wav looks for this line.  */
 void closeWav(int code)
 {
 	(void)code;
@@ -72,6 +75,9 @@ void closeWav(int code)
 	{
 		Wav_Close(&g_wav);
 		g_wavOpen = 0;
+		fprintf(stderr, "[host] audio dump closed: %lu frames\n",
+				(unsigned long)(g_wav.dataBytes / 4));	/* s16 stereo */
+		fflush(stderr);
 	}
 }
 
