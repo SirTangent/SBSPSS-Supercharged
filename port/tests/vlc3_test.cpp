@@ -324,7 +324,7 @@ static void testRealFrame(void)
 	check(Mdec_FrameBytesForTest() == (int)sizeof(g_pixels),
 		  "frame: 300 macroblocks decoded");
 	/*	one 16px column of 15 macroblocks per call, as fmv.cpp reads it
-		(one DecDCTout never returns more than a full-height slice)  */
+		(mdec_test checks a whole-frame read gives the same bytes)  */
 	for (int off = 0; off < (int)sizeof(g_pixels); off += 15 * MDEC_MB_BYTES_24BPP)
 		DecDCTout((u_long *)(g_pixels + off), 15 * MDEC_MB_BYTES_24BPP / 4);
 

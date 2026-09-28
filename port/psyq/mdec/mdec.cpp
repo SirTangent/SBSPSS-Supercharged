@@ -308,12 +308,11 @@ extern "C" void DecDCTin(u_long *buf, int mode)
 	}
 }
 
-/*	The most one DecDCTout can ask for: a 16-pixel column slice of 24bpp
-	at the full 512 VRAM lines.  fmv.cpp sizes its request from the STR
-	header's height (disc data) into a buffer sized for 240 lines, and the
-	real MDEC's DMA would stall rather than write what it never decoded -
-	so an absurd height must not become an absurd write (issue #60).  */
-#define MDEC_MAX_OUT_BYTES	(16 * 3 * 512)
+/*	One DecDCTout copies at most MDEC_MAX_OUT_BYTES (mdec_internal.h), the
+	capacity of g_frame.  Real libpress lets a caller take a whole frame in
+	one call, so this is not an API limit: it bounds the copy against
+	over-reading the decoded frame when fmv.cpp sizes its request from a
+	corrupt STR header height (disc data; issue #60).  */
 
 /*	Copy the next slice of the decoded stream, then run the completion
 	callback through the trampoline: the callback's own DecDCTout call

@@ -141,7 +141,7 @@ static int runMovie(const char *diskName, const char *slug)
 		StFreeRing(addr);
 		DecDCTin(g_vlc, 3);
 		/*	one 16px column of 15 macroblocks per call, as fmv.cpp reads
-			it (one DecDCTout never returns more than a full-height slice)  */
+			it (mdec_test checks a whole-frame read gives the same bytes)  */
 		for (int off = 0; off < (int)sizeof(g_stream); off += 15 * 768)
 			DecDCTout((u_long *)(g_stream + off), 15 * 768 / 4);
 
