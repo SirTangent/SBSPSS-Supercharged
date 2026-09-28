@@ -353,14 +353,30 @@ int main()
 		StoreImage(&zh, (u_long *)dst);
 		check(dst[0] == 0xCAFE, "StoreImage zero-size rect stores nothing");
 
-		/*	w=2048 clamps to 1024: exactly one VRAM row, not a halfword more  */
+		/*	w=1025 clamps to 1024: exactly one VRAM row, not a halfword more.
+			The raw GP0 rule would make it ((1025-1) & 0x3FF) + 1 = 1 halfword,
+			so this separates the clamp from the mask (w=2048 would not: the
+			mask also gives 1024 there).  */
 		for (int x = 0; x < 1024; x++)
 			g_vram[20][x] = (uint16_t)(0x4000 + x);
-		RECT wide = { 0, 20, 2048, 1 };
+		RECT wide = { 0, 20, 1025, 1 };
 		StoreImage(&wide, (u_long *)dst);
-		check(dst[0] == 0x4000 && dst[1023] == 0x4000 + 1023,
-			  "StoreImage w=2048 stores the whole row");
-		check(dst[1024] == 0xCAFE, "StoreImage w=2048 stores exactly 1024 halfwords");
+		bool row = true;
+		for (int x = 0; x < 1024; x++)
+			row = row && dst[x] == (uint16_t)(0x4000 + x);
+		check(row, "StoreImage w=1025 stores the whole row");
+		check(dst[1024] == 0xCAFE, "StoreImage w=1025 stores exactly 1024 halfwords");
+
+		/*	h=513 clamps to 512 rows (the mask would give 1 row)  */
+		for (int i = 0; i < 1024 * 4 + 8; i++)
+			dst[i] = 0xCAFE;
+		for (int y = 0; y < 512; y++)
+			g_vram[y][700] = (uint16_t)(0x2000 + y);
+		RECT tall = { 700, 0, 2, 513 };
+		StoreImage(&tall, (u_long *)dst);
+		check(dst[0] == 0x2000 && dst[2 * 511] == 0x2000 + 511,
+			  "StoreImage h=513 stores all 512 rows");
+		check(dst[1024] == 0xCAFE, "StoreImage h=513 stores exactly 512 rows");
 
 		g_vram[30][40] = 0x0777;
 		RECT mz = { 40, 30, 0, 4 };
@@ -434,24 +450,77 @@ int main()
 		checkPx(560, 107, 0x0000, "isbg clear stops at the clip's right edge");
 		checkPx(559, 108, 0x0000, "isbg clear stops at the clip's bottom edge");
 
-		/*	ClearImage2 is the same executor (dfe set, which the shim ignores)  */
-		static const RECT shapes[] =
-		{
-			{ 512, 256, 2048, 254 }, { 520, 20, 16, 4 }, { 960, 40, 128, 2 },
-			{ 0, 0, 512, 512 }, { -8, -4, 40, 30 },
-		};
-		static uint16_t viaOne[VRAM_H][VRAM_W];
-		for (unsigned k = 0; k < sizeof(shapes) / sizeof(shapes[0]); k++)
-		{
-			RECT r = shapes[k];
-			memset(g_vram, 0, sizeof(g_vram));
-			ClearImage(&r, 200, 100, 50);
-			memcpy(viaOne, g_vram, sizeof(g_vram));
-			memset(g_vram, 0, sizeof(g_vram));
-			ClearImage2(&r, 200, 100, 50);
-			check(memcmp(viaOne, g_vram, sizeof(g_vram)) == 0,
-				  "ClearImage2 draws ClearImage's pixels");
-		}
+		/*	isbg with an offset that is not the clip origin, on a canary
+			field: the fill lands exactly on the clip rect (the offset is
+			compensated, not added) and every pixel around it keeps its
+			canary.  The isbg fill rect is built from env->clip itself, so
+			the clip can never be smaller than the fill through PutDrawEnv;
+			what this pins is the rect and the offset.  */
+		resetEnv();
+		for (int y = 190; y < 216; y++)
+			for (int x = 590; x < 640; x++)
+				g_vram[y][x] = 0x1234;
+		SetDefDrawEnv(&env, 600, 200, 24, 6);
+		env.ofs[0] = 100;
+		env.ofs[1] = 50;
+		env.isbg = 1;
+		setRGB0(&env, 0, 0, 255);
+		PutDrawEnv(&env);
+		int wrong = 0;
+		for (int y = 190; y < 216; y++)
+			for (int x = 590; x < 640; x++)
+			{
+				bool in = x >= 600 && x < 624 && y >= 200 && y < 206;
+				wrong += g_vram[y][x] != (in ? 0x7C00 : 0x1234);
+			}
+		check(wrong == 0, "offset isbg clear fills exactly its clip, canaries intact");
+		checkPx(700, 250, 0x0000, "offset isbg clear does not add the draw offset");
+
+		/*	ClearImage2 is the same executor with dfe set, which the shim
+			ignores: the same explicit pixels as the ClearImage cases.
+			rgb15(200,100,50) = 25 | 12<<5 | 6<<10.  */
+		const uint16_t c2 = 0x1999;
+		resetEnv();
+		RECT u2 = { 520, 20, 16, 4 };			/* unaligned: 60h */
+		ClearImage2(&u2, 200, 100, 50);
+		checkPx(519, 20, 0x0000, "ClearImage2 x=520 leaves 519");
+		checkPx(520, 20, c2, "ClearImage2 x=520 fills from 520");
+		checkPx(535, 23, c2, "ClearImage2 x=520 w=16 fills to 535");
+		checkPx(536, 20, 0x0000, "ClearImage2 x=520 w=16 stops at 535");
+		checkPx(520, 24, 0x0000, "ClearImage2 h=4 stops at row 23");
+
+		RECT a2 = { 960, 40, 128, 2 };			/* aligned: 02h wraps */
+		ClearImage2(&a2, 200, 100, 50);
+		checkPx(1023, 41, c2, "ClearImage2 aligned fills to the right edge");
+		checkPx(0, 40, c2, "ClearImage2 aligned wraps like GP0(02h)");
+		checkPx(63, 41, c2, "ClearImage2 aligned wraps its whole overhang");
+		checkPx(64, 40, 0x0000, "ClearImage2 aligned wraps no further");
+
+		resetEnv();
+		RECT wipe2 = { 512, 256, 2048, 254 };	/* clamps to w=1023: 60h */
+		ClearImage2(&wipe2, 200, 100, 50);
+		checkPx(512, 256, c2, "ClearImage2 cache wipe fills from its origin");
+		checkPx(1023, 509, c2, "ClearImage2 cache wipe fills to the edge");
+		checkPx(511, 256, 0x0000, "ClearImage2 cache wipe leaves x=511");
+		checkPx(0, 256, 0x0000, "ClearImage2 cache wipe does not wrap");
+		checkPx(512, 510, 0x0000, "ClearImage2 cache wipe stops at row 509");
+
+		resetEnv();
+		RECT neg2 = { -8, -4, 40, 30 };			/* unaligned, off the top-left */
+		ClearImage2(&neg2, 200, 100, 50);
+		checkPx(0, 0, c2, "ClearImage2 negative origin fills from (0,0)");
+		checkPx(31, 25, c2, "ClearImage2 negative origin fills to (31,25)");
+		checkPx(32, 0, 0x0000, "ClearImage2 negative origin stops at x=31");
+		checkPx(0, 26, 0x0000, "ClearImage2 negative origin stops at y=25");
+		checkPx(1016, 0, 0x0000, "ClearImage2 negative x does not wrap right");
+		checkPx(0, 508, 0x0000, "ClearImage2 negative y does not wrap down");
+
+		resetEnv();
+		RECT big2 = { 0, 0, 512, 512 };			/* h clamps to 511: 02h */
+		ClearImage2(&big2, 200, 100, 50);
+		checkPx(511, 510, c2, "ClearImage2 512x512 fills 512x511");
+		checkPx(0, 511, 0x0000, "ClearImage2 512x512 clamps h to 511");
+		checkPx(512, 0, 0x0000, "ClearImage2 512x512 stops at x=511");
 	}
 
 	/* --- texture window (E2): u -> (u & ~mask*8) | (offset&mask)*8 -------- */
