@@ -1,10 +1,18 @@
 name: Build & test
 
+# Manual runs only, by the maintainer's decision (issue #64): nothing here
+# fires on a push or a pull request.  Start it from the Actions tab (Run
+# workflow, pick the branch) or `gh workflow run build.yml --ref <branch>`.
+# A run costs LFS bandwidth (the 133MB Track1.Ixa on a cold cache, see the
+# data job) and runner time, and pull requests are checked locally with the
+# commands in README.md instead.  Running on every PR again means adding
+# pull_request / push triggers back here - a deliberate change, not a fix.
+#
+# Not covered yet: EUR.  The EUR data build is not reliably one-shot
+# (issue #42), so an EUR data artifact and eur-debug / eur-final legs wait
+# for that root cause.
 on:
-  pull_request:
-    branches: [SBSP-Win11]
-  push:
-    branches: [SBSP-Win11]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -50,6 +58,14 @@ jobs:
         shell: bash
         run: git lfs pull
 
+      # Graphics/UI/+key*.bmp (what the data build packs) are generated from
+      # the square-pixel masters in port/art/keycaps (PR #54); a master
+      # edited without re-running the tool would ship stale caps.  Both sets
+      # are LFS, so this comes after the pull.  Uses the runner's Python.
+      - name: Keycaps in step with masters
+        shell: bash
+        run: python port/tools/stretch_keycaps.py --check
+
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MSYS
@@ -71,10 +87,20 @@ jobs:
   # exit-code self-test, fast Tier 1 routes, short Tier 2 sweep, all
   # --uncapped so they run faster than real time and deterministically).
   # sbsp.exe itself - the windowed game - is only ever driven headlessly.
+  #
+  # Both variants (issue #64): FINAL is the exe port/package.py ships as
+  # sbsp.exe, and __VERSION_FINAL__ compiles the asserts out, so a variable
+  # used only inside an ASSERT breaks FINAL alone.  One USA data build
+  # serves both legs (the data is per territory, not per variant, #35).
   pc-build-test:
+    name: pc-build-test (${{ matrix.preset }})
     needs: data
     runs-on: windows-latest
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [debug, final]
     defaults:
       run:
         shell: msys2 {0}
@@ -120,22 +146,23 @@ jobs:
           pacman -U --noconfirm \
             https://repo.msys2.org/mingw/mingw32/mingw-w64-i686-sdl3-3.4.10-1-any.pkg.tar.zst
 
-      - name: Build PC port (debug)
-        run: bash port/build-pc.sh debug
+      - name: Build PC port (${{ matrix.preset }})
+        run: bash port/build-pc.sh ${{ matrix.preset }}
 
       - name: Unit tests
-        run: ctest --test-dir port/build/debug --output-on-failure -L unit --no-tests=error
+        run: ctest --test-dir port/build/${{ matrix.preset }} --output-on-failure -L unit --no-tests=error
 
       - name: Playthrough tiers (uncapped)
-        run: ctest --test-dir port/build/debug --output-on-failure -L playthrough --no-tests=error
+        run: ctest --test-dir port/build/${{ matrix.preset }} --output-on-failure -L playthrough --no-tests=error
 
       # every route/level run's stderr (the [scene]/[summary]/[assert] log
-      # the oracle grepped), for triage when a tier fails
+      # the oracle grepped), for triage when a tier fails; the name carries
+      # the preset because artifact names must be unique within a run
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: tier-logs-mingw-${{ env.TERRITORY }}-${{ env.VERSION }}
-          path: port/build/debug/tier-logs/
+          name: tier-logs-mingw-${{ matrix.preset }}-${{ env.TERRITORY }}
+          path: port/build/${{ matrix.preset }}/tier-logs/
           if-no-files-found: ignore
           retention-days: 7
 
@@ -146,29 +173,36 @@ jobs:
   # C:\Program Files, Visual Studio's x86 build tools + SDK (VS 2026 under
   # C:\Program Files\Microsoft Visual Studio\18 on windows-latest since
   # 2026-09), and the SDL3 VC /
-  # Vulkan-Headers packages port/cmake/deps_vc.cmake fetches.  Advisory
-  # while the toolchain is young (M8 PR 4 timebox): a failure here is a
-  # finding to look at, not a red PR.
+  # Vulkan-Headers packages port/cmake/deps_vc.cmake fetches.  A failure
+  # here fails the run like any other job (issue #41 item 7): it was
+  # advisory (continue-on-error) through the M8 PR 4 timebox, when its
+  # green tick meant nothing, and making it count is one of #39's gates.
   #
   # One job definition, two targets (M9): i686-pc-windows-msvc, and the
   # same tree as a true 64-bit exe (SBSP_PC64 - 4-byte pointer fields kept
   # in the file-overlay structs, a 16-aligned heap).  A matrix rather than
   # two copies, so a change to the steps cannot land in one and miss the
-  # other.
+  # other.  The x64 FINAL leg is the sbsp64.exe `port/package.py --x64`
+  # ships (issue #64); `suffix` keeps the two older legs' check names as
+  # they were.
   clangcl:
-    name: clangcl (${{ matrix.triple }})
+    name: clangcl (${{ matrix.triple }}${{ matrix.suffix }})
     needs: data
     runs-on: windows-latest
     timeout-minutes: 40
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
         include:
           - preset: clangcl-debug
             triple: i686-pc-windows-msvc
+            suffix: ''
           - preset: clangcl-x64-debug
             triple: x86_64-pc-windows-msvc
+            suffix: ''
+          - preset: clangcl-x64-final
+            triple: x86_64-pc-windows-msvc
+            suffix: ', final'
     defaults:
       run:
         shell: pwsh
@@ -208,7 +242,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: tier-logs-${{ matrix.preset }}-${{ env.TERRITORY }}-${{ env.VERSION }}
+          name: tier-logs-${{ matrix.preset }}-${{ env.TERRITORY }}
           path: port/build/${{ matrix.preset }}/tier-logs/
           if-no-files-found: ignore
           retention-days: 7

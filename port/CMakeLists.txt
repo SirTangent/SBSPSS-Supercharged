@@ -49,6 +49,32 @@ option(SBSP_BUILD_GAME "Build sbsp.exe + sbsp_headless.exe and register the play
 # from the repo root, where the game's default data path resolves.
 enable_testing()
 find_package(Python3 COMPONENTS Interpreter)
+# The playthrough tiers are the PR gate, so a missing Python must not quietly
+# register none of them (issue #41): skipping them has to be asked for.
+option(SBSP_PLAYTHROUGH "Register the playthrough tests (needs Python 3)" ON)
+if(SBSP_BUILD_GAME AND SBSP_PLAYTHROUGH AND NOT Python3_Interpreter_FOUND)
+    # name the command that reaches configure: build-pc.sh/.cmd hand their
+    # extra args to the build, so the opt-out is an environment variable there
+    get_filename_component(_sbsp_tree "${CMAKE_BINARY_DIR}" NAME)
+    get_filename_component(_sbsp_tree_parent "${CMAKE_BINARY_DIR}" DIRECTORY)
+    if(NOT _sbsp_tree_parent STREQUAL "${CMAKE_CURRENT_SOURCE_DIR}/build")
+        set(_sbsp_tree "<preset>")
+    endif()
+    if(MINGW)
+        set(_sbsp_py_hint "Install it (MSYS2: pacman -S mingw-w64-i686-python)")
+        set(_sbsp_hand "from an MSYS2 MINGW32 shell in port/")
+    else()
+        set(_sbsp_py_hint "Install Python 3 for Windows (python.org) and put it on PATH")
+        set(_sbsp_hand "in port/")
+    endif()
+    message(FATAL_ERROR
+        "Python 3 not found, and the playthrough tests (tests/run_tier.py) need it.  "
+        "${_sbsp_py_hint}, or build without registering them:\n"
+        "  SBSP_PLAYTHROUGH=OFF port/build-pc.sh ${_sbsp_tree}\n"
+        "  (Command Prompt: set SBSP_PLAYTHROUGH=OFF, then port\\build-pc.cmd ${_sbsp_tree})\n"
+        "or, configuring by hand ${_sbsp_hand}:\n"
+        "  cmake --preset ${_sbsp_tree} -DSBSP_PLAYTHROUGH=OFF")
+endif()
 
 # The generated headers gate everything (BigLump.h / Sprites.h / trans.h / ...).
 # Both are per territory only (issue #35): out/<T>/include is written by the
@@ -395,7 +421,7 @@ sbsp_shim_test(viewport_test)   # fit/integer/stretch viewport arithmetic (M8 sh
 # fast Tier 1 routes and the short Tier 2 sweep, all --uncapped.  The full
 # tiers are `port/build-pc.sh soak`.  Every run's log lands in
 # <build>/tier-logs (CI uploads that directory when a tier fails).
-if(SBSP_BUILD_GAME AND Python3_Interpreter_FOUND)
+if(SBSP_BUILD_GAME AND SBSP_PLAYTHROUGH)
     set(SBSP_TIER ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_tier.py
         --exe $<TARGET_FILE:sbsp> --territory ${SBSP_TERRITORY}
         --logs ${CMAKE_CURRENT_BINARY_DIR}/tier-logs)
@@ -403,6 +429,4 @@ if(SBSP_BUILD_GAME AND Python3_Interpreter_FOUND)
     add_test(NAME tier1_fast  COMMAND ${SBSP_TIER} --tier1 --fast  WORKING_DIRECTORY ${SBSP_ROOT})
     add_test(NAME tier2_short COMMAND ${SBSP_TIER} --tier2 --short WORKING_DIRECTORY ${SBSP_ROOT})
     set_tests_properties(exit_codes tier1_fast tier2_short PROPERTIES LABELS playthrough TIMEOUT 1800)
-elseif(SBSP_BUILD_GAME)
-    message(WARNING "Python3 not found: the playthrough tests are not registered")
 endif()

@@ -6,7 +6,9 @@ data/Scripts/defs/trans.scr
 *.stackdump
 .idea/
 nul
-sn.ini
+# the copy port/build-psx.sh drops at the root for ccpsx (the tracked
+# originals live under tools/psyq/bin/)
+/sn.ini
 port/build/
 # compiled SPIR-V binaries - intermediate output of gen_spv.sh; the .spv.h
 # headers it derives from them are what's actually committed and compiled in

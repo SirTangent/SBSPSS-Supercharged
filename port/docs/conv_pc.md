@@ -770,6 +770,7 @@ uploaded on failure); a new `clangcl` job builds the same tree with the
 runner's own cmake/ninja/python, its LLVM and Visual Studio (2026 on
 today's windows-latest), no MSYS2 at all,
 and runs both labels - `continue-on-error` while the toolchain is young.
+(No longer advisory: since #41 / PR #73 a clangcl failure fails the run.)
 The MSYS2 SDL3 URL pin stays (the mirror still serves the file); the
 durable escape from the shrinking mingw32 index is the clang-cl route.
 
@@ -786,7 +787,10 @@ default, `x64`): it picks `CMAKE_SYSTEM_PROCESSOR`, the target triple
 inside every `try_compile` project, which does not otherwise see the cache
 and would have probed the compiler as x86.  Inside a vcvars prompt of the
 other architecture the configure stops (`VSCMD_ARG_TGT_ARCH`) rather than
-link against that prompt's `LIB`.  Presets `clangcl-x64-debug` /
+link against that prompt's `LIB`.  (Since #41 / PR #73 that is a warning
+instead: the toolset, SDK and `/libpath:` dirs are always named
+explicitly, and lld-link searches `/libpath:` before `LIB`.)
+Presets `clangcl-x64-debug` /
 `clangcl-x64-final`; `build-pc.sh clangcl64` (build, `test`, `soak`).
 `deps_vc.cmake` needed nothing: the SDL3 VC package carries `lib/x64` and
 its config picks by pointer size, and the Vulkan headers have no
@@ -844,7 +848,7 @@ offsets.
 
 **CI.**  The `clangcl` job is a two-entry matrix, `clangcl-debug` and
 `clangcl-x64-debug` (both advisory): configure, build, `ctest -L unit`,
-`ctest -L playthrough`.
+`ctest -L playthrough`.  (Not advisory since #41 / PR #73.)
 
 ### x64 A/B (M9 PR 2)
 
