@@ -309,10 +309,12 @@ extern "C" void DecDCTin(u_long *buf, int mode)
 }
 
 /*	One DecDCTout copies at most MDEC_MAX_OUT_BYTES (mdec_internal.h), the
-	capacity of g_frame.  Real libpress lets a caller take a whole frame in
-	one call, so this is not an API limit: it bounds the copy against
-	over-reading the decoded frame when fmv.cpp sizes its request from a
-	corrupt STR header height (disc data; issue #60).  */
+	largest legal 16-pixel slice (512 lines, 24bpp: 24,576 bytes).  That is
+	a shim bound, not a libpress API limit - real libpress would take a
+	whole frame.  fmv.cpp sizes its request from the STR header's height
+	(disc data) into a 77,120-byte PlaybackBuffer and only ever reads
+	16-pixel slices, so the cap keeps a corrupt height from becoming an
+	absurd write (issue #60); a whole frame is read in slices.  */
 
 /*	Copy the next slice of the decoded stream, then run the completion
 	callback through the trampoline: the callback's own DecDCTout call

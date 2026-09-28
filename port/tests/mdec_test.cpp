@@ -8,9 +8,9 @@
 	  3. yuv_to_rgb (Mdec_YuvToRgb24): full-macroblock golden, byte order.
 	  4. DecDCTin/DecDCTout/DecDCToutCallback: end-to-end stream decode,
 	     fmv.cpp-style callback chaining through the trampoline (flat stack).
-	  5. DecDCTout bounds: a whole 320x240 frame in one call matches the
-	     16px-slice reads, and a request sized from a corrupt STR height
-	     is capped at the decoded-frame buffer, against a guard page.
+	  5. DecDCTout bounds: a request sized from a corrupt STR height, or a
+	     whole 320x240 frame, is capped at one full-height 16px slice,
+	     against a guard page.
 
 	Golden fixture is loaded repo-root-relative with a graceful skip, like
 	xa_test.  Regenerate with:  py port/tests/make_mdec_golden.py
@@ -329,12 +329,12 @@ static void testPipeline(void)
 /*****************************************************************************/
 /*	DecDCTout's request comes from fmv.cpp as 24*height/2 words, height
 	straight from the STR frame header.  Whatever it asks for, one call
-	writes at most MDEC_MAX_OUT_BYTES (the decoded-frame buffer, 393,216
-	bytes), and a size <= 0 writes nothing; the completion callback fires
-	either way.  Real libpress takes whole frames in one call, so a
-	320x240 frame read whole must equal the same frame read in fmv.cpp's
-	16px columns.  Buffers end at a PAGE_NOACCESS page, so an overrun
-	faults.  */
+	writes at most MDEC_MAX_OUT_BYTES (a 16-pixel 24bpp slice of 512
+	lines, 24,576 bytes), and a size <= 0 writes nothing; the completion
+	callback fires either way.  Real libpress would take a whole frame in
+	one call; the shim clamps that to one legal slice and the caller reads
+	the rest in slices.  Buffers end at a PAGE_NOACCESS page, so an
+	overrun faults.  */
 
 static int g_outFired;
 
@@ -395,22 +395,30 @@ static void testWholeFrame(void)
 		DecDCTout((u_long *)(sliced + off), kSlice / 4);
 	check(g_outFired == 20, "whole frame: 20 slice reads, 20 callbacks");
 
+	/*	a whole-frame request into a buffer only one legal slice long: it
+		must stop at the cap (the guard page faults otherwise), deliver the
+		frame's first 24,576 bytes, and leave the cursor there  */
+	const int kCap = MDEC_MAX_OUT_BYTES;
 	uint8_t *base;
-	uint8_t *whole = guardedBuffer(kFrame, &base);
-	check(whole != NULL, "whole frame: guarded buffer allocated");
-	if (!whole)
+	uint8_t *one = guardedBuffer(kCap, &base);
+	check(one != NULL, "whole frame: guarded buffer allocated");
+	if (!one)
 		return;
-	memset(whole, 0xAA, kFrame);
+	memset(one, 0xAA, kCap);
 	DecDCTin(g_frameStream, 3);
 	g_outFired = 0;
-	DecDCTout((u_long *)whole, kFrame / 4);
+	DecDCTout((u_long *)one, kFrame / 4);
 	check(g_outFired == 1, "whole frame: one read, one callback");
-	check(memcmp(whole, sliced, kFrame) == 0,
-		  "whole frame: one 230,400-byte read == twenty slice reads");
+	check(memcmp(one, sliced, kCap) == 0,
+		  "whole frame: a 230,400-byte request is clamped to the first 24,576 bytes");
 	bool varied = false;
-	for (int i = 3; i < kFrame && !varied; i += 3)
-		varied = whole[i] != whole[0];
+	for (int i = 3; i < kCap && !varied; i += 3)
+		varied = one[i] != one[0];
 	check(varied, "whole frame: the frame is not one flat colour");
+	memset(one, 0xAA, kCap);
+	DecDCTout((u_long *)one, kSlice / 4);
+	check(memcmp(one, sliced + kCap, kSlice) == 0,
+		  "whole frame: the next read continues at the cap");
 
 	DecDCToutCallback(0);
 	VirtualFree(base, 0, MEM_RELEASE);
@@ -419,8 +427,7 @@ static void testWholeFrame(void)
 static void testOutBounds(void)
 {
 	const int kCap = MDEC_MAX_OUT_BYTES;
-	check(kCap == MDEC_MAX_MB * MDEC_MB_BYTES_24BPP && kCap >= 300 * 768,
-		  "out bounds: the cap is the decoded-frame buffer");
+	check(kCap == 16 * 3 * 512, "out bounds: the cap is one 512-line 24bpp slice");
 	uint8_t *base;
 	uint8_t *buf = guardedBuffer(kCap, &base);	/* last byte abuts the guard */
 	check(buf != NULL, "out bounds: guarded buffer allocated");
@@ -443,7 +450,7 @@ static void testOutBounds(void)
 		word past the cap  */
 	DecDCTout((u_long *)buf, 1 << 20);
 	check(g_outFired == 3, "out bounds: a huge request completes");
-	check(buf[kCap - 1] == 0, "out bounds: capped at the frame buffer");
+	check(buf[kCap - 1] == 0, "out bounds: capped at one full slice");
 	memset(buf, 0xAA, kCap);
 	DecDCTin(g_stream, 3);
 	DecDCTout((u_long *)buf, kCap / 4 + 1);

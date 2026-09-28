@@ -20,11 +20,15 @@
 #define MDEC_MAGIC			0x3800u
 #define MDEC_MB_BYTES_24BPP	768			/* 16x16 px, 3 bytes each */
 #define MDEC_MAX_MB			512			/* frame cap (320x240 needs 300) */
-/*	The most one DecDCTout call copies out: the whole decoded-frame buffer.
-	Real libpress takes any size, whole frames included; this bounds a
-	request sized from a corrupt STR height against over-reading the
-	decoded frame, not an API limit.  */
-#define MDEC_MAX_OUT_BYTES	(MDEC_MAX_MB * MDEC_MB_BYTES_24BPP)
+/*	The most one DecDCTout call copies out: the largest 16-pixel column
+	slice of a legal frame - at most 512 lines, 24bpp - so 16*3*512 =
+	24,576 bytes.  A shim bound, not a libpress API limit (real libpress
+	would take a whole frame in one call).  The game only ever reads
+	16-pixel slices (11,520 bytes for 240 lines), and the cap keeps a
+	request sized from a corrupt STR height inside fmv.cpp's 77,120-byte
+	PlaybackBuffer.  A caller that wants a whole frame reads it in
+	slices.  */
+#define MDEC_MAX_OUT_BYTES	(16 * 3 * 512)
 /*	Cap on one run-level stream, in 32-bit words.  fmv.cpp hands
 	DecDCTvlc3 a 320x241 prim-pool buffer (strSetDefDecEnv), so 77,120
 	bytes minus the leading control word is all a frame may ever occupy.

@@ -1459,18 +1459,18 @@ with; `gte_test` is unchanged.
 **MDEC and BS bounds (disc data).**
 - `DecDCTout` gets its size from fmv.cpp as 24*height/2 words, with the
   height taken from the STR header, and it used to write size*4 bytes
-  whatever that was, zero fill included.  One call now copies at most
-  `MDEC_MAX_OUT_BYTES`, the capacity of the decoded-frame buffer
-  (512 macroblocks, 393,216 bytes), and a size <= 0 writes nothing.  The
-  callback still fires once per call.  The cap is a bound against
-  over-reading the decoded frame, not an API limit: real libpress lets a
-  caller take a whole frame in one call, and so does the shim (a
-  320x240 frame is 230,400 bytes).  It does not keep a corrupt height
-  inside fmv.cpp's 77,120-byte PlaybackBuffer (the game asks for 11,520
-  bytes a slice; a height of 1607 or more still overruns it), which is
-  the game's own sizing.  `vlc3_test` and `fmv_pipeline_test` read the
-  frame in fmv.cpp's 16-pixel columns; `mdec_test` checks that a
-  whole-frame read gives the same bytes.
+  whatever that was, zero fill included, so a corrupt height of 1607 or
+  more overran the 77,120-byte PlaybackBuffer.  One call now copies at
+  most `MDEC_MAX_OUT_BYTES`, the largest 16-pixel slice of a legal frame
+  (512 lines, 24bpp: 16*3*512 = 24,576 bytes), and a size <= 0 writes
+  nothing.  The callback still fires once per call.  This is a shim
+  bound, not a libpress API limit: real libpress would take a whole
+  frame in one call.  The game only ever reads 16-pixel slices (11,520
+  bytes for 240 lines), and the cap keeps a corrupt STR height inside
+  fmv.cpp's PlaybackBuffer.  A caller that wants a whole frame reads it
+  in slices: `vlc3_test` and `fmv_pipeline_test`, which took a whole
+  frame in one call, now read fmv.cpp's 16-pixel columns (same bytes,
+  same CRCs).
 - The BS bit reader was bounded at 64KB from the frame start.  A frame
   handed out late in the game's 64KB StSetRing buffer then let a stream
   with no end code read up to 64KB past the ring.
@@ -1499,9 +1499,10 @@ with; `gte_test` is unchanged.
   - the 1023x511 G3 is compared pixel for pixel, dither off, against an
     int64 floor(255 * weight / area) reference (#61 row 57), where it used
     to check only the vertex pixel.
-- `mdec_test`: a 320x240 frame read whole in one DecDCTout equals the
-  same frame read in 20 slices; DecDCTout of 1M words, and of the cap
-  plus one word, into a cap-sized buffer ending at a guard page.
+- `mdec_test`: a whole 320x240 frame requested in one DecDCTout is
+  clamped to its first 24,576 bytes, in a cap-sized buffer ending at a
+  guard page, and the next read continues there; DecDCTout of 1M words,
+  and of the cap plus one word, into the same kind of buffer.
 - `str_test`:
   - StrStream_FrameEnd for 3- and 9-chunk frames, a non-start pointer, a
     freed frame and an unset ring;
