@@ -369,6 +369,7 @@ void triggerNote(XmSongState *s, int ch, int note)
 	}
 
 	c.note = (uint8_t)note;
+	c.trigNote = (uint8_t)note;
 	c.finetune = (int8_t)sh[13];
 	int realNote = note - 1 + (int8_t)sh[16];
 	realNote = clampi(realNote, 0, 118);
@@ -446,9 +447,9 @@ void doKeyOff(XmSongState *s, int ch)
 void processSlotTick0(XmSongState *s, int ch, const RowSlot *sl)
 {
 	XmChannelState &c = s->ch[ch];
-	/*	a note delay that never fired (EDx with x >= speed) dies with its
-		row, as in FT2 - left armed it went off in whichever later row first
-		ran that many ticks  */
+	/*	a note delay lives for its row (processNoteDelayTickN): one that
+		never fired (EDx with x >= speed) dies with it, as in FT2 - left
+		armed it went off in whichever later row first ran that many ticks  */
 	c.delayTick = 0;
 	c.delayedInstr = 0;
 	c.effect = sl->present ? sl->eff : 0;
@@ -692,36 +693,48 @@ void tonePorta(XmChannelState &c)
 	c.period = c.basePeriod;
 }
 
+/*	The delayed note fires, FT2's noteDelay: the row's instrument takes
+	over, the note triggers, the instrument column (only if the row had one)
+	resets volume/pan, and then the row's set-volume or set-pan volume
+	column lands on the new note.  It runs after the tick's volume-column
+	slide, as FT2 orders them, so a slide on the delay tick moves the old
+	note and the reset stands.
+
+	The tick is counted within the row's current pass: under EEx (pattern
+	delay) a row runs speed * (EEx + 1) ticks, and FT2 compares the delay
+	against speed - song.tick, which restarts every pass.  So a delay fires
+	once per pass - ED2 + EE1 at speed 6 plays at ticks 2 and 8 - and one
+	at or above the speed never fires.  An EDx row with no note replays the
+	channel's last triggered note (FT2's triggerNote takes note 0 as
+	ch->noteNum); on a channel that has played nothing it triggers nothing.
+	The row's state stays armed for the next pass; the next row clears it
+	(processSlotTick0).  */
+void processNoteDelayTickN(XmSongState *s, int ch, int tick)
+{
+	XmChannelState &c = s->ch[ch];
+	if (!c.delayTick || tick % s->speed != c.delayTick)
+		return;
+	int note = c.delayedNote ? c.delayedNote : c.trigNote;
+	int instr = c.delayedInstr;
+	if (instr)
+		c.instr = (uint8_t)instr;
+	if (note == 97)
+		doKeyOff(s, ch);
+	else if (note >= 1 && note <= 96 && c.instr)
+		triggerNote(s, ch, note);
+	if (instr && note != 97)
+		resetInstrument(s, ch);
+	uint8_t v = c.rowVolCol;
+	if (v >= 0x10 && v <= 0x50)
+		c.volume = (int16_t)clampi(v - 0x10, 0, 64);
+	else if ((v & 0xF0) == 0xC0)
+		c.pan = (int16_t)((v & 0x0F) << 4);
+}
+
 void processTickN(XmSongState *s, int ch, int tick)
 {
 	XmChannelState &c = s->ch[ch];
 	uint8_t p = c.param;
-
-	/*	delayed note fires on its tick, FT2's noteDelay: the row's
-		instrument takes over, the note triggers, the instrument column (only
-		if the row had one) resets volume/pan, and then the row's set-volume
-		or set-pan volume column lands on the new note.  The volume column's
-		slides still run per tick below, as on any row.  */
-	if (c.delayTick && tick == c.delayTick)
-	{
-		int note = c.delayedNote;
-		int instr = c.delayedInstr;
-		c.delayTick = 0;
-		c.delayedInstr = 0;
-		if (instr)
-			c.instr = (uint8_t)instr;
-		if (note == 97)
-			doKeyOff(s, ch);
-		else if (note >= 1 && note <= 96 && c.instr)
-			triggerNote(s, ch, note);
-		if (instr && note != 97)
-			resetInstrument(s, ch);
-		uint8_t v = c.rowVolCol;
-		if (v >= 0x10 && v <= 0x50)
-			c.volume = (int16_t)clampi(v - 0x10, 0, 64);
-		else if ((v & 0xF0) == 0xC0)
-			c.pan = (int16_t)((v & 0x0F) << 4);
-	}
 
 	switch (c.effect)
 	{
@@ -1065,6 +1078,7 @@ void songTick(XmSongState *s)
 				continue;
 			processTickN(s, ch, s->tick);
 			processVolColTickN(s, ch, s->ch[ch].rowVolCol);
+			processNoteDelayTickN(s, ch, s->tick);
 		}
 	}
 

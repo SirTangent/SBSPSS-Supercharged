@@ -547,14 +547,29 @@ int main()
 		struct Scenario
 		{
 			const char *name;
-			Cell cells[3];
+			Cell cells[4];
 			int nCells;
 		};
 		/*	A: instrument + set volume 7 + ED2.  B: no instrument, ED2 keeps
 			the running volume (row 0 set it to 32).  C: set pan 0x40 + ED2.
 			D: ED7 >= speed never fires, even when row 2 (F08 on channel 1,
-			channel 0 empty) stretches the row to 8 ticks.  */
-		static const Scenario sc[4] = {
+			channel 0 empty) stretches the row to 8 ticks.
+			E-G follow ft2-clone's noteDelay (src/ft2_replayer.c), which
+			fires when (speed - song.tick) == x - a count that restarts on
+			every pass of an EEx (pattern delay) row.
+			E: ED7 with EE1 on channel 1 - the row runs 12 ticks, but the
+			delay is counted within each 6-tick pass, so it never fires.
+			F: ED2 + instrument + volume-column slide down 2, with EE1 - the
+			note fires at tick 2 and again at tick 8 (tick 2 of the second
+			pass); each time the slide runs first and the instrument's
+			volume reset stands, as FT2 runs the volume column before the
+			effect.  G: a key-off row, then ED2 with no note (set volume
+			32) - FT2's triggerNote takes note 0 as the channel's last note,
+			so 49 plays again; channel 1 has played nothing, so its bare ED2
+			triggers nothing.  H: the last note is the last one TRIGGERED -
+			FT2's noteNum, which a tone-portamento target (row 1, 3xx to 61)
+			does not change - so row 2's bare ED2 replays 49.  */
+		static const Scenario sc[8] = {
 			{ "A", { { 0, 0, 49, 1, 0,    0,    0    },
 					 { 1, 0, 61, 2, 0x17, 0x0E, 0xD2 } }, 2 },
 			{ "B", { { 0, 0, 49, 1, 0x30, 0,    0    },
@@ -564,12 +579,25 @@ int main()
 			{ "D", { { 0, 0, 49, 1, 0,    0,    0    },
 					 { 1, 0, 61, 2, 0,    0x0E, 0xD7 },
 					 { 2, 1, 0,  0, 0,    0x0F, 0x08 } }, 3 },
+			{ "E", { { 0, 0, 49, 1, 0,    0,    0    },
+					 { 1, 0, 61, 2, 0,    0x0E, 0xD7 },
+					 { 1, 1, 0,  0, 0,    0x0E, 0xE1 } }, 3 },
+			{ "F", { { 0, 0, 49, 1, 0,    0,    0    },
+					 { 1, 0, 61, 2, 0x62, 0x0E, 0xD2 },
+					 { 1, 1, 0,  0, 0,    0x0E, 0xE1 } }, 3 },
+			{ "G", { { 0, 0, 49, 1, 0,    0,    0    },
+					 { 1, 0, 97, 0, 0,    0,    0    },
+					 { 2, 0, 0,  0, 0x30, 0x0E, 0xD2 },
+					 { 2, 1, 0,  0, 0,    0x0E, 0xD2 } }, 4 },
+			{ "H", { { 0, 0, 49, 1, 0,    0,    0    },
+					 { 1, 0, 61, 0, 0,    0x03, 0x10 },
+					 { 2, 0, 0,  0, 0,    0x0E, 0xD2 } }, 3 },
 		};
 		struct Snap
 		{
-			int note, instr, volume, pan, row, speed;
+			int note, instr, volume, pan, row, speed, keyOff, active, active1;
 		} snap[21];
-		for (int k = 0; k < 4; k++)
+		for (int k = 0; k < 8; k++)
 		{
 			size_t n = buildPxm(mod, 3, sc[k].cells, sc[k].nCells);
 			size_t walked = 0;
@@ -591,6 +619,9 @@ int main()
 				snap[u].pan = c.pan;
 				snap[u].row = s->row;
 				snap[u].speed = s->speed;
+				snap[u].keyOff = c.keyOff;
+				snap[u].active = c.active;
+				snap[u].active1 = s->ch[1].active;
 			}
 			XM_Quit(id);
 
@@ -619,7 +650,7 @@ int main()
 					  snap[9].volume == 40,
 					  "EDx C: the set-pan column lands on the delayed note");
 				break;
-			default:
+			case 3:
 				check(snap[19].row == 2 && snap[19].speed == 8,
 					  "EDx D: row 2 runs 8 ticks (the case is live)");
 				ok = true;
@@ -628,12 +659,55 @@ int main()
 				check(ok, "EDx D: a delay >= speed never fires, not even in a "
 						  "later, longer row");
 				break;
+			case 4:
+				check(snap[17].row == 1 && snap[18].row == 2,
+					  "EDx E: EE1 stretches row 1 to 12 ticks (the case is live)");
+				ok = true;
+				for (int u = 7; u <= 18; u++)
+					ok = ok && snap[u].note == 49 && snap[u].instr == 1;
+				check(ok, "EDx E: ED7 at speed 6 never fires, even in a row "
+						  "EE1 runs for 12 ticks");
+				break;
+			case 5:
+				check(snap[8].note == 49 && snap[8].volume == 38,
+					  "EDx F: tick 1 slides the old note");
+				check(snap[9].note == 61 && snap[9].instr == 2 &&
+					  snap[9].volume == 40,
+					  "EDx F: tick 2 slides, then the delayed note resets "
+					  "the volume");
+				check(snap[14].volume == 30 && snap[17].row == 1,
+					  "EDx F: the slide runs on through the second pass");
+				check(snap[15].volume == 40,
+					  "EDx F: the delay fires again at tick 2 of the second "
+					  "pass");
+				break;
+			case 6:
+				check(snap[14].keyOff == 1 && snap[14].active == 0,
+					  "EDx G: the key-off row stops the note");
+				check(snap[15].note == 49 && snap[15].keyOff == 0 &&
+					  snap[15].active == 1 && snap[15].volume == 32,
+					  "EDx G: ED2 with no note replays the last note");
+				ok = true;
+				for (int u = 1; u <= 18; u++)
+					ok = ok && snap[u].active1 == 0;
+				check(ok, "EDx G: on a channel with no last note it triggers "
+						  "nothing");
+				break;
+			default:
+				check(snap[14].note == 61,
+					  "EDx H: the portamento row made 61 the channel's note");
+				check(snap[15].note == 49,
+					  "EDx H: ED2 with no note replays the last triggered "
+					  "note, not the portamento target");
+				break;
 			}
 			if (g_failures != before)
-				for (int u = 6; u <= 9; u++)
-					std::printf("  (%s update %d: note %d instr %d vol %d pan %d)\n",
-								sc[k].name, u, snap[u].note, snap[u].instr,
-								snap[u].volume, snap[u].pan);
+				for (int u = 6; u <= 18; u++)
+					std::printf("  (%s update %d: row %d note %d instr %d vol %d "
+								"pan %d keyoff %d active %d)\n",
+								sc[k].name, u, snap[u].row, snap[u].note,
+								snap[u].instr, snap[u].volume, snap[u].pan,
+								snap[u].keyOff, snap[u].active);
 		}
 		XM_CloseVAB(vab);
 	}

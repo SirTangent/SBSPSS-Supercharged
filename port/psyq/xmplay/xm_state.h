@@ -69,6 +69,8 @@ struct XmModule
 struct XmChannelState
 {
 	uint8_t		note;			/* 1..96 */
+	uint8_t		trigNote;		/* last note triggered - FT2's noteNum, which
+								   tone portamento does not change */
 	uint8_t		instr;			/* 1-based instrument */
 	int16_t		volume;			/* 0..64 */
 	int16_t		pan;			/* 0..255 */
