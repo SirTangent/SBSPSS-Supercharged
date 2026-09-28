@@ -1419,8 +1419,12 @@ module follows the same pattern.
   mask bits.  Issue #28 assumed the opposite (that an unaligned clear
   "fills through the draw-env clip"); the disassembly overturns that.
   The fill is exact and undithered, with the coordinates sign-extended to
-  11 bits like any GP0 vertex, and it is clipped only at the VRAM edge.
-  No GP0 state survives the call.
+  11 bits like any GP0 vertex.  x clips at 1023; y clips at 511 (the
+  older 160-pin GPU's behaviour; newer GPUs may wrap, since libgpu emits
+  E4=FFFFFF raw).  No game caller reaches the y edge.
+  libgpu restores only E3/E4/E5 afterwards: E6=0 (on both paths) and the
+  E1 word it wrote - ClearImage2's with dfe set - persist until the next
+  E1 or PutDrawEnv.  The shim models neither (it ignores E6 and dfe).
 - `ClearImage2` sets bit 31 of the colour word, which only sets E1 bit 10
   (dfe) for the fill.  The shim ignores dfe (see `PutDrawEnv`), so
   ClearImage2 draws ClearImage's pixels.  It had no definition at all, so
@@ -1434,7 +1438,7 @@ module follows the same pattern.
 ClearImage, ClearImage2 and the isbg clear.  The aligned case is plain
 `Raster_FillRect15`, and it WRAPS at the right edge like the hardware (the
 old code clipped every clear).  The unaligned case fills the exact rect
-clipped to the VRAM edge (or the env's clip, for isbg).  The one-shot
+clipped at x 1023 and y 511 (or the env's clip, for isbg).  The one-shot
 "not 64-aligned" log is gone.  Every game caller lands on the same pixels
 as before:
 - fmv.cpp's {0,0,512,512} and {0,0,320,480}, ClearVRam's {512,0,512,512}
@@ -1454,13 +1458,19 @@ with; `gte_test` is unchanged.
 
 **MDEC and BS bounds (disc data).**
 - `DecDCTout` gets its size from fmv.cpp as 24*height/2 words, with the
-  height taken from the STR header.  A corrupt height of 1607 or more
-  overran the 77,120-byte PlaybackBuffer, zero fill included.  One call
-  now writes at most a full-height 16-pixel 24bpp slice (16*3*512 =
-  24,576 bytes), and a size <= 0 writes nothing.  The callback still
-  fires.  The game asks for 11,520 bytes a slice.  `vlc3_test` and
-  `fmv_pipeline_test` used to take a whole frame in one call; they now
-  read it in fmv.cpp's 16-pixel columns (same bytes, same CRCs).
+  height taken from the STR header, and it used to write size*4 bytes
+  whatever that was, zero fill included.  One call now copies at most
+  `MDEC_MAX_OUT_BYTES`, the capacity of the decoded-frame buffer
+  (512 macroblocks, 393,216 bytes), and a size <= 0 writes nothing.  The
+  callback still fires once per call.  The cap is a bound against
+  over-reading the decoded frame, not an API limit: real libpress lets a
+  caller take a whole frame in one call, and so does the shim (a
+  320x240 frame is 230,400 bytes).  It does not keep a corrupt height
+  inside fmv.cpp's 77,120-byte PlaybackBuffer (the game asks for 11,520
+  bytes a slice; a height of 1607 or more still overruns it), which is
+  the game's own sizing.  `vlc3_test` and `fmv_pipeline_test` read the
+  frame in fmv.cpp's 16-pixel columns; `mdec_test` checks that a
+  whole-frame read gives the same bytes.
 - The BS bit reader was bounded at 64KB from the frame start.  A frame
   handed out late in the game's 64KB StSetRing buffer then let a stream
   with no end code read up to 64KB past the ring.
@@ -1472,19 +1482,26 @@ with; `gte_test` is unchanged.
 **Tests.**
 - `gpu_test`:
   - zero-size LoadImage/StoreImage leave VRAM and the buffer intact;
-  - w=2048 stores exactly 1024 halfwords;
+  - w=1025 stores exactly 1024 halfwords and h=513 exactly 512 rows (the
+    raw GP0 mask would store 1 halfword / 1 row there);
   - MoveImage w=0 returns -1 and moves nothing;
   - the 02h/60h split: unaligned x fills exactly 520..535, w=100 is not
     rounded to 112, an offset/clipped env is ignored and left as it was,
     the right edge clips (60h) or wraps (02h), and isbg clears exactly its
     clip;
-  - ClearImage2 draws ClearImage's pixels on five shapes;
+  - an isbg clear with an offset that is not its clip origin fills
+    exactly the clip on a canary field;
+  - ClearImage2 is checked against explicit pixels on five shapes
+    (unaligned, aligned wrap, the cache wipe, a negative origin, the
+    512x512 clamp);
   - the cache-wipe row checks now sample a column inside the rect (#61
     row 56);
   - the 1023x511 G3 is compared pixel for pixel, dither off, against an
     int64 floor(255 * weight / area) reference (#61 row 57), where it used
     to check only the vertex pixel.
-- `mdec_test`: DecDCTout of 1M words into a buffer ending at a guard page.
+- `mdec_test`: a 320x240 frame read whole in one DecDCTout equals the
+  same frame read in 20 slices; DecDCTout of 1M words, and of the cap
+  plus one word, into a cap-sized buffer ending at a guard page.
 - `str_test`:
   - StrStream_FrameEnd for 3- and 9-chunk frames, a non-start pointer, a
     freed frame and an unset ring;
