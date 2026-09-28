@@ -34,8 +34,9 @@ static const int CARD_IMAGE_SIZE  = 16 * CARD_BLOCK_SIZE;	/* system block + 15 *
 	then load it - or create a freshly formatted image on first run.
 	Idempotent; every other call implies it.  CARD_IO_ERROR means the
 	host location is unusable (the shim reports "no card"), and also that
-	card0.mcd exists but cannot be read or has the wrong size: that is
-	latched as "no card" for the session and the file is never replaced.  */
+	card0.mcd exists but has the wrong size (and, with the #57 changes,
+	that it exists but cannot be opened for reading): that is latched as
+	"no card" for the session and the file is never replaced.  */
 CardResult	Card_Open(void);
 
 int			Card_IsFormatted(void);

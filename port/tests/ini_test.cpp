@@ -13,7 +13,7 @@
 	UTF-8, so a save directory named in Polish and Japanese is created under
 	its real wide name, and a copy of this exe run from inside it finds its
 	own directory under that name (the child mode `exedir`).  The name is
-	spelled in \x escapes so the source stays ASCII.
+	spelled in \x and \u escapes so the source stays ASCII.
 */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -76,7 +76,7 @@ static void writeFile(const char *path, const char *text)
 /*	"Lukasz_" with a Polish L-stroke (U+0141), then "Nihon" in kanji
 	(U+65E5 U+672C): no single-byte code page spells both.  */
 static const char		kUtf8Name[] = "\xC5\x81ukasz_\xE6\x97\xA5\xE6\x9C\xAC";
-static const wchar_t	kWideName[] = L"Łukasz_日本";
+static const wchar_t	kWideName[] = L"\u0141ukasz_\u65E5\u672C";
 
 /*	child mode: does Port_ExeDir end in the directory this copy runs from?  */
 static int exeDirChild(void)
