@@ -330,11 +330,19 @@ extern "C" int MoveImage(RECT *rect, int x, int y)
 	  library's copy afterwards.  So the draw is NOT clipped by the game's
 	  draw env (issue #28 assumed it was) and ignores the mask bits: it is
 	  an exact, undithered fill with the coordinates sign-extended to 11
-	  bits like any GP0 vertex, clipped only at the VRAM edge.  No GP0
-	  state survives the call.  PutDrawEnv's clear runs with the env's own
-	  clip and offset in force and compensates the offset, so it clips to
-	  the env's clip rect instead - pass that as (cx0,cy0)-(cx1,cy1),
-	  inclusive; ClearImage passes the whole of VRAM.
+	  bits like any GP0 vertex.  x clips at 1023; y clips at 511 (the
+	  older 160-pin GPU's behaviour; newer GPUs may wrap, since libgpu
+	  emits E4=FFFFFF raw).  No game caller reaches the y edge.
+	  PutDrawEnv's clear runs with the env's own clip and offset in force
+	  and compensates the offset, so it clips to the env's clip rect
+	  instead - pass that as (cx0,cy0)-(cx1,cy1), inclusive; ClearImage
+	  passes the whole of VRAM.
+
+	What survives: libgpu restores only E3/E4/E5.  E6=0 (both paths) and
+	the E1 word it wrote - ClearImage2's with the dfe bit set - stay in
+	force until the next E1 or PutDrawEnv.  The shim models neither: it
+	ignores E6 (the game never sets mask bits) and dfe (header comment),
+	so no state change is visible here.
 
 	The game's calls all land where they did before this split: fmv
 	{0,0,512,512} and {0,0,320,480} and the ClearVRam stripes are aligned
