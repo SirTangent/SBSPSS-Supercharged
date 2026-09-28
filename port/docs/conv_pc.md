@@ -1314,12 +1314,46 @@ at tick 0 - not the instrument (stashed in `XmChannelState.delayedInstr`),
 not the volume column; at tick x the instrument takes over, the note
 triggers, the instrument resets volume/pan only if the row had one, and
 the row's set-volume or set-pan column lands on the new note.  Before, the
-volume column hit the old note at tick 0 and the delayed note played at
-the sample default.  A delay that never fires in its row (x >= speed) is
-now dropped at the next row, as FT2 drops it; before, it stayed armed.
-That is the one change the title-theme oracle shows: sb-title pattern 1
-(and 7) row 45 channel 1 is ED3 at speed 3, which FT2 never plays and the
-port used to fire late in the next, speed-4 row.
+instrument and volume column hit the old note at tick 0.  A delay that
+never fires in its row (x >= speed) is now dropped at the next row, as FT2
+drops it; before, it stayed armed.  It also follows ft2-clone's
+`noteDelay` (`src/ft2_replayer.c`), which fires when `speed - song.tick`
+equals x: the tick is counted within the row's current pass, so under EEx
+(pattern delay) the note fires once per pass (ED2 + EE1 at speed 6: ticks
+2 and 8) and a delay at or above the speed never fires however long EEx
+makes the row; FT2 runs the volume column before the effect, so a
+volume-column slide on the delay tick moves the old note and the delayed
+note's volume reset stands (`processNoteDelayTickN` runs after
+`processVolColTickN`); and an EDx row with no note replays the channel's
+last triggered note (`triggerNote` takes note 0 as `ch->noteNum`, kept
+here as `XmChannelState.trigNote` - a tone-portamento target does not
+change it).  No shipped module has EEx, a note-less EDx row or a slide on
+an EDx row.  Still not FT2's: a delayed key-off (FT2 follows it with
+`triggerInstrument`, which clears the key-off and restarts the envelopes)
+and ED0 under EEx (FT2 retriggers at each later pass); neither occurs in
+the shipped modules.
+
+What is audible: the shipped modules have 90 EDx rows (23 in sb-title,
+67 across `CHAPTER1`-`6`), every one with x below its row's speed and a
+note, and a set-volume column or none.  Each still fires; what changed is
+the channel between the row's tick 0 and the channel's next note - the
+old note no longer takes the row's instrument or volume early, and the
+delayed note plays at the set-volume column where it had one.  WAV-dump
+oracle (`--level C-L --invincible` for all 25 levels, the bonus levels
+with `SBSP_AUTOPLAY=finish=400000`, and the title theme through its
+end), the commit before this change against the branch: 69 of the 90
+rows reached - 65 of the 67 chapter rows (the other two are in the
+ghost-train song past where level 4-5's ride ends) and the title theme's
+4 (sb-title's other 19 are in the memory-card and game-complete songs,
+which no route plays) - in 161 plays, every one fired, none dropped.
+The songs whose EDx rows have no volume column are byte-identical; the
+nine with set-volume rows differ only in 32 short regions (0.01-0.36 s),
+each starting inside an EDx row's tick-0-to-delay-tick window, and every
+set-volume EDx row reached has one.
+The title theme's pattern 1 (and 7) row 45 channel 1 is ED3 on a row
+whose channel 9 sets speed 4, so it fires at tick 3 in FT2 and in the
+port, before and after; its difference is the set-volume column (0x2F)
+moving from the old note to the delayed one.
 
 **XA speech pre-rolls.**  Sector delivery is quantized to vblanks, and the
 ring drained from the first push with no cushion, so a line's next sector
