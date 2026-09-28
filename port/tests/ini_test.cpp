@@ -8,10 +8,21 @@
 	applied, --set's forced override, and that Port_SaveDir honours
 	SBSP_SAVE_DIR verbatim.  No SDL, no window: the exe runs from the repo
 	root and leaves nothing behind (ini_test_tmp is removed).
+
+	UTF-8 paths (issue #62): the exe's manifest makes the process code page
+	UTF-8, so a save directory named in Polish and Japanese is created under
+	its real wide name, and a copy of this exe run from inside it finds its
+	own directory under that name (the child mode `exedir`).  The name is
+	spelled in \x and \u escapes so the source stays ASCII.
 */
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <process.h>
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
 #include <direct.h>
 
 extern "C" int Port_IniLoad(const char *path);
@@ -62,8 +73,76 @@ static void writeFile(const char *path, const char *text)
 	fclose(f);
 }
 
-int main(void)
+/*	"Lukasz_" with a Polish L-stroke (U+0141), then "Nihon" in kanji
+	(U+65E5 U+672C): no single-byte code page spells both.  */
+static const char		kUtf8Name[] = "\xC5\x81ukasz_\xE6\x97\xA5\xE6\x9C\xAC";
+static const wchar_t	kWideName[] = L"\u0141ukasz_\u65E5\u672C";
+
+/*	child mode: does Port_ExeDir end in the directory this copy runs from?  */
+static int exeDirChild(void)
 {
+	char dir[1024];
+	if (!Port_ExeDir(dir, sizeof(dir)))
+	{
+		std::printf("FAIL: child: Port_ExeDir answered nothing\n");
+		return 1;
+	}
+	size_t n = strlen(dir), k = strlen(kUtf8Name);
+	if (n <= k || dir[n - k - 1] != '\\' || strcmp(dir + n - k, kUtf8Name) != 0)
+	{
+		std::printf("FAIL: child: Port_ExeDir = '%s'\n", dir);
+		return 1;
+	}
+	return 0;
+}
+
+/*	copy this exe (and SDL3.dll, if it sits beside it - the clang-cl
+	build) into dirW and run it there in `exedir` mode; returns its code  */
+static int runCopyIn(const wchar_t *dirW, const char *dirUtf8)
+{
+	wchar_t self[1024], src[1024], dst[1024];
+	DWORD n = GetModuleFileNameW(NULL, self, 1024);
+	if (!n || n >= 1024)
+		return -1;
+	wchar_t *slash = wcsrchr(self, L'\\');
+	if (!slash)
+		return -1;
+	swprintf(dst, 1024, L"%ls\\ini_test.exe", dirW);
+	if (!CopyFileW(self, dst, FALSE))
+		return -1;
+	*slash = 0;
+	swprintf(src, 1024, L"%ls\\SDL3.dll", self);
+	if (GetFileAttributesW(src) != INVALID_FILE_ATTRIBUTES)
+	{
+		swprintf(dst, 1024, L"%ls\\SDL3.dll", dirW);
+		CopyFileW(src, dst, FALSE);
+	}
+
+	/*	the narrow spawn is part of the proof: it only finds the copy if
+		the UTF-8 name survives the CRT's code-page conversion  */
+	char exe[1024], quoted[1100];
+	std::snprintf(exe, sizeof(exe), "%s\\ini_test.exe", dirUtf8);
+	std::snprintf(quoted, sizeof(quoted), "\"%s\"", exe);
+	intptr_t rc = _spawnl(_P_WAIT, exe, quoted, "exedir", (const char *)NULL);
+
+	for (int tries = 0; tries < 50; tries++)		/* the image can stay mapped a moment */
+	{
+		swprintf(dst, 1024, L"%ls\\ini_test.exe", dirW);
+		BOOL gone = DeleteFileW(dst) || GetLastError() == ERROR_FILE_NOT_FOUND;
+		swprintf(dst, 1024, L"%ls\\SDL3.dll", dirW);
+		gone = (DeleteFileW(dst) || GetLastError() == ERROR_FILE_NOT_FOUND) && gone;
+		if (gone)
+			break;
+		Sleep(20);
+	}
+	return (int)rc;
+}
+
+int main(int argc, char **argv)
+{
+	if (argc > 1 && strcmp(argv[1], "exedir") == 0)
+		return exeDirChild();
+
 	_mkdir("ini_test_tmp");
 	clearAll();
 
@@ -105,6 +184,33 @@ int main(void)
 	/*	4. missing file  */
 	check(Port_IniLoad("ini_test_tmp/missing.ini") == -1, "missing file reports -1");
 
+	/*	4b. a key named twice (issue #62): the later line wins, counted once;
+		a variable set before the load still beats both lines; a later empty
+		value puts the key back to its built-in default  */
+	clearAll();
+	writeFile("ini_test_tmp/dup.ini",
+		"key_cross=Z\n"
+		"volume=80\n"
+		"key_cross=Space\n");
+	check(Port_IniLoad("ini_test_tmp/dup.ini") == 2, "dup.ini: key_cross and volume, each counted once");
+	check(envIs("SBSP_KEY_CROSS", "Space"), "a repeated key takes its later value");
+
+	clearAll();
+	_putenv("SBSP_KEY_CROSS=Return");			/* "an argument or the environment" */
+	check(Port_IniLoad("ini_test_tmp/dup.ini") == 1, "dup.ini with key_cross preset: only volume applied");
+	check(envIs("SBSP_KEY_CROSS", "Return"), "the environment beats every occurrence of a repeated key");
+
+	clearAll();
+	writeFile("ini_test_tmp/reset.ini",
+		"pad_deadzone=30\n"
+		"scale=integer\n"
+		"pad_deadzone=\n");
+	check(Port_IniLoad("ini_test_tmp/reset.ini") == 1, "reset.ini: only scale left applied");
+	check(envIs("SBSP_PAD_DEADZONE", NULL), "a later empty value resets the key to its default");
+	check(envIs("SBSP_SCALE", "integer"), "and leaves the other keys alone");
+	remove("ini_test_tmp/dup.ini");
+	remove("ini_test_tmp/reset.ini");
+
 	/*	5. the defaults round-trip  */
 	clearAll();
 	check(Port_IniWriteDefaults("ini_test_tmp/defaults.ini") == 1, "defaults written");
@@ -136,6 +242,32 @@ int main(void)
 	size_t n = strlen(exe);
 	check(n && exe[n - 1] != '\\' && exe[n - 1] != '/', "no trailing separator");
 	check(Port_DirExists(exe), "exe dir exists");
+
+	/*	7. UTF-8 paths (issue #62) - see the header  */
+	check(GetACP() == 65001, "the manifest makes the process code page UTF-8 (65001)");
+	char env[256], utf8Dir[256];
+	std::snprintf(utf8Dir, sizeof(utf8Dir), "ini_test_tmp\\%s", kUtf8Name);
+	std::snprintf(env, sizeof(env), "SBSP_SAVE_DIR=%s", utf8Dir);
+	_putenv(env);
+	Port_SaveDir(dir, sizeof(dir));
+	_putenv("SBSP_SAVE_DIR=");
+	check(strcmp(dir, utf8Dir) == 0, "a UTF-8 SBSP_SAVE_DIR is taken verbatim");
+	bool found = false;
+	WIN32_FIND_DATAW fd;
+	HANDLE h = FindFirstFileW(L"ini_test_tmp\\*", &fd);
+	if (h != INVALID_HANDLE_VALUE)
+	{
+		do
+			found |= wcscmp(fd.cFileName, kWideName) == 0;
+		while (FindNextFileW(h, &fd));
+		FindClose(h);
+	}
+	check(found, "the save directory exists under its real wide name");
+	wchar_t wideDir[256];
+	swprintf(wideDir, 256, L"ini_test_tmp\\%ls", kWideName);
+	if (found)
+		check(runCopyIn(wideDir, utf8Dir) == 0, "a copy run from that directory finds it by name (Port_ExeDir)");
+	RemoveDirectoryW(wideDir);
 
 	clearAll();
 	remove("ini_test_tmp/a.ini");

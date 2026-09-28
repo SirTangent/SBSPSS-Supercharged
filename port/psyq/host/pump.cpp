@@ -19,10 +19,10 @@ extern "C" {
 int  VSync(int mode);
 int  VSyncCallback(void (*f)(void));
 /*	a vblank's work, in firing order - see pumpStep  */
-void Host_VBlank(unsigned long vblankNo);	/* host/window.cpp */
 void Port_RCnt2Vblank(int vblankHz);		/* api/libapi_stubs.cpp */
 void Port_CdVblank(int vblankHz);		/* cd/xa_stream.cpp */
 void Port_AudioVBlank(int vblankHz);		/* host/audio_out.cpp */
+void Host_VBlank(unsigned long vblankNo);	/* host/window.cpp */
 }
 
 static void			(*g_vsyncCallback)(void);
@@ -318,6 +318,12 @@ static void pumpStep(int wait)
 			g_vsyncCallback();		/* game vblank work first (loading icon...) */
 		Port_RCnt2Vblank(g_hz);
 		Port_CdVblank(g_hz);		/* XA sector clock: decode + deliveries */
+		/*	WAV dump: this vblank's audio, if armed.  Its content is fixed by
+			now - the callback above ran this vblank's XM_Update and the XA
+			clock fed the CD bus - and it must go out BEFORE Host_VBlank,
+			which can end the process (window close, --exit-after, the
+			self-test) and used to take the last vblank's audio with it.  */
+		Port_AudioVBlank(g_hz);
 		{
 			const int		timed = Port_PaceLogOn();
 			const double	t0 = timed ? Port_NowSeconds() : 0.0;
@@ -325,7 +331,6 @@ static void pumpStep(int wait)
 			if (timed)
 				Port_PaceAdd(PORT_PACE_PRESENT, Port_NowSeconds() - t0);
 		}
-		Port_AudioVBlank(g_hz);		/* WAV dump: this vblank's audio, if armed */
 		paceLog();
 		g_inPump = 0;
 	}

@@ -41,8 +41,9 @@
 	  --exit-after <n>      SBSP_EXIT_AFTER
 	  --dump-audio <wav>    SBSP_DUMP_AUDIO (M5: deterministic mixer dump,
 	                        disables the playback device)
-	  --save-dir <path>     SBSP_SAVE_DIR (M6: memory-card image directory,
-	                        default %APPDATA%\SBSPSS)
+	  --save-dir <path>     SBSP_SAVE_DIR (M6: memory-card image directory;
+	                        default saves\ beside the exe if it exists, else
+	                        %APPDATA%\SBSPSS - host/hostpath.cpp)
 	  --pad-file <path>     SBSP_PAD_FILE   (M8: see host/input.cpp)
 	  --record-pad <path>   SBSP_RECORD_PAD (M8)
 	  --frame-crc           SBSP_FRAME_CRC=1 (M8: [frame] line per vblank)
@@ -215,8 +216,9 @@ static void usage(void)
 		"  Alt+Enter toggles fullscreen; the game pauses while another window has focus\n"
 		"Env only: SBSP_PRIM_LOG=1 (prim-pool high-water log),\n"
 		"          SBSP_WATCHDOG=<s> (exit 12 after s seconds without a vblank; 30, 0=off),\n"
-		"          SBSP_SELFTEST=assert|fault|hang@<vblank> (exercise an exit path)\n"
-		"Exit codes: 0 clean, 10 assert, 11 fault, 12 watchdog, 13 replay/oracle\n");
+		"          SBSP_SELFTEST=<mode>@<vblank> (exercise an exit path: assert fault hang\n"
+		"                        abort terminate invalid-param stack-overflow)\n"
+		"Exit codes: 0 clean, 10 assert, 11 fault/crash, 12 watchdog, 13 replay/oracle\n");
 }
 
 /*	If argv[*i] names this option, set *matched and return its value:
@@ -276,7 +278,7 @@ static int scriptedInput(void)
 
 static void loadIni(void)
 {
-	char exeDir[512], path[600];
+	char exeDir[1024], path[1100];
 
 	const char *explicitPath = getenv("SBSP_INI");
 	if (explicitPath && *explicitPath)

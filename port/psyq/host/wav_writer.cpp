@@ -1,5 +1,5 @@
 /*	Minimal streaming WAV writer (M5).  Writes a placeholder RIFF header,
-	streams s16 PCM, and patches the two size fields on close.
+	streams s16 PCM, and patches the two size fields on Wav_Sync / close.
 */
 #include <string.h>
 
@@ -46,7 +46,12 @@ void Wav_Write(WavWriter *w, const int16_t *samples, int nFrames)
 	w->dataBytes += (uint32_t)(n * sizeof(int16_t));
 }
 
-void Wav_Close(WavWriter *w)
+/*	Patch both size fields to what has been written so far and put the
+	whole lot in the OS's hands.  The first fseek flushes the PCM before
+	the header claims it, so the header never counts bytes the file lacks:
+	whatever ends the process afterwards - even TerminateProcess - leaves a
+	valid WAV of everything written up to the last sync.  */
+void Wav_Sync(WavWriter *w)
 {
 	if (!w->file)
 		return;
@@ -55,6 +60,15 @@ void Wav_Close(WavWriter *w)
 	fwrite(&riffSize, 4, 1, w->file);
 	fseek(w->file, 40, SEEK_SET);
 	fwrite(&w->dataBytes, 4, 1, w->file);
+	fseek(w->file, 0, SEEK_END);
+	fflush(w->file);
+}
+
+void Wav_Close(WavWriter *w)
+{
+	if (!w->file)
+		return;
+	Wav_Sync(w);
 	fclose(w->file);
 	w->file = 0;
 }

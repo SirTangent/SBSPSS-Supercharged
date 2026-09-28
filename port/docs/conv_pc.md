@@ -1129,6 +1129,148 @@ build still loads (its MD5 covers the bytes it has), but its tail no
 longer matches a replay's, so a session recorded before the change is
 judged on the save data rather than on the whole card.
 
+### Host exit path, crash reporting and paths (issue #62)
+
+No game-source change: `host/diag.{h,cpp}`, `host/crash.cpp`,
+`host/audio_out.cpp`, `host/wav_writer.{h,cpp}`, `host/pump.cpp`,
+`host/input.cpp`, `host/ini.cpp`, `host/hostpath.cpp`, `host/args.cpp`,
+`cd/cd.cpp`, the new `host/sbsp.manifest` + `host/sbsp.rc`, `CMakeLists.txt`
+and the tests.  The PSX build is untouched by construction.
+
+**Exit hooks.**  `Port_Exit` ends the process with `_exit` (the game's static
+destructors were never meant to run), and `_exit` runs no `atexit` handler,
+so what used to be registered there never happened.  `Port_OnExit(fn,
+faultSafe)` is the replacement: a fixed table of eight, allocation-free,
+each slot recording the thread that registered it.  `Port_Exit` now does,
+in order: claim the exit (CAS) and store the owner's code and thread;
+`fflush(stdout)` unless the code is FAULT or WATCHDOG (unchanged, issue
+#58); print `[summary]`; run the hooks newest first, only those registered
+on the exiting thread, and on FAULT only the fault-safe ones; `_exit`.  The
+contract line goes out before any hook, so a hook that hangs or re-faults
+cannot cost a run its summary.  Two hooks exist: the WAV dump's close (not
+fault-safe: `fclose` takes the stream lock) and the rumble stop (fault-safe).
+A watchdog or audio-thread exit runs neither, by the thread rule.
+
+**The first caller owns the exit.**  A second `Port_Exit` on the owner's own
+thread (a re-fault inside a hook or the summary) calls `_exit(ownerCode)` at
+once; one from another thread (the watchdog, a fault on SDL's audio thread)
+sleeps 5 s, then calls `_exit(ownerCode)`.  The process exit code therefore
+always equals the one `[summary]` states - `run_tier --selftest` now checks
+that, not only that a summary exists.  On FAULT and WATCHDOG the summary is
+formatted on the stack and written with one `WriteFile` to the stderr
+handle (`Port_StderrRaw`): the faulting thread (or whichever thread the
+watchdog interrupted) may hold the CRT's stderr lock mid-`fprintf`.  The
+`[crash]` and `[watchdog]` lines before it go out the same way.  The bytes
+are the ones the text-mode stream wrote, CRLF included.  `exit_test` runs
+each rule in a child process.
+
+**The WAV dump is valid on every path.**  `Wav_Sync` patches both size
+fields to the data so far, seeks back to the end and flushes; the first
+seek pushes the PCM out before the header claims it.  `Port_AudioVBlank`
+calls it after every vblank's write, so a dump is a WAV of whole vblanks
+however the process ends, `TerminateProcess` included, and the exit hook
+closes it on the clean and assert paths, logging `[host] audio dump closed:
+<frames>`.  `Port_AudioVBlank` now runs
+before `Host_VBlank` in `pumpStep`: `Host_VBlank` can end the process
+(window close, `--exit-after`, the self-test) and took the last vblank's
+audio with it.  The content is unchanged - the vblank callback (that
+vblank's `XM_Update`) and the XA clock have already run - and so is the
+first vblank a dump sees, since audio comes up with the video at the first
+GPU touch (`ResetGraph`), after `SetVideoMode` has set the rate.
+`selftest_wav` checks the clean, assert, fault and watchdog paths.  Since
+the file is exact without the hook, the closed line is what proves the hook
+ran: the self-test requires it on clean and assert and rejects it on fault
+and watchdog.
+
+**Rumble stops at exit.**  Rumble is armed in 100 ms windows only SDL's
+event pump expires, so a process that ended inside one (Alt+F4, an assert or
+a fault while the vibe pattern ran) left XInput and HIDAPI pads buzzing.  The
+first `openGamepad` registers the stop: `SDL_RumbleGamepad(g, 0, 0, 0)`, then
+`SDL_CloseGamepad`.  A probe against SDL 3.4.10's virtual driver showed
+`SDL_CloseGamepad` delivering a zero rumble of its own while one is armed;
+the explicit zero does not rely on that, and whether a HIDAPI pad flushes a
+queued rumble before closing needs a physical pad (#66).
+
+**Crash reports.**  `[crash] code=... addr=%p rva=0x%lX link=%p ...`: `link`
+is the exe file's preferred ImageBase plus the rva, so it goes straight into
+`addr2line` / `llvm-symbolizer` on an ASLR-relocated run - 0x400000-based on
+x86, 0x140000000-based on x64, where the old `0x400000 + offset` (truncated
+to 32 bits) pointed at nothing.  The base is read from the exe FILE at
+`Port_CrashInit`: the loader rewrites the mapped header's ImageBase when it
+relocates.  Outside the exe, `rva=- link=-`.  The CRT terminations that raise
+no SEH exception now report too, as `[crash] kind=<k>` and exit 11 like a
+fault: `abort()` via `signal(SIGABRT)`, `std::terminate` via
+`std::set_terminate`, invalid CRT arguments via
+`_set_invalid_parameter_handler` (both CRTs), pure virtual calls via
+`_set_purecall_handler` (MSVC only).  Both CRTs reset SIGABRT to
+`SIG_DFL` before calling the handler, so it re-arms itself first: a second
+`abort()` (another thread, or a fault-safe exit hook) is then an ordinary
+second `Port_Exit` caller instead of the CRT's own `_exit(3)` under a
+`[summary]` of 11.  The UCRT's `abort` raises SIGABRT before it consults
+the abort-behavior flags, so `_set_abort_behavior(0, _WRITE_ABORT_MSG |
+_CALL_REPORTFAULT)` only matters when no handler is installed: it turns
+the `__fastfail` to Windows Error Reporting into `_exit(3)`.  The
+`_WRITE_ABORT_MSG` message box exists only in the debug CRT, and these
+builds link the release `/MT` one.  The main thread
+reserves 64 KB with `SetThreadStackGuarantee`, so a stack overflow is
+reported; a fault inside the report itself goes straight to `Port_Exit`.
+`SBSP_SELFTEST` gained `abort`, `abort-in-hook` (a fault-safe exit hook
+that aborts again: exit 11, one `[summary]`), `terminate`, `invalid-param`
+(`_close(-1)`) and `stack-overflow`; the fault case also checks
+`link == ImageBase + rva` against the exe's PE header.  MinGW's msvcrt.dll
+never calls the invalid-parameter handler (`_close(-1)`, `strcpy_s(NULL)`,
+`fclose(NULL)` and `_get_osfhandle(-5)` all just return errors), so there the
+self-test logs `[selftest] invalid-param returned` and counts as a SKIP.
+
+What stays uncatchable - no `[crash]`, no `[summary]`, the process just
+ends with 0xC0000409 or similar:
+
+- Stack-cookie failures: `/GS` on the clang-cl builds (`__report_gsfailure`
+  calls `__fastfail` directly, by design), and on MinGW any code built with
+  `-fstack-protector` (the MinGW exe links a `__stack_chk_fail`, which
+  terminates without raising anything).
+- Any raw `__fastfail` (Control Flow Guard, a corrupted list entry, a CRT
+  check that fast-fails without consulting a handler).
+- CRT-level failures inside SDL3.dll on the clang-cl builds (an invalid
+  parameter, an `abort`): the official VC package's SDL3.dll imports no
+  CRT DLL at all - whatever C runtime code it carries is its own, not the
+  exe's static UCRT - so the handlers installed here do not cover it.  An
+  SEH fault in SDL3.dll is still reported, with `rva=- link=-`.  (The MinGW
+  exe links SDL statically, so there is one CRT, msvcrt.dll.)
+- A stack overflow on a thread other than main (SDL's audio thread) has no
+  guarantee reserved; its report may re-fault and die silently.
+
+**UTF-8 paths.**  Every exe embeds `host/sbsp.manifest` through
+`host/sbsp.rc` (`sbsp_exe_link`, so the unit exes too): asInvoker, the
+supportedOS list MinGW's `default-manifest.o` carries (Vista through
+10), and `<activeCodePage>UTF-8</activeCodePage>`, which makes the process
+ANSI code page 65001 on Windows 10 1903 and later.  argv, `getenv`,
+`fopen`, `_mkdir` and `GetModuleFileNameA` then carry any path, and none of
+the host code had to move to the W APIs.  No `dpiAware` - SDL sets DPI
+awareness itself.  The resource is `LANGUAGE 0, 0` at `RT_MANIFEST 1`, the
+slot `default-manifest.o` uses, and binutils' resource merge drops the
+default when the link supplies its own.  clang-cl links `/MANIFEST:NO`,
+or lld-link would add a second one.  `llvm-readobj --coff-resources`
+shows exactly one MANIFEST/1 on all three toolchains; the clang-cl exes
+gained the supportedOS list (Windows 10 compatibility mode, as MinGW's
+always had).  The code page applies to every narrow file operation in the
+process, the game's data reads included (all ASCII paths).  The console
+keeps its OEM output code page - `SetConsoleOutputCP` is not called - so a
+non-ASCII path in a log line shows as mojibake in a console window but is
+correct in a redirected log.  Path buffers on the exe-directory route grew
+to 1024 bytes (`hostpath.cpp`, `args.cpp`, `cd.cpp`): a `MAX_PATH`-character
+path can take three bytes a character.  `ini_test` checks `GetACP()`, a save
+directory named in Polish and Japanese, and a copy of itself run from
+inside that directory.
+
+**A key the ini names twice takes its later value.**  "Already set" is now
+decided once, when the load begins (`preset[]`): a variable the environment
+or an argument set is never touched, so argument > environment > ini holds,
+while a key the file itself set is the file's to change.  A later line wins
+with `[ini] path:N: 'key' repeated - the later value wins`; a later empty
+`key=` puts the key back to its built-in default; the count is of distinct
+keys, not lines.
+
 ## Game-source changes (keyboard prompt icons, issue #43)
 
 **The problem.**  Every "press this to do that" line in the game draws a pad

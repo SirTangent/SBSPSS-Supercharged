@@ -25,12 +25,16 @@
 #include <sys/stat.h>
 
 /*	Directory holding the running executable, no trailing separator.
-	Returns 0 (dst untouched) if Windows cannot say or it does not fit.  */
+	Returns 0 (dst untouched) if Windows cannot say or it does not fit.
+	Narrow, in the process code page - which the exe's manifest makes
+	UTF-8 (psyq/host/sbsp.manifest, issue #62), so any path survives; a
+	MAX_PATH-character path can take three bytes a character, hence the
+	1024-byte buffers here and in the callers.  */
 extern "C" int Port_ExeDir(char *dst, size_t n)
 {
-	char path[MAX_PATH];
-	DWORD len = GetModuleFileNameA(NULL, path, MAX_PATH);
-	if (len == 0 || len >= MAX_PATH)
+	char path[1024];
+	DWORD len = GetModuleFileNameA(NULL, path, sizeof(path));
+	if (len == 0 || len >= sizeof(path))
 		return 0;
 	char *bs = strrchr(path, '\\');
 	char *fs = strrchr(path, '/');
@@ -62,7 +66,7 @@ extern "C" int Port_DirExists(const char *path)
 	it opens a file there.  */
 extern "C" void Port_MkdirChain(const char *dir)
 {
-	char part[512];
+	char part[1024];
 	size_t n = 0;
 	for (const char *p = dir; ; p++)
 	{
@@ -94,7 +98,7 @@ extern "C" int Port_SaveDir(char *dst, size_t n)
 		snprintf(dst, n, "%s", env);
 	else
 	{
-		char exe[512];
+		char exe[1024];
 		int portable = 0;
 		if (Port_ExeDir(exe, sizeof(exe)))
 		{

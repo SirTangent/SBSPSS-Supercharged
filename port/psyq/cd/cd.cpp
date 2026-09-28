@@ -134,7 +134,7 @@ extern "C" int Port_FileExists(const char *path);
 	one at a time for the CdInit failure report.  */
 static int dataCandidate(int slot, char *dst, size_t n)
 {
-	char exe[512];
+	char exe[1024];		/* UTF-8 (the manifest's code page): see Port_ExeDir */
 	switch (slot)
 	{
 	case 0:
@@ -161,11 +161,11 @@ static int dataCandidate(int slot, char *dst, size_t n)
 	return -1;		/* no more candidates */
 }
 
-static char g_dataRoot[512];
+static char g_dataRoot[1024];
 
 static void resolveDataRoot(void)
 {
-	char probe[600];
+	char probe[1100];
 	for (int slot = 0; ; slot++)
 	{
 		int r = dataCandidate(slot, g_dataRoot, sizeof(g_dataRoot));
@@ -194,7 +194,7 @@ static void cdBuildDir(void)
 	resolveDataRoot();
 	for (int i = 0; i < g_fileCount; i++)
 	{
-		char path[512];
+		char path[1100];
 		dataPath(path, sizeof(path), g_files[i].name);
 		FILE *f = fopen(path, "rb");
 		long size = 0;
@@ -270,7 +270,7 @@ extern "C" int CdInit(void)
 		can still link the shim.)  */
 	if (!g_files[0].fp)
 	{
-		char path[512];
+		char path[1100];
 		fprintf(stderr, "[shim] CdInit: no %s - looked in:\n", g_files[0].name);
 		for (int slot = 0; ; slot++)
 		{

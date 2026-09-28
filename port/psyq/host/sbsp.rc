@@ -1,0 +1,13 @@
+/*	Resources linked into every PC exe (port/CMakeLists.txt sbsp_exe_link):
+	the application manifest, sbsp.manifest (issue #62).
+
+	Language neutral (0, 0) on purpose.  MinGW links default-manifest.o
+	into every exe, which carries a manifest at the same type/name/language
+	(RT_MANIFEST 1, language 0); binutils' resource merge drops that
+	default one when the link supplies its own at the same slot, so the
+	exe ends up with exactly one.  clang-cl links with /MANIFEST:NO so
+	lld-link adds none of its own.
+*/
+LANGUAGE 0, 0
+
+1 24 "sbsp.manifest"	/* CREATEPROCESS_MANIFEST_RESOURCE_ID, RT_MANIFEST */

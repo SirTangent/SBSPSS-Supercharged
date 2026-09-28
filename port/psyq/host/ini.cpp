@@ -5,15 +5,17 @@
 	with commented defaults on the first run (args.cpp loadIni; --ini /
 	SBSP_INI names a different one).  Every key is the ini spelling of an
 	SBSP_* environment variable, and loading it is nothing more than
-	_putenv for each key whose variable is not already set - so the
-	precedence is
+	_putenv for each key whose variable is not already set (a key the file
+	names twice takes the later line, Port_IniLoad) - so the precedence is
 
 	    command line  >  environment  >  sbsp.ini  >  built-in default
 
 	with zero changes to the consumers, which all getenv() lazily.
-	args.cpp calls Port_IniLoad from its priority-101 constructor, after
-	its own pre-scan of --save-dir / --ini and BEFORE its env and argument
-	passes, so an argument still overrides an ini value.
+	args.cpp calls Port_IniLoad (loadIni) from its priority-101
+	constructor AFTER its whole argument pass: every --flag has exported its
+	variable by then, so the "only if unset" rule sees arguments and the
+	inherited environment alike and an argument always beats an ini value.
+	Moving the call before the argument loop would invert that.
 
 	The key set is a WHITELIST (kKeys below), shared by the loader and the
 	default writer.  Harness switches (SBSP_UNCAPPED, SBSP_EXIT_AFTER,
@@ -103,14 +105,31 @@ extern "C" int Port_IniSet(const char *key, const char *value, const char *what)
 	return 1;
 }
 
-/*	Load the file: every known key whose environment variable is unset is
-	exported.  Returns the number of keys applied, -1 if the file could not
-	be opened (not an error - the first run has none).  */
+/*	Load the file: every known key whose environment variable was unset
+	when the load began is exported.  Returns the number of distinct keys
+	the file left set, -1 if the file could not be opened (not an error -
+	the first run has none).
+
+	A key the file names twice takes its LATER value, with an [ini] note
+	(issue #62): the default file already carries every key, so a tester
+	who appends `key_cross=Space` at the bottom means it to win.  A later
+	empty value puts the key back to its built-in default.  "Already set"
+	is decided once, up front (preset[]): a variable the environment or an
+	argument set is never touched, however often the file names it, while
+	one this file set itself is the file's to change.  */
 extern "C" int Port_IniLoad(const char *path)
 {
 	FILE *f = fopen(path, "r");
 	if (!f)
 		return -1;
+
+	unsigned char preset[NUM_KEYS], seen[NUM_KEYS], set[NUM_KEYS];
+	for (int i = 0; i < NUM_KEYS; i++)
+	{
+		preset[i] = getenv(kKeys[i].env) != NULL;
+		seen[i]   = 0;
+		set[i]    = 0;
+	}
 
 	char line[1024];
 	int  applied = 0, lineNo = 0;
@@ -135,16 +154,32 @@ extern "C" int Port_IniLoad(const char *path)
 			fprintf(stderr, "[ini] %s:%d: unknown key '%s' - ignored\n", path, lineNo, key);
 			continue;
 		}
-		if (!*value)
-			continue;				/* empty = "use the default"; _putenv("X=") would DELETE it */
-		if (getenv(k->env))
+		const int ki = (int)(k - kKeys);
+		if (preset[ki])
 			continue;				/* the environment (or an argument) already decided */
+		if (seen[ki])
+			fprintf(stderr, "[ini] %s:%d: '%s' repeated - the later value wins\n", path, lineNo, k->key);
+		seen[ki] = 1;
 		char buf[1024];
+		if (!*value)
+		{
+			/*	empty = "use the default": unset whatever an earlier line
+				of this file exported (_putenv("X=") deletes X)  */
+			if (set[ki])
+			{
+				snprintf(buf, sizeof(buf), "%s=", k->env);
+				_putenv(buf);
+				set[ki] = 0;
+			}
+			continue;
+		}
 		snprintf(buf, sizeof(buf), "%s=%s", k->env, value);
 		_putenv(buf);
-		applied++;
+		set[ki] = 1;
 	}
 	fclose(f);
+	for (int i = 0; i < NUM_KEYS; i++)
+		applied += set[i];
 	fprintf(stderr, "[ini] loaded %s (%d key%s applied)\n", path, applied, applied == 1 ? "" : "s");
 	return applied;
 }

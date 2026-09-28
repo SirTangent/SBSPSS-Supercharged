@@ -77,6 +77,7 @@ import difflib
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -484,33 +485,154 @@ def tier2(exe, seed, short, logdir, only):
     return ok
 
 
-def selftest(exe, seed, logdir):
+def pe_image_base(path):
+    """the preferred ImageBase in an exe's PE optional header (PE32 or PE32+)"""
+    b = Path(path).read_bytes()[:4096]
+    pe, = struct.unpack_from("<I", b, 0x3C)
+    if b[:2] != b"MZ" or b[pe:pe + 4] != b"PE\0\0":
+        return None
+    opt = pe + 24
+    magic, = struct.unpack_from("<H", b, opt)
+    if magic == 0x10B:
+        return struct.unpack_from("<I", b, opt + 28)[0]
+    if magic == 0x20B:
+        return struct.unpack_from("<Q", b, opt + 24)[0]
+    return None
+
+
+def check_link(res, exe):
+    """the fault self-test's [crash] line: link must be the exe file's
+    ImageBase + rva - the address addr2line wants, on x86 and x64 alike
+    (issue #62).  Returns an error string, or None."""
+    line = next((l for l in res.lines if l.startswith("[crash] code=")), None)
+    m = re.search(r"\brva=0x([0-9A-Fa-f]+) link=(?:0x)?([0-9A-Fa-f]+)\b", line or "")
+    if not m:
+        return f"no rva/link in {line!r}"
+    base = pe_image_base(exe)
+    rva, link = int(m.group(1), 16), int(m.group(2), 16)
+    if base is None or link != base + rva:
+        return f"link 0x{link:X} != ImageBase {base if base is None else hex(base)} + rva 0x{rva:X}"
+    return None
+
+
+def selftest(exe, seed, logdir, territory="USA"):
+    # (name, env, exit code, tag the log must show, line that makes it a SKIP)
     cases = [
-        ("assert", {"SBSP_SELFTEST": "assert@100"}, 10, "[assert]"),
-        ("fault", {"SBSP_SELFTEST": "fault@100"}, 11, "[crash]"),
-        ("hang", {"SBSP_SELFTEST": "hang@100", "SBSP_WATCHDOG": "3"}, 12, "[watchdog]"),
-        ("assert-continue", {"SBSP_SELFTEST": "assert@100", "SBSP_ASSERT_CONTINUE": "1"}, 0, "[assert]"),
+        ("assert", {"SBSP_SELFTEST": "assert@100"}, 10, "[assert]", None),
+        ("fault", {"SBSP_SELFTEST": "fault@100"}, 11, "[crash] code=0xC0000005", None),
+        ("hang", {"SBSP_SELFTEST": "hang@100", "SBSP_WATCHDOG": "3"}, 12, "[watchdog]", None),
+        ("assert-continue", {"SBSP_SELFTEST": "assert@100", "SBSP_ASSERT_CONTINUE": "1"}, 0, "[assert]", None),
+        # the CRT terminations that raise no SEH exception (issue #62)
+        ("abort", {"SBSP_SELFTEST": "abort@100"}, 11, "[crash] kind=abort", None),
+        # a second abort() from a fault-safe exit hook: SIGABRT must still be
+        # armed, or the CRT ends the process with 3 under a [summary] of 11
+        ("abort-in-hook", {"SBSP_SELFTEST": "abort-in-hook@100"}, 11, "[crash] kind=abort", None),
+        ("terminate", {"SBSP_SELFTEST": "terminate@100"}, 11, "[crash] kind=terminate", None),
+        ("invalid-param", {"SBSP_SELFTEST": "invalid-param@100"}, 11, "[crash] kind=invalid-parameter",
+         "[selftest] invalid-param returned"),
+        ("stack-overflow", {"SBSP_SELFTEST": "stack-overflow@100"}, 11, "[crash] code=0xC00000FD", None),
     ]
     ok = True
-    for name, env, want, tag in cases:
+    for name, env, want, tag, skip in cases:
         # --pad-script: nothing pressed, but a scripted-input run like every
         # other one here (no sbsp.ini, live keyboard and pad ignored)
         args = ["--level", "1-1", "--seed", str(seed), "--exit-after", "300",
                 "--pad-script", "0:0000"] + DETERMINISM
         log = Path(logdir) / f"selftest_{name}.log" if logdir else None
         res = run_game(exe, args, env, 120, log)
+        # msvcrt.dll (the MinGW exe's CRT) never calls the invalid-parameter
+        # handler; the clang-cl exes' static UCRT must, so no SKIP there
+        if skip and any(l.startswith(skip) for l in res.lines) and \
+                re.search(rb"(?i)msvcrt\.dll\0", Path(exe).read_bytes()):
+            print(f"  SKIP selftest {name}: msvcrt.dll does not report it (exit {res.code})")
+            continue
         tagged = any(l.startswith(tag) for l in res.lines)
-        summary = any(l.startswith("[summary]") for l in res.lines)
+        # the exit code the process returned is the one [summary] states,
+        # and there is exactly one [summary], whoever else called Port_Exit
+        summaries = sum(1 for l in res.lines if l.startswith("[summary]"))
+        summary = res.summary.get("exit") == str(want) and summaries == 1
         # the self-test provokes forbidden tags on purpose, so FORBIDDEN as a
         # whole does not apply - but it must read no sbsp.ini, like every run
         ini = [l for l in res.lines if l.startswith("[ini] loaded")]
-        good = res.code == want and tagged and summary and not ini
+        link = check_link(res, exe) if name == "fault" else None
+        good = res.code == want and tagged and summary and not ini and not link
         if ini:
             print(f"       {ini[0]}")
+        if link:
+            print(f"       {link}")
         print(f"  {'PASS' if good else 'FAIL'} selftest {name}: exit {res.code} (want {want}), "
-              f"{tag} {'seen' if tagged else 'MISSING'}, [summary] {'seen' if summary else 'MISSING'}")
+              f"{tag} {'seen' if tagged else 'MISSING'}, [summary] "
+              f"{'exit=' + res.summary['exit'] if 'exit' in res.summary else 'MISSING'}"
+              f"{'' if summaries == 1 else f' ({summaries} of them)'}"
+              f"{', link = ImageBase + rva' if name == 'fault' and not link else ''}")
         ok &= good
     ok &= selftest_paced(exe, seed, logdir)
+    ok &= selftest_wav(exe, seed, logdir, territory)
+    return ok
+
+
+def selftest_wav(exe, seed, logdir, territory):
+    """--dump-audio leaves a valid WAV on every exit path (issue #62): the
+    header is patched after each vblank's write and the clean/assert exits
+    close it through an exit hook.  RIFF must equal the file size - 8, the
+    data chunk must be a whole number of vblanks (44100/hz frames of s16
+    stereo) and fit the file - exactly, on the clean and assert paths - and
+    the PCM must not be silence.  The per-vblank sync alone already leaves
+    the file exact, so the file cannot prove the hook ran: those two paths
+    must also log "[host] audio dump closed: <frames>" matching the data
+    chunk, and the fault and watchdog paths must not (the hook is not
+    fault-safe, and the watchdog thread runs no main-thread hook)."""
+    per_vblank = (44100 // (50 if territory == "EUR" else 60)) * 4
+    cases = [
+        ("clean", {}, 0, True),
+        ("assert", {"SBSP_SELFTEST": "assert@200"}, 10, True),
+        ("fault", {"SBSP_SELFTEST": "fault@200"}, 11, False),
+        ("hang", {"SBSP_SELFTEST": "hang@200", "SBSP_WATCHDOG": "3"}, 12, False),
+    ]   # (name, env, exit code, the exit hook closes it)
+    ok = True
+    tmp = tempfile.mkdtemp(prefix="sbsp_wav_")
+    try:
+        for name, env, want, hooked in cases:
+            wav = Path(tmp) / f"{name}.wav"
+            args = ["--level", "1-1", "--seed", str(seed), "--exit-after", "300",
+                    "--pad-script", "0:0000", "--dump-audio", str(wav)] + DETERMINISM
+            log = Path(logdir) / f"selftest_wav_{name}.log" if logdir else None
+            res = run_game(exe, args, env, 120, log)
+            b = wav.read_bytes() if wav.exists() else b""
+            problems = []
+            if res.code != want:
+                problems.append(f"exit {res.code}, want {want}")
+            if len(b) < 44 or b[0:4] != b"RIFF" or b[8:16] != b"WAVEfmt " or b[36:40] != b"data":
+                problems.append(f"no WAV header ({len(b)} bytes)")
+                riff = data = 0
+            else:
+                riff, = struct.unpack_from("<I", b, 4)
+                data, = struct.unpack_from("<I", b, 40)
+                if riff != len(b) - 8:
+                    problems.append(f"RIFF size {riff} != file size - 8 ({len(b) - 8})")
+                if data == 0 or data % per_vblank:
+                    problems.append(f"data size {data} is not a whole number of {per_vblank}-byte vblanks")
+                if data > len(b) - 44 or (hooked and data != len(b) - 44):
+                    problems.append(f"data size {data} {'!=' if hooked else '>'} file size - 44 ({len(b) - 44})")
+                if not any(b[44:44 + data]):
+                    problems.append("PCM is all zero")
+            closed = [l for l in res.lines if l.startswith("[host] audio dump closed:")]
+            if hooked:
+                m = re.match(r"\[host\] audio dump closed: (\d+) frames$", closed[-1] if closed else "")
+                if not m:
+                    problems.append("no '[host] audio dump closed' line - the exit hook did not run")
+                elif int(m.group(1)) * 4 != data:
+                    problems.append(f"hook closed {m.group(1)} frames, data chunk holds {data // 4}")
+            elif closed:
+                problems.append(f"the exit hook ran on this path: {closed[0]!r}")
+            good = not problems
+            print(f"  {'PASS' if good else 'FAIL'} selftest wav {name}: exit {res.code}, "
+                  f"{len(b)} bytes, data {data} = {data / per_vblank:.2f} vblanks, "
+                  f"hook {'closed it' if closed else 'did not run'}"
+                  + ("" if good else " - " + "; ".join(problems)))
+            ok &= good
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
     return ok
 
 
@@ -628,7 +750,7 @@ def main():
 
     ok = True
     if a.selftest:
-        ok &= selftest(exe, a.seed, a.logs)
+        ok &= selftest(exe, a.seed, a.logs, a.territory)
     if a.tier1:
         ok &= tier1(exe, a.seed, a.fast, a.logs, only_routes, not a.no_replay, a.territory)
     if a.tier2:

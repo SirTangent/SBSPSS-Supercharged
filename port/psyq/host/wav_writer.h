@@ -18,6 +18,8 @@ struct WavWriter
 /* returns 0 on failure (file not creatable) */
 int Wav_Open(WavWriter *w, const char *path, int sampleRate, int channels);
 void Wav_Write(WavWriter *w, const int16_t *samples, int nFrames);
+/* patch the header to the data so far and flush: a valid file from here on */
+void Wav_Sync(WavWriter *w);
 void Wav_Close(WavWriter *w);
 
 #endif
