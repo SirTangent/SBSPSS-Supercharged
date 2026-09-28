@@ -249,8 +249,9 @@ static void testYuv(void)
 		check(memcmp(rgb, golden, sizeof(golden)) == 0, "yuv: macroblock golden");
 }
 
-/*	The saturation vector, last in the golden file: outputs in every regime
-	of the 9-bit sign extension + clamp.  */
+/*	The saturation vector, last in the golden file: raw outputs in every
+	regime of the 9-bit sign extension + clamp, including the ones that
+	wrap back into range and pass unclamped (make_mdec_golden.py).  */
 static void testIdctSaturation(void)
 {
 	int16_t blk[64];

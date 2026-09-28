@@ -97,10 +97,13 @@ def main():
         yuv_to_rgb24(cr, cb, ys[q], xx, yy, rgb)
     out += bytes(rgb)
 
-    # 4) IDCT saturation: large DC + AC terms whose outputs land in all five
-    #    regimes - in range, 128..255 (clamped to 127), past 255 (wraps
-    #    negative in 9 bits, then clamped to -128), -256..-129 (clamped to
-    #    -128) and below -256 (wraps positive, then clamped to 127)
+    # 4) IDCT saturation: large DC + AC terms whose raw outputs land in
+    #    every regime of the 9-bit sign extension followed by the -128..127
+    #    clamp: in range (unchanged); 128..255 (clamped to 127); 256..383
+    #    (wrap to -256..-129, clamped to -128); 384..511 (wrap to -128..-1,
+    #    passed unclamped); 512 and up (wrap back positive: 551 -> 39);
+    #    -256..-129 (clamped to -128); -384..-257 (wrap to 128..255,
+    #    clamped to 127); -512..-385 (wrap to 0..127, passed unclamped)
     blk = [0] * 64
     for i, v in {0: 300, 1: 1023, 8: 1023, 9: 1023, 10: -1023}.items():
         blk[i] = v
