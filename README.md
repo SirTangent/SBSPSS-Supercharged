@@ -194,7 +194,9 @@ the 32-bit one.
 
 The GitHub Actions workflow (`.github/workflows/build.yml`) runs only when
 someone starts it by hand: the *Actions* tab, *Build & test*, *Run
-workflow*, or `gh workflow run build.yml --ref <branch>`. It never runs by
+workflow*, or `gh workflow run build.yml --ref <branch>`. The workflow is
+currently disabled on GitHub, so a maintainer has to enable it
+(`gh workflow enable build.yml`) before it can be started. It never runs by
 itself on a push or a pull request, so check a pull request locally with the
 same builds and tests before opening it:
 
