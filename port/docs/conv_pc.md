@@ -861,7 +861,9 @@ three oracles, `port/build-pc.sh parity64 [final|debug]`:
    each passing route's `--record-pad` recording; `--replay-from DIR`
    makes the second exe replay those instead of playing the routes.  The
    recording's `# epoch` markers carry the display CRC every 300 vblanks
-   and the game checks them itself (`[replay] desync`, exit 13).  They
+   and the game checks them itself (`[replay] desync`, exit 13) - unless
+   the recording's `# render` revision is not the exe's (issue #60), or,
+   across build types, while the pause menu is up.  They
    also carry `RamUsed`, which is *not* comparable across ABIs (bigger
    objects, 16-byte heap granularity): recordings now start with
    `# abi ptr=<4|8>` (absent = 4), and `host/input.cpp` skips the ram half
@@ -873,7 +875,11 @@ three oracles, `port/build-pc.sh parity64 [final|debug]`:
    one) and `# pace`, `# prompt` lines mark the prompt-icon device
    switches, and each epoch also carries
    the game's RNG state (`rng=`, compared across ABIs) - "Replaying a
-   tester session", below.
+   tester session", below.  The full header, in order: `# abi`, `# build`,
+   `# render` (issue #60), `# seed`, `# pace`, `# loads`.  A replay whose
+   epochs would compare none of rng, ram and crc is refused at boot
+   (exit 13), and the boot line says which of them are compared -
+   "Video fidelity fixes and the renderer revision", below.
 3. **Memory card** - the `card0.mcd` a route leaves is kept beside its
    recording and the cross replay's must be byte-identical (the same-exe
    replay of a plain Tier 1 run now compares cards too).  The save structs
@@ -1546,7 +1552,9 @@ bits and clamped to -128..127 before the colour conversion, as the MDEC
 does (DuckStation's rule, chosen by the user).  Before, a ringing sample
 past 127 went into the colour matrix unclamped.
 - `make_mdec_golden.py` applies the same rule and appends a saturation
-  vector that hits all five regimes.
+  vector whose raw outputs hit every regime: in range, clamped high or
+  low, and the 9-bit wraps (384..511 and -512..-385 wrap back into range
+  and pass unclamped; 512 and up wrap positive).
 - The FMV CRC goldens for thq, climax and demo changed.  Intro's first 30
   frames never leave the range, so its goldens did not.  FINAL
   reproduces the DEBUG CRCs.
@@ -1569,13 +1577,30 @@ exactly.
   revision, and --record-pad writes it as `# render N` after `# build`.
   It is 1 now; a recording without the line is revision 0.
 - When a recording's revision differs from the exe's, no epoch's crc is
-  compared (the reason reads "renderer revision"), but ram and rng still
-  are.  An `[input]` line says so at boot.
+  compared (the reason reads "renderer revision").  rng still is when the
+  epochs carry it (every recording since issue #58), and ram under the
+  usual rules: not across ABIs (`# abi`) or build types (`# build`).  An
+  `[input]` line says so at boot.
+- The skips stack.  A recording from before #58 (no rng) replayed across
+  ABIs or build types on an exe of another revision would compare
+  nothing and exit 0 whatever happened, so it is refused at boot, exit
+  13: `[replay] pad-file ...: N of M epochs compare nothing on this exe
+  (render revision differs, ram skipped cross-ABI, no rng recorded)`.
+  Every replay with epochs prints what they compare, e.g. `[input]
+  epochs: comparing rng only` or `comparing rng, ram, crc`.  #55's
+  sessions carry rng, so they still replay anywhere.
+- `# render` takes exactly one non-negative number; `# render`, `# render
+  one`, `# render -` or trailing text is refused (exit 13) like a bad
+  `# abi`, instead of reading as a comment and leaving revision 0.
 - **Rule: bump `GPU_RENDER_REVISION` in any change that moves displayed
   pixels on purpose**, and add a line to its comment.  A refactor that
   keeps `--compare-frames` identical must not bump it.
 - `replay_test` covers the line, a missing line, another revision, ram
-  and rng still being caught, and a refused negative value.
+  and rng still being caught, refused malformed values (negative, bare,
+  a word, a lone `-`, two numbers, trailing text) and blanks around a
+  good one, the refused compare-nothing replay (an old-format recording
+  with `# abi ptr=` flipped to stand in for the other ABI), and the boot
+  line in four more cases.
 - The previous exe's tier 1 recordings (`port/build/lane2-base/art`, made
   before these fixes) replay on the new exe with `run_tier.py --tier1
   --replay-from <art> --compare-frames <the new exe's own logs>`: all 10

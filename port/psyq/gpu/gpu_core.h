@@ -51,8 +51,10 @@ extern GpuState g_gpu;
 	displayed pixels on purpose (a fidelity fix, not a refactor): --record-pad
 	writes it as `# render N`, and a replay whose recording names another
 	revision - or none, as every recording before the line existed does -
-	does not compare the display CRC at its epochs, only ram and rng, since
-	the same game state now draws a different picture (host/input.cpp).
+	does not compare the display CRC at its epochs, since the same game
+	state now draws a different picture.  rng is still compared when the
+	epochs carry it, and ram only on the same ABI and build type; a replay
+	whose epochs are left comparing nothing is refused (host/input.cpp).
 	  0  the implicit revision of recordings without the line
 	  1  issue #60: polygon tpage attributes keep the E1 dither bit; the
 	     MDEC IDCT saturates to signed 8 bits  */
