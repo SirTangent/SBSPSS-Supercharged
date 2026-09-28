@@ -13,7 +13,13 @@
 /*	Silence queued ahead of a speech stream's first audio sector (issue
 	#59): 756 frames = 40ms at 18.9kHz, more than the <1 vblank a sector
 	can arrive late by being quantized to vblanks (315 frames at 60Hz, 378
-	at 50Hz), so the ring never runs dry mid-line.  */
+	at 50Hz).  What is left over (441 / 378 frames, ~1030 / ~880 output
+	frames at 44.1kHz) is the headroom for a playback device pulling a
+	period at a time.  So the ring does not run dry mid-line in a
+	--dump-audio run (one vblank per render; xa_test streams every slot at
+	both rates that way) or at the default device period (~480 frames),
+	but an sbsp.ini audio_buffer_frames above ~880 (50Hz) / ~1030 (60Hz)
+	can still underrun mid-line in live play.  */
 #define XA_PREROLL_FRAMES	756
 
 /*	engine entry points, called from cd.cpp's command dispatch  */

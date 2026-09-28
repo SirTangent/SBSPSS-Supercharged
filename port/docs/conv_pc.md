@@ -1327,7 +1327,12 @@ could land up to one vblank after the samples ran out: a 145-frame
 (3.3 ms) zero run, several per line in the game-over dump.  `XaStream_ReadS`
 now arms a pre-roll: the stream's first audio sector is preceded by
 `XA_PREROLL_FRAMES` (756 frames, 40 ms) of silence when the ring is empty,
-more than the worst lateness (315 frames at 60 Hz, 378 at 50 Hz).  Speech
+more than the worst lateness (315 frames at 60 Hz, 378 at 50 Hz).  The
+rest of the cushion (~1030 / ~880 output frames at 44.1 kHz) is headroom
+for the playback device pulling a period at a time: it covers a
+`--dump-audio` run and the default device period (~480 frames), but an
+`audio_buffer_frames` above ~1030 (60 Hz) / ~880 (50 Hz) in `sbsp.ini` can
+still let the ring run dry mid-line in live play.  Speech
 starts 40 ms later in the mix; the terminator sector still ends the line,
 so nothing the game sees moves.  The game mutes the CD input at the
 terminator, which now falls ~40 ms before the ring would have emptied:
