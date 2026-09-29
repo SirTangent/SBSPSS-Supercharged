@@ -1271,6 +1271,123 @@ with `[ini] path:N: 'key' repeated - the later value wins`; a later empty
 `key=` puts the key back to its built-in default; the count is of distinct
 keys, not lines.
 
+### Audio accuracy and malformed-data bounds (issue #59)
+
+Shim-side only: `spu/spu_core.cpp`, `xmplay/xm_data.cpp`,
+`xmplay/xm_seq.cpp`, `xmplay/xm_state.h`, `cd/xa_stream.cpp`, the tests
+and the docs.  Rows 4, 19, 37 and 38 change `--dump-audio` output on
+purpose; each commit was checked against the previous one with the WAV
+oracle (boot FMVs, the title theme, the game-over speech route, aligned
+at the first nonzero sample).
+
+**The mix clips before the master volume.**  `Spu_RenderFrames` used to
+multiply the voices + CD sum by the master volume in a plain `int` and
+clamp afterwards, so a sum above ~131k at the game's 0x3FFF wrapped onto
+the opposite rail.  The sum is now clamped to s16 first and the master
+applied to that - the hardware's order, and DuckStation's - which makes
+the master step a 16x16 product.  A clipped sample at master 0x3FFF is
+now 32765/-32766 rather than 32767/-32768; on the oracle those were the
+only samples that changed.  The CD-input interpolation's product (tap
+step up to +-65535 times a phase up to 44099) is widened with `int64_t`:
+`long`, which it used before, is 32 bits on both Windows ABIs.
+
+**The loaders are bounded.**  The vintage `InitXMData` and `XM_VABInit`
+take bare pointers and walked the file by lengths read from it.  They now
+call `XmParseModule` / `XmVabInitSized` (`xm_state.h`), which check every
+advance against a size and cap the header fields at FT2's limits: file
+header <= 4096 and holding the order table, pattern header 9..64 with
+1..256 rows, instrument header 29..263 (at least 241 with samples -
+`instrView` reads to +240), at most 16 samples per instrument; for a VAB,
+ps <= 128, vs <= 255, the size table inside the VH, its total inside the
+VB and sound RAM.  The game supplies no sizes, so the public calls bound
+a buffer by the end of the arena it was loaded into (`OPT_LinkerOpts`,
+as `api/arena.cpp` sets it) and a buffer outside the arena by the caps
+alone.  A module or bank that does not fit is refused with one `[xm]`
+line: `InitXMData` returns -1 and leaves the slot unused, so `XM_Init`
+turns the song down and it is silent; `XM_VABInit` returns -1, which the
+game `ASSERT`s on.  `readSlot`/`skipSlot` never read past a pattern's
+packed data.  Every shipped PXM walks to exactly its file size and every
+VH table sums exactly to its VB, so none of this is audible.
+
+**Note delay is FT2's.**  On an EDx row (x > 0) only the instrument
+number is taken at tick 0 - FT2's `getNewNote` assigns `ch->instrNum`
+before its note-delay return, so a delay that never fires (x >= speed)
+still leaves its instrument for the channel's next note; the volume column
+waits.  At tick x the note triggers on that instrument, the instrument
+resets volume/pan only if the row had one (`XmChannelState.delayedInstr`
+remembers that), and the row's set-volume or set-pan column lands on the
+new note.  Before, the instrument's reset and the volume column hit the
+old note at tick 0.  A delay that never fires in its row is now dropped at
+the next row, as FT2 drops it; before, it stayed armed.  It also follows
+ft2-clone's `noteDelay` (`src/ft2_replayer.c`), which fires when
+`speed - song.tick` equals x: the tick is counted within the row's current
+pass, so under EEx (pattern delay) the note fires once per pass (ED2 + EE1
+at speed 6: ticks 2 and 8) and a delay at or above the speed never fires
+however long EEx makes the row; the note delay runs after the volume
+column (`processNoteDelayTickN` after `processVolColTickN`; the other
+effects are unchanged), so a volume-column slide on the delay tick moves
+the old note and the delayed note's volume reset stands; and an EDx row
+with no note replays the channel's last triggered note (`triggerNote`
+takes note 0 as `ch->noteNum`, kept here as `XmChannelState.trigNote`,
+which is set before the instrument lookup as FT2's is - a note on an
+instrument with no sample still counts - and which a tone-portamento
+target does not change).  No shipped module has EEx, a note-less EDx row
+or a slide on an EDx row.  Still not FT2's: a delayed key-off (FT2 follows
+it with `triggerInstrument`, which clears the key-off and restarts the
+envelopes); ED0 under EEx (FT2 retriggers at each later pass); and the
+envelope, autovibrato and fadeout of the old note between an EDx row's
+tick 0 and its delay tick, which the port reads from the instrument
+number the row just set while FT2 keeps reading the instrument the note
+was triggered with (`ch->instrPtr`).  The first two do not occur in the
+shipped modules; the third does at 11 row-positions (chapters 1, 2, 4
+and 6), every one changing to an instrument whose envelope, autovibrato
+and fadeout bytes are identical to the old one's.
+
+What is audible: the shipped modules have 90 EDx rows (23 in sb-title,
+67 across `CHAPTER1`-`6`), every one with x below its row's speed and a
+note, and a set-volume column or none.  Each still fires; what changed is
+the channel between the row's tick 0 and the channel's next note - the
+old note no longer takes the row's instrument or volume early, and the
+delayed note plays at the set-volume column where it had one.  WAV-dump
+oracle (`--level C-L --invincible` for all 25 levels, the bonus levels
+with `SBSP_AUTOPLAY=finish=400000`, and the title theme through its
+end), the commit before this change against the branch: 69 of the 90
+rows reached - 65 of the 67 chapter rows (the other two are in the
+ghost-train song past where level 4-5's ride ends) and the title theme's
+4 (sb-title's other 19 are in the memory-card and game-complete songs,
+which no route plays) - in 161 plays, every one fired, none dropped.
+The songs whose EDx rows have no volume column are byte-identical; the
+nine with set-volume rows differ only in 32 short regions (0.01-0.36 s),
+each starting inside an EDx row's tick-0-to-delay-tick window, and every
+set-volume EDx row reached has one.
+The title theme's pattern 1 (and 7) row 45 channel 1 is ED3 on a row
+whose channel 9 sets speed 4, so it fires at tick 3 in FT2 and in the
+port, before and after; its difference is the set-volume column (0x2F)
+moving from the old note to the delayed one.
+
+**XA speech pre-rolls.**  Sector delivery is quantized to vblanks, and the
+ring drained from the first push with no cushion, so a line's next sector
+could land up to one vblank after the samples ran out: a 145-frame
+(3.3 ms) zero run, several per line in the game-over dump.  `XaStream_ReadS`
+now arms a pre-roll: the stream's first audio sector is preceded by
+`XA_PREROLL_FRAMES` (756 frames, 40 ms) of silence when the ring is empty,
+more than the worst lateness (315 frames at 60 Hz, 378 at 50 Hz).  The
+rest of the cushion (~1030 / ~880 output frames at 44.1 kHz) is headroom
+for the playback device pulling a period at a time: it covers a
+`--dump-audio` run and the default device period (~480 frames), but an
+`audio_buffer_frames` above ~1030 (60 Hz) / ~880 (50 Hz) in `sbsp.ini` can
+still let the ring run dry mid-line in live play.  Speech
+starts 40 ms later in the mix; the terminator sector still ends the line,
+so nothing the game sees moves.  The game mutes the CD input at the
+terminator, which now falls ~40 ms before the ring would have emptied:
+over all 709 lines on `TRACK1.IXA` the last 756 samples peak at a median
+of 0 and a 99th percentile of 172 (one short 3-sector line reaches 4096),
+so what is muted is the lines' trailing silence.  `xa_test` streams every
+interleave slot at both rates through `Port_CdVblank` and
+`Spu_RenderFrames` and requires one unbroken run (46 of 62 broke before).
+The FMV/STR audio ring (`cd/str_stream.cpp`) has the same vblank
+quantization and is not changed here; it is left for a follow-up.
+
 ## Game-source changes (keyboard prompt icons, issue #43)
 
 **The problem.**  Every "press this to do that" line in the game draws a pad

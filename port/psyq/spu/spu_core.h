@@ -74,7 +74,8 @@ void Spu_CdInSetRate(int hz);					/* source rate: 18900 (default,
 												   speech) or 37800 (STR).
 												   Spu_CdInClear resets it. */
 void Spu_CdInClear(void);						/* also resets the resampler */
-unsigned Spu_CdInCountForTest(void);			/* frames queued (xa_test) */
+unsigned Spu_CdInCount(void);					/* frames queued (XA pre-roll,
+												   xa_test, str_test) */
 void Spu_SetCdAtv(uint8_t v0, uint8_t v1, uint8_t v2, uint8_t v3);
 												/* CdlATV: v0 L->L, v1 L->R,
 												   v2 R->L, v3 R->R; 128=unity */

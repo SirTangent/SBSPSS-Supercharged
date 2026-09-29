@@ -6,7 +6,7 @@
 	the ADSR envelope evaluated from the raw adsr1/adsr2 register halves
 	(cycles = 1 << max(0,shift-11), step = base << max(0,11-shift), the
 	exponential quirks), plain L/R volume (0x3FFF = unity), 32-bit
-	accumulation, common master volume, clamp to s16.
+	accumulation, clamp to s16, common master volume.
 
 	Threading: everything here runs under one mutex.  Spu_RenderFrames locks
 	internally (it is the audio thread's entry point); all register mutation
@@ -283,7 +283,7 @@ void Spu_CdInClear(void)
 	g_cdRate = 18900;
 }
 
-unsigned Spu_CdInCountForTest(void)
+unsigned Spu_CdInCount(void)
 {
 	std::lock_guard<std::mutex> lock(g_spuMutex);
 	return g_cdHead - g_cdTail;
@@ -388,8 +388,11 @@ void Spu_RenderFrames(int16_t *stereoOut, int nFrames)
 		}
 		if (g_spuCdMixOn)
 		{
-			int sL = g_cdPrevL + (int)((g_cdCurL - g_cdPrevL) * (long)g_cdPhase / 44100);
-			int sR = g_cdPrevR + (int)((g_cdCurR - g_cdPrevR) * (long)g_cdPhase / 44100);
+			/*	64-bit: the tap difference reaches +-65535 and the phase
+				44099, a product that overflows `long` on Windows (32 bits on
+				both ABIs) - a full-swing step would wrap into a click  */
+			int sL = g_cdPrevL + (int)((g_cdCurL - g_cdPrevL) * (int64_t)g_cdPhase / 44100);
+			int sR = g_cdPrevR + (int)((g_cdCurR - g_cdPrevR) * (int64_t)g_cdPhase / 44100);
 			int cdL = (sL * g_cdAtv[0] + sR * g_cdAtv[2]) >> 7;
 			int cdR = (sL * g_cdAtv[1] + sR * g_cdAtv[3]) >> 7;
 			/*	64-bit for the volume step: cdL/cdR reach +-130,555 with the
@@ -401,8 +404,12 @@ void Spu_RenderFrames(int16_t *stereoOut, int nFrames)
 			sumR += (int)(((int64_t)cdR * g_spuCdVolR) >> 15);
 		}
 
-		sumL = (sumL * g_spuMasterVolL) >> 14;
-		sumR = (sumR * g_spuMasterVolR) >> 14;
+		/*	clamp BEFORE the master volume - the hardware's order, and
+			DuckStation's: 24 voices plus the CD term can sum to ~920k, which
+			times 0x3FFF overflows an int and wraps to the opposite rail.
+			Clamped to s16 first, the master step is a 16x16 product.  */
+		sumL = (clamp16(sumL) * g_spuMasterVolL) >> 14;
+		sumR = (clamp16(sumR) * g_spuMasterVolR) >> 14;
 		stereoOut[f * 2 + 0] = (int16_t)clamp16(sumL);
 		stereoOut[f * 2 + 1] = (int16_t)clamp16(sumR);
 	}

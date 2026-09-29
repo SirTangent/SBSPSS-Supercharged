@@ -3,7 +3,8 @@
 	before key-on, pan sidedness, pitch halving doubles the waveform period,
 	ADSR release decays to silence and frees the voice, one-shot samples
 	(LOOP_END without REPEAT) self-mute, master volume scales the output,
-	and rendering is deterministic for identical programmed state.
+	an overdriven mix clips (clamp, then master) instead of wrapping, and
+	rendering is deterministic for identical programmed state.
 */
 #include <cstdio>
 #include <cstring>
@@ -202,6 +203,61 @@ int main()
 		int peakHalf = peakAbs(buf, 512, 0);
 		check(peakHalf > peakFull * 2 / 5 && peakHalf < peakFull * 3 / 5,
 			  "master volume 0x2000 halves the peak");
+	}
+
+	/* --- an overdriven mix clips to the rail of its own sign --------------- */
+	{
+		/*	Six in-phase copies of the square at volume 0x3FFF sum to ~171k
+			before the master volume.  Clamping only after the master
+			multiply let 171k * 0x3FFF wrap an int onto the opposite rail;
+			the hardware clamps first, so every frame must sit at the rail
+			matching one voice's sign, scaled by the master: 32767 * 0x3FFF
+			>> 14 = 32765 and -32768 * 0x3FFF >> 14 = -32766.  The square's
+			dominant gaussian tap keeps a lone voice above ~20000, so six of
+			them clip on every frame, transitions included.  */
+		resetSpu();
+		writeSquareSample(0x1000);
+		keyVoice(0, 0x1000, 0x1000, 0x3FFF, 0x3FFF);
+		Spu_RenderFrames(buf2, 64);					/* envelope + taps settle */
+		Spu_RenderFrames(buf2, 1024);				/* one voice's signs */
+
+		resetSpu();
+		writeSquareSample(0x1000);
+		for (int i = 0; i < 6; i++)
+			keyVoice(i, 0x1000, 0x1000, 0x3FFF, 0x3FFF);
+		Spu_RenderFrames(buf, 64);
+		Spu_RenderFrames(buf, 1024);
+		int bad = 0, firstBad = -1;
+		for (int i = 0; i < 1024 * 2; i++)
+		{
+			int want = buf2[i] > 0 ? 32765 : -32766;
+			if (buf2[i] == 0 || buf[i] != want)
+			{
+				if (firstBad < 0)
+					firstBad = i;
+				bad++;
+			}
+		}
+		check(bad == 0, "six in-phase voices: every sample at its own-sign rail");
+		if (bad)
+			std::printf("  (%d samples off the rail, first [%d] = %d, one voice %d)\n",
+						bad, firstBad, buf[firstBad], buf2[firstBad]);
+
+		/*	master 0x2000 halves the clipped s16, not the 85k sum  */
+		resetSpu();
+		writeSquareSample(0x1000);
+		for (int i = 0; i < 3; i++)
+			keyVoice(i, 0x1000, 0x1000, 0x3FFF, 0x3FFF);
+		g_spuMasterVolL = g_spuMasterVolR = 0x2000;
+		Spu_RenderFrames(buf, 64);
+		Spu_RenderFrames(buf, 1024);
+		bad = 0;
+		for (int i = 0; i < 1024 * 2; i++)
+			if (buf[i] != (buf2[i] > 0 ? 16383 : -16384))
+				bad++;
+		check(bad == 0, "three clipped voices at master 0x2000 give +16383/-16384");
+		if (bad)
+			std::printf("  (%d samples off, peak %d)\n", bad, peakAbs(buf, 1024, 0));
 	}
 
 	/* --- determinism: identical state renders identical output ------------ */

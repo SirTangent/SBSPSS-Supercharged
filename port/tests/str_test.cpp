@@ -170,7 +170,7 @@ int main(void)
 			  "frame 1 StHEADER fields");
 		check(frameContentOk((const uint8_t *)addr, 1, 3), "frame 1 content");
 	}
-	check(Spu_CdInCountForTest() == XA_SECTOR_PAIRS,
+	check(Spu_CdInCount() == XA_SECTOR_PAIRS,
 		  "audio sector became 2016 stereo pairs (no SF: filter ignored)");
 	StFreeRing(addr);
 
@@ -210,9 +210,9 @@ int main(void)
 	kick(CdlModeStream | CdlModeSpeed | CdlModeRT);
 	pump(8);							/* try to deliver well past frame 2 */
 	check(StGetNext(&addr, &hdr) == 0, "small ring: frame 1 ready");
-	unsigned audioBefore = Spu_CdInCountForTest();
+	unsigned audioBefore = Spu_CdInCount();
 	pump(8);							/* held: no new sectors may flow */
-	check(Spu_CdInCountForTest() == audioBefore,
+	check(Spu_CdInCount() == audioBefore,
 		  "small ring: held stream also pauses audio (A/V lockstep)");
 	StFreeRing(addr);
 	pump(8);							/* resume: frame 2 assembles now */
@@ -231,9 +231,9 @@ int main(void)
 	kick(CdlModeStream | CdlModeSpeed | CdlModeRT);
 	pump(2);
 	CdControlB(CdlPause, 0, 0);
-	check(Spu_CdInCountForTest() == 0, "CdlPause flushed the CD-input ring");
+	check(Spu_CdInCount() == 0, "CdlPause flushed the CD-input ring");
 	pump(4);
-	unsigned after = Spu_CdInCountForTest();
+	unsigned after = Spu_CdInCount();
 	check(after == 0, "paused stream delivers nothing");
 
 	/*	-------- 5: the SF gate - with CdlModeSF and a non-matching speech
@@ -249,7 +249,7 @@ int main(void)
 	StSetStream(1, 1, 0xFFFFFFFFu, 0, 0);
 	kick(CdlModeStream | CdlModeSpeed | CdlModeRT | CdlModeSF);
 	pump(4);
-	check(Spu_CdInCountForTest() == 0,
+	check(Spu_CdInCount() == 0,
 		  "SF + mismatched filter drops movie audio");
 	StrStream_ResetForTest();
 	Spu_CdInClear();
@@ -258,7 +258,7 @@ int main(void)
 	StSetRing(ring, 32);
 	kick(CdlModeStream | CdlModeSpeed | CdlModeRT | CdlModeSF);
 	pump(4);
-	check(Spu_CdInCountForTest() > 0, "SF + matching filter passes audio");
+	check(Spu_CdInCount() > 0, "SF + matching filter passes audio");
 
 	/*	-------- 6: full re-arm (the THQ -> CLIMAX shape)  */
 	StUnSetRing();

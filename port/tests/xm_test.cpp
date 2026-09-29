@@ -5,6 +5,8 @@
 	files that ship beside them (the PXM repack must lose nothing), and
 	verifies XM_VABInit uploads the VB byte-exactly at the addresses the
 	VH size table dictates, with clean close/re-init allocation accounting.
+	The sized entry points (issue #59) must walk every shipped module to
+	exactly its file size and refuse truncated or corrupt modules and VABs.
 */
 #include <cstdio>
 #include <cstring>
@@ -117,6 +119,77 @@ static void expandSparse(const uint8_t *data, int packedSize, int rows,
 	}
 }
 
+/* ---- synthetic PXM builder (note-delay cases) ---------------------------- */
+
+/*	One pattern cell; fields left 0 are absent from the packed slot.  */
+struct Cell
+{
+	int row, ch, note, instr, vol, eff, param;
+};
+
+static void put16(uint8_t *p, unsigned v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
+static void put32(uint8_t *p, uint32_t v) { put16(p, v & 0xFFFF); put16(p + 2, v >> 16); }
+
+/*	A PXM with 2 channels, one pattern of `rows` rows, speed 6 and BPM 150
+	(one tick per 60Hz XM_Update) and two instruments of one sample each,
+	sample default volume 40 and pan 128, no envelopes - playable against
+	the sb-title VAB (VAG 1 and 2).  Returns the byte count.  */
+static size_t buildPxm(uint8_t *out, int rows, const Cell *cells, int nCells)
+{
+	memset(out, 0, 4096);
+	put16(out + 0x3A, XM_PXM_VERSION);
+	put32(out + 0x3C, 276);					/* header size */
+	put16(out + 0x40, 1);					/* song length */
+	put16(out + 0x44, 2);					/* channels */
+	put16(out + 0x46, 1);					/* patterns */
+	put16(out + 0x48, 2);					/* instruments */
+	put16(out + 0x4A, 1);					/* linear frequencies */
+	put16(out + 0x4C, 6);					/* speed */
+	put16(out + 0x4E, 150);					/* BPM: 300 = 5 * 60 per update */
+	size_t o = 0x3C + 276;
+
+	uint8_t *ph = out + o;
+	put32(ph, 9);
+	put16(ph + 5, (unsigned)rows);
+	size_t d = o + 9;
+	for (int r = 0; r < rows; r++)
+	{
+		for (int i = 0; i < nCells; i++)
+		{
+			const Cell &c = cells[i];
+			if (c.row != r)
+				continue;
+			out[d++] = (uint8_t)c.ch;
+			uint8_t mask = 0x80;
+			if (c.note)  mask |= 0x01;
+			if (c.instr) mask |= 0x02;
+			if (c.vol)   mask |= 0x04;
+			if (c.eff)   mask |= 0x08;
+			if (c.param) mask |= 0x10;
+			out[d++] = mask;
+			if (c.note)  out[d++] = (uint8_t)c.note;
+			if (c.instr) out[d++] = (uint8_t)c.instr;
+			if (c.vol)   out[d++] = (uint8_t)c.vol;
+			if (c.eff)   out[d++] = (uint8_t)c.eff;
+			if (c.param) out[d++] = (uint8_t)c.param;
+		}
+		out[d++] = 0xFF;
+	}
+	put16(ph + 7, (unsigned)(d - o - 9));
+	o = d;
+
+	for (int i = 0; i < 2; i++)
+	{
+		put32(out + o, 263);
+		put16(out + o + 27, 1);				/* one sample; keymap all 0 */
+		uint8_t *sh = out + o + 263;
+		sh[12] = 40;						/* default volume */
+		sh[15] = 128;						/* default pan */
+		o += 263 + 40;
+	}
+	return o;
+}
+
 /*	cross-check every pattern of a parsed PXM module against the pristine
 	FastTracker .xm sitting next to it in data/  */
 static void crossCheckPatterns(const XmModule *m, const uint8_t *xm,
@@ -166,9 +239,10 @@ int main()
 	uint8_t *xm = loadFile("data/Music/sb-title/sb-title.xm", &xmSize);
 	uint8_t *vh = loadFile("data/Music/sb-title/sb-title.VH", &vhSize);
 	uint8_t *vb = loadFile("data/Music/sb-title/sb-title.VB", &vbSize);
-	uint8_t *pxm1 = loadFile("data/Music/chapter1/chapter1.PXM", &pxmSize);
+	long pxm1Size, pxmSfxSize;
+	uint8_t *pxm1 = loadFile("data/Music/chapter1/chapter1.PXM", &pxm1Size);
 	uint8_t *xm1 = loadFile("data/Music/chapter1/CHAPTER1.XM", &xmSize);
-	uint8_t *pxmSfx = loadFile("data/Sfx/ingame/ingame.PXM", &pxmSize);
+	uint8_t *pxmSfx = loadFile("data/Sfx/ingame/ingame.PXM", &pxmSfxSize);
 	uint8_t *xmSfx = loadFile("data/Sfx/ingame/ingame.xm", &xmSize);
 	long vhSfxSize, vbSfxSize;
 	uint8_t *vhSfx = loadFile("data/Sfx/ingame/ingame.VH", &vhSfxSize);
@@ -267,6 +341,76 @@ int main()
 		XM_CloseVAB(0);
 
 		check(XM_VABInit(pxm, vb) == -1, "non-VAB data is rejected");
+	}
+
+	/* --- malformed-data bounds (issue #59): the sized entry points ------- */
+	{
+		/*	every shipped module walks to exactly its file size, so one byte
+			less is a truncation the walk must notice  */
+		const uint8_t *mods[3] = { pxm, pxm1, pxmSfx };
+		const long sizes[3] = { pxmSize, pxm1Size, pxmSfxSize };
+		for (int i = 0; i < 3; i++)
+		{
+			size_t walked = 0;
+			check(XmParseModule(mods[i], (size_t)sizes[i], 0, XM_UseXMPanning,
+								&walked) == 0 && (long)walked == sizes[i],
+				  "sized parse: shipped PXM walks to exactly its file size");
+			check(XmParseModule(mods[i], (size_t)sizes[i] - 1, 0,
+								XM_UseXMPanning) == -1 &&
+				  !g_xmHeaderSlot[0]->inUse,
+				  "sized parse: a PXM one byte short is refused");
+		}
+
+		/*	corrupt fields on a copy of sb-title, each refused with the true
+			size and - where a cap alone must catch it - unbounded too  */
+		const size_t unbounded = (size_t)-1;
+		check(XmParseModule(pxm, (size_t)pxmSize, 0, XM_UseXMPanning) == 0,
+			  "sized parse: sb-title for the offsets below");
+		size_t pat0 = 0x3C + rd32(pxm + 0x3C);
+		size_t ins0 = (size_t)(g_xmHeaderSlot[0]->ins[0].hdr - pxm);
+		uint8_t *bad = (uint8_t *)malloc((size_t)pxmSize);
+		struct { size_t at; uint32_t value; int bytes; const char *what; } cases[] = {
+			{ pat0,      0x7FFFFFFFu, 4, "pattern header length 0x7FFFFFFF refused" },
+			{ ins0,      0x10000u,    4, "instrument header length 0x10000 refused" },
+			{ ins0 + 27, 17,          2, "17 samples in an instrument refused" },
+		};
+		for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++)
+		{
+			memcpy(bad, pxm, (size_t)pxmSize);
+			for (int k = 0; k < cases[c].bytes; k++)
+				bad[cases[c].at + k] = (uint8_t)(cases[c].value >> (8 * k));
+			check(XmParseModule(bad, (size_t)pxmSize, 0, XM_UseXMPanning) == -1 &&
+				  XmParseModule(bad, unbounded, 0, XM_UseXMPanning) == -1 &&
+				  !g_xmHeaderSlot[0]->inUse,
+				  cases[c].what);
+		}
+		free(bad);
+
+		/*	a refused module is silence, not a fault: XM_Init turns it down  */
+		SpuInit();
+		static char table[SPU_MALLOC_RECSIZ * 201];
+		SpuInitMalloc(200, table);
+		int vab = XmVabInitSized(vh, (size_t)vhSize, vb, (size_t)vbSize);
+		check(vab == 0 && g_xmVab[0].spuBytes == (uint32_t)vbSize,
+			  "sized VAB: shipped pair uploads the whole VB");
+		check(XmParseModule(pxm, (size_t)pxmSize - 1, 0, XM_UseXMPanning) == -1 &&
+			  XM_Init(vab, 0, -1, 0, XM_Loop, -1, XM_Music, 0) == -1,
+			  "XM_Init refuses a module whose parse was refused");
+		XM_CloseVAB(vab);
+
+		check(XmVabInitSized(vh, (size_t)vhSize, vb, (size_t)vbSize - 1) == -1,
+			  "sized VAB: a VB one byte short of the size table is refused");
+		check(XmVabInitSized(vh, (size_t)vhSize - 1, vb, (size_t)vbSize) == -1,
+			  "sized VAB: a size table running past the VH is refused");
+		uint8_t *badVh = (uint8_t *)malloc((size_t)vhSize);
+		memcpy(badVh, vh, (size_t)vhSize);
+		badVh[18] = 0xFF;						/* ps = 0xFFFF */
+		badVh[19] = 0xFF;
+		check(XmVabInitSized(badVh, (size_t)vhSize, vb, (size_t)vbSize) == -1 &&
+			  XmVabInitSized(badVh, unbounded, vb, unbounded) == -1,
+			  "sized VAB: ps = 0xFFFF is refused");
+		free(badVh);
+		check(!g_xmVab[0].inUse, "refused VABs leave the slot free");
 	}
 
 	/* --- sequencer end-to-end: the title theme actually plays -------------- */
@@ -380,6 +524,227 @@ int main()
 		XM_Quit(sfxId);
 		XM_CloseVAB(vabSfx);
 		XM_CloseVAB(vabMusic);
+	}
+
+	/* --- note delay (EDx), FT2 semantics (issue #59) ---------------------- */
+	{
+		/*	Synthetic modules at speed 6, one tick per XM_Update once the
+			song's tick accumulator is zeroed: update n processes tick
+			(n-1)%6 of row (n-1)/6.  The title theme swings speed 3/4, so
+			none of this is pinned on real music.  */
+		XM_OnceOffInit(XM_NTSC);
+		for (int i = 0; i < 24; i++)
+			XM_SetSongAddress(songStore[i]);
+		XM_SetFileHeaderAddress(hdr0);
+		SpuInit();
+		static char table[SPU_MALLOC_RECSIZ * 201];
+		SpuInitMalloc(200, table);
+		SpuSetCommonMasterVolume(0x3FFF, 0x3FFF);
+		int vab = XmVabInitSized(vh, (size_t)vhSize, vb, (size_t)vbSize);
+		check(vab == 0, "note delay: sb-title VAB resident");
+
+		static uint8_t mod[4096];
+		struct Scenario
+		{
+			const char *name;
+			Cell cells[4];
+			int nCells;
+		};
+		/*	A: instrument + set volume 7 + ED2.  B: no instrument, ED2 keeps
+			the running volume (row 0 set it to 32).  C: set pan 0x40 + ED2.
+			D: ED7 >= speed never fires, even when row 2 (F08 on channel 1,
+			channel 0 empty) stretches the row to 8 ticks.
+			E-G follow ft2-clone's noteDelay (src/ft2_replayer.c), which
+			fires when (speed - song.tick) == x - a count that restarts on
+			every pass of an EEx (pattern delay) row.
+			E: ED7 with EE1 on channel 1 - the row runs 12 ticks, but the
+			delay is counted within each 6-tick pass, so it never fires.
+			F: ED2 + instrument + volume-column slide down 2, with EE1 - the
+			note fires at tick 2 and again at tick 8 (tick 2 of the second
+			pass); each time the slide runs first and the instrument's
+			volume reset stands, as the note delay runs after the volume
+			column.  G: a key-off row, then ED2 with no note (set volume
+			32) - FT2's triggerNote takes note 0 as the channel's last note,
+			so 49 plays again; channel 1 has played nothing, so its bare ED2
+			(with an instrument, so the delay tick is reached) triggers
+			nothing.  H: the last note is the last one TRIGGERED - FT2's
+			noteNum, which a tone-portamento target (row 1, 3xx to 61) does
+			not change - so row 2's bare ED2 replays 49.  I: an EDx row
+			takes its instrument at tick 0 (FT2's getNewNote assigns instrNum
+			before its note-delay return), so ED7's never-firing row still
+			leaves instrument 2 for row 2's plain note.  J: FT2's triggerNote
+			sets noteNum before the instrument lookup, so 65 on instrument 7
+			(no such instrument: silence) is still the note a bare ED2 on
+			instrument 1 replays.  */
+		static const Scenario sc[10] = {
+			{ "A", { { 0, 0, 49, 1, 0,    0,    0    },
+					 { 1, 0, 61, 2, 0x17, 0x0E, 0xD2 } }, 2 },
+			{ "B", { { 0, 0, 49, 1, 0x30, 0,    0    },
+					 { 1, 0, 61, 0, 0,    0x0E, 0xD2 } }, 2 },
+			{ "C", { { 0, 0, 49, 1, 0,    0,    0    },
+					 { 1, 0, 61, 1, 0xC4, 0x0E, 0xD2 } }, 2 },
+			{ "D", { { 0, 0, 49, 1, 0,    0,    0    },
+					 { 1, 0, 61, 2, 0,    0x0E, 0xD7 },
+					 { 2, 1, 0,  0, 0,    0x0F, 0x08 } }, 3 },
+			{ "E", { { 0, 0, 49, 1, 0,    0,    0    },
+					 { 1, 0, 61, 2, 0,    0x0E, 0xD7 },
+					 { 1, 1, 0,  0, 0,    0x0E, 0xE1 } }, 3 },
+			{ "F", { { 0, 0, 49, 1, 0,    0,    0    },
+					 { 1, 0, 61, 2, 0x62, 0x0E, 0xD2 },
+					 { 1, 1, 0,  0, 0,    0x0E, 0xE1 } }, 3 },
+			{ "G", { { 0, 0, 49, 1, 0,    0,    0    },
+					 { 1, 0, 97, 0, 0,    0,    0    },
+					 { 2, 0, 0,  0, 0x30, 0x0E, 0xD2 },
+					 { 2, 1, 0,  1, 0,    0x0E, 0xD2 } }, 4 },
+			{ "H", { { 0, 0, 49, 1, 0,    0,    0    },
+					 { 1, 0, 61, 0, 0,    0x03, 0x10 },
+					 { 2, 0, 0,  0, 0,    0x0E, 0xD2 } }, 3 },
+			{ "I", { { 0, 0, 49, 1, 0,    0,    0    },
+					 { 1, 0, 61, 2, 0,    0x0E, 0xD7 },
+					 { 2, 0, 63, 0, 0,    0,    0    } }, 3 },
+			{ "J", { { 0, 0, 49, 1, 0,    0,    0    },
+					 { 1, 0, 65, 7, 0,    0,    0    },
+					 { 2, 0, 0,  1, 0,    0x0E, 0xD2 } }, 3 },
+		};
+		struct Snap
+		{
+			int note, instr, volume, pan, row, speed, keyOff, active, active1;
+		} snap[21];
+		for (int k = 0; k < 10; k++)
+		{
+			size_t n = buildPxm(mod, 3, sc[k].cells, sc[k].nCells);
+			size_t walked = 0;
+			check(XmParseModule(mod, n, 0, XM_UseXMPanning, &walked) == 0 &&
+				  walked == n, "note delay: synthetic PXM parses");
+			int id = XM_Init(vab, 0, -1, 0, XM_Loop, -1, XM_Music, 0);
+			check(id >= 0, "note delay: XM_Init");
+			if (id < 0)
+				continue;
+			XmSongState *s = g_xmSongSlot[id];
+			s->tickAccumHz = 0;
+			for (int u = 1; u <= 20; u++)
+			{
+				XM_Update();
+				const XmChannelState &c = s->ch[0];
+				snap[u].note = c.note;
+				snap[u].instr = c.instr;
+				snap[u].volume = c.volume;
+				snap[u].pan = c.pan;
+				snap[u].row = s->row;
+				snap[u].speed = s->speed;
+				snap[u].keyOff = c.keyOff;
+				snap[u].active = c.active;
+				snap[u].active1 = s->ch[1].active;
+			}
+			XM_Quit(id);
+
+			int before = g_failures;
+			bool ok;
+			switch (k)
+			{
+			case 0:
+				ok = snap[6].note == 49 && snap[6].volume == 40 && snap[6].instr == 1;
+				for (int u = 7; u <= 8; u++)
+					ok = ok && snap[u].note == 49 && snap[u].volume == 40 &&
+						 snap[u].instr == 2;
+				check(ok, "EDx A: ticks 0-1 take the instrument number but leave "
+						  "the old note and its volume alone");
+				check(snap[9].note == 61 && snap[9].volume == 7 && snap[9].instr == 2,
+					  "EDx A: the delay tick plays the new note at the row's volume");
+				break;
+			case 1:
+				check(snap[8].note == 49 && snap[8].volume == 32 &&
+					  snap[9].note == 61 && snap[9].volume == 32,
+					  "EDx B: without an instrument the running volume is kept");
+				break;
+			case 2:
+				check(snap[7].pan == 128 && snap[8].pan == 128 && snap[8].note == 49 &&
+					  snap[9].note == 61 && snap[9].pan == 0x40 &&
+					  snap[9].volume == 40,
+					  "EDx C: the set-pan column lands on the delayed note");
+				break;
+			case 3:
+				check(snap[19].row == 2 && snap[19].speed == 8,
+					  "EDx D: row 2 runs 8 ticks (the case is live)");
+				ok = true;
+				for (int u = 7; u <= 20; u++)
+					ok = ok && snap[u].note == 49 && snap[u].instr == 2 &&
+						 snap[u].volume == 40;
+				check(ok, "EDx D: a delay >= speed never fires, not even in a "
+						  "later, longer row");
+				break;
+			case 4:
+				check(snap[17].row == 1 && snap[18].row == 2,
+					  "EDx E: EE1 stretches row 1 to 12 ticks (the case is live)");
+				ok = true;
+				for (int u = 7; u <= 18; u++)
+					ok = ok && snap[u].note == 49 && snap[u].instr == 2 &&
+						 snap[u].volume == 40;
+				check(ok, "EDx E: ED7 at speed 6 never fires, even in a row "
+						  "EE1 runs for 12 ticks");
+				break;
+			case 5:
+				check(snap[8].note == 49 && snap[8].volume == 38,
+					  "EDx F: tick 1 slides the old note");
+				check(snap[9].note == 61 && snap[9].instr == 2 &&
+					  snap[9].volume == 40,
+					  "EDx F: tick 2 slides, then the delayed note resets "
+					  "the volume");
+				check(snap[14].volume == 30 && snap[17].row == 1,
+					  "EDx F: the slide runs on through the second pass");
+				check(snap[15].volume == 40,
+					  "EDx F: the delay fires again at tick 2 of the second "
+					  "pass");
+				break;
+			case 6:
+				check(snap[14].keyOff == 1 && snap[14].active == 0,
+					  "EDx G: the key-off row stops the note");
+				check(snap[15].note == 49 && snap[15].keyOff == 0 &&
+					  snap[15].active == 1 && snap[15].volume == 32,
+					  "EDx G: ED2 with no note replays the last note");
+				ok = true;
+				for (int u = 1; u <= 18; u++)
+					ok = ok && snap[u].active1 == 0;
+				check(ok, "EDx G: on a channel with no last note it triggers "
+						  "nothing");
+				break;
+			case 7:
+				check(snap[14].note == 61,
+					  "EDx H: the portamento row made 61 the channel's note");
+				check(snap[15].note == 49,
+					  "EDx H: ED2 with no note replays the last triggered "
+					  "note, not the portamento target");
+				break;
+			case 8:
+				ok = true;
+				for (int u = 7; u <= 12; u++)
+					ok = ok && snap[u].note == 49 && snap[u].instr == 2 &&
+						 snap[u].volume == 40;
+				check(ok, "EDx I: the row takes its instrument at tick 0 and "
+						  "the old note plays on, as ED7 never fires");
+				check(snap[13].note == 63 && snap[13].instr == 2 &&
+					  snap[13].active == 1,
+					  "EDx I: the next row's plain note plays on that "
+					  "instrument");
+				break;
+			default:
+				check(snap[7].active == 0 && snap[7].instr == 7,
+					  "EDx J: a note on an instrument with no sample is silent");
+				check(snap[15].note == 65 && snap[15].instr == 1 &&
+					  snap[15].active == 1,
+					  "EDx J: a bare ED2 replays that note, the last one "
+					  "triggered");
+				break;
+			}
+			if (g_failures != before)
+				for (int u = 6; u <= 18; u++)
+					std::printf("  (%s update %d: row %d note %d instr %d vol %d "
+								"pan %d keyoff %d active %d)\n",
+								sc[k].name, u, snap[u].row, snap[u].note,
+								snap[u].instr, snap[u].volume, snap[u].pan,
+								snap[u].keyOff, snap[u].active);
+		}
+		XM_CloseVAB(vab);
 	}
 
 	if (g_failures)

@@ -106,48 +106,55 @@ struct RowSlot
 	uint8_t present;
 };
 
-const uint8_t *readSlot(const uint8_t *p, RowSlot *s)
+/*	one byte of a slot, or 0 once the pattern's data has run out  */
+inline uint8_t slotByte(const uint8_t *&p, const uint8_t *end)
 {
-	uint8_t b = *p++;
+	return p < end ? *p++ : 0;
+}
+
+/*	decode one packed slot; a slot cut short by the pattern's end reads its
+	missing fields as 0 and never looks past end  */
+const uint8_t *readSlot(const uint8_t *p, const uint8_t *end, RowSlot *s)
+{
+	uint8_t b = slotByte(p, end);
 	if (b & 0x80)
 	{
-		if (b & 0x01) s->note = *p++;
-		if (b & 0x02) s->instr = *p++;
-		if (b & 0x04) s->vol = *p++;
-		if (b & 0x08) s->eff = *p++;
-		if (b & 0x10) s->param = *p++;
+		if (b & 0x01) s->note = slotByte(p, end);
+		if (b & 0x02) s->instr = slotByte(p, end);
+		if (b & 0x04) s->vol = slotByte(p, end);
+		if (b & 0x08) s->eff = slotByte(p, end);
+		if (b & 0x10) s->param = slotByte(p, end);
 	}
 	else
 	{
 		s->note = b;
-		s->instr = *p++;
-		s->vol = *p++;
-		s->eff = *p++;
-		s->param = *p++;
+		s->instr = slotByte(p, end);
+		s->vol = slotByte(p, end);
+		s->eff = slotByte(p, end);
+		s->param = slotByte(p, end);
 	}
 	return p;
 }
 
-/*	step over one packed slot without decoding it (row skipping)  */
-const uint8_t *skipSlot(const uint8_t *p)
+/*	step over one packed slot without decoding it (row skipping), stopping
+	at end  */
+const uint8_t *skipSlot(const uint8_t *p, const uint8_t *end)
 {
+	if (p >= end)
+		return end;
 	uint8_t b = *p++;
+	size_t n = 4;
 	if (b & 0x80)
-	{
-		if (b & 0x01) p++;
-		if (b & 0x02) p++;
-		if (b & 0x04) p++;
-		if (b & 0x08) p++;
-		if (b & 0x10) p++;
-	}
-	else
-		p += 4;
-	return p;
+		n = (b & 0x01) + ((b >> 1) & 1) + ((b >> 2) & 1) + ((b >> 3) & 1) +
+			((b >> 4) & 1);
+	return n <= (size_t)(end - p) ? p + n : end;
 }
 
 /*	fetch row `row` of a sparse pattern into slots[chans].  packedSize
-	bounds every scan: a truncated or mis-parsed PXM must stop at the end
-	of the pattern rather than hunt for a 0xFF past the module buffer.  */
+	bounds every scan and every slot read: a truncated or mis-parsed PXM
+	must stop at the end of the pattern rather than hunt for a 0xFF past
+	the module buffer (the parse has already checked that the pattern's
+	packedSize bytes lie inside it).  */
 void fetchRow(const XmPatternRef *pat, int row, int chans, RowSlot *slots)
 {
 	memset(slots, 0, sizeof(RowSlot) * (size_t)chans);
@@ -160,7 +167,7 @@ void fetchRow(const XmPatternRef *pat, int row, int chans, RowSlot *slots)
 		while (p < end && *p != 0xFF)
 		{
 			p++;
-			p = skipSlot(p);
+			p = skipSlot(p, end);
 		}
 		if (p >= end)
 			return;
@@ -171,7 +178,7 @@ void fetchRow(const XmPatternRef *pat, int row, int chans, RowSlot *slots)
 		int c = *p++;
 		RowSlot tmp;
 		memset(&tmp, 0, sizeof(tmp));
-		p = readSlot(p, &tmp);
+		p = readSlot(p, end, &tmp);
 		if (c < chans)
 		{
 			slots[c] = tmp;
@@ -347,6 +354,10 @@ void triggerNote(XmSongState *s, int ch, int note)
 {
 	XmChannelState &c = s->ch[ch];
 	const XmModule *mod = s->mod;
+	/*	FT2's triggerNote sets ch->noteNum before it looks the instrument
+		up, so a note on an instrument with no sample (or none at all) is
+		still the one a later bare EDx replays  */
+	c.trigNote = (uint8_t)note;
 	InstrView iv;
 	if (!instrView(mod, c.instr, &iv))
 	{
@@ -439,6 +450,11 @@ void doKeyOff(XmSongState *s, int ch)
 void processSlotTick0(XmSongState *s, int ch, const RowSlot *sl)
 {
 	XmChannelState &c = s->ch[ch];
+	/*	a note delay lives for its row (processNoteDelayTickN): one that
+		never fired (EDx with x >= speed) dies with it, as in FT2 - left
+		armed it went off in whichever later row first ran that many ticks  */
+	c.delayTick = 0;
+	c.delayedInstr = 0;
 	c.effect = sl->present ? sl->eff : 0;
 	c.param = sl->present ? sl->param : 0;
 	if (!sl->present)
@@ -453,6 +469,13 @@ void processSlotTick0(XmSongState *s, int ch, const RowSlot *sl)
 	int delayTicks = (sl->eff == 14 && (sl->param >> 4) == 0x0D)
 						 ? (sl->param & 0x0F) : 0;
 
+	/*	The instrument column is taken now even on an EDx row: FT2's
+		getNewNote assigns ch->instrNum before its note-delay return, so a
+		delay that never fires (x >= speed) still leaves its instrument for
+		the next note.  The rest of the row - the note, the instrument's
+		volume/pan reset and the set-volume/set-pan part of the volume column
+		- waits for the delay tick (processNoteDelayTickN); until then the
+		old note plays on.  */
 	if (sl->instr)
 		c.instr = sl->instr;
 
@@ -466,6 +489,7 @@ void processSlotTick0(XmSongState *s, int ch, const RowSlot *sl)
 	{
 		c.delayedNote = (uint8_t)note;
 		c.delayTick = (uint8_t)delayTicks;
+		c.delayedInstr = sl->instr;
 	}
 	else if (note == 97)
 	{
@@ -499,8 +523,8 @@ void processSlotTick0(XmSongState *s, int ch, const RowSlot *sl)
 	if (sl->instr && note != 97 && !delayTicks)
 		resetInstrument(s, ch);
 
-	/* volume column, tick 0 */
-	uint8_t v = sl->vol;
+	/* volume column, tick 0 - none of it on a note-delay row (FT2) */
+	uint8_t v = delayTicks ? 0 : sl->vol;
 	if (v >= 0x10 && v <= 0x50)
 		c.volume = (int16_t)clampi(v - 0x10, 0, 64);
 	else if ((v & 0xF0) == 0x80)
@@ -676,24 +700,45 @@ void tonePorta(XmChannelState &c)
 	c.period = c.basePeriod;
 }
 
+/*	The delayed note fires, FT2's noteDelay: the note triggers on the
+	instrument the row set at tick 0, the instrument column (only if the row
+	had one) resets volume/pan, and then the row's set-volume or set-pan
+	volume column lands on the new note.  It runs after the tick's
+	volume-column slide, as FT2 orders them, so a slide on the delay tick
+	moves the old note and the reset stands.
+
+	The tick is counted within the row's current pass: under EEx (pattern
+	delay) a row runs speed * (EEx + 1) ticks, and FT2 compares the delay
+	against speed - song.tick, which restarts every pass.  So a delay fires
+	once per pass - ED2 + EE1 at speed 6 plays at ticks 2 and 8 - and one
+	at or above the speed never fires.  An EDx row with no note replays the
+	channel's last triggered note (FT2's triggerNote takes note 0 as
+	ch->noteNum); on a channel that has played nothing it triggers nothing.
+	The row's state stays armed for the next pass; the next row clears it
+	(processSlotTick0).  */
+void processNoteDelayTickN(XmSongState *s, int ch, int tick)
+{
+	XmChannelState &c = s->ch[ch];
+	if (!c.delayTick || tick % s->speed != c.delayTick)
+		return;
+	int note = c.delayedNote ? c.delayedNote : c.trigNote;
+	if (note == 97)
+		doKeyOff(s, ch);
+	else if (note >= 1 && note <= 96 && c.instr)
+		triggerNote(s, ch, note);
+	if (c.delayedInstr && note != 97)
+		resetInstrument(s, ch);
+	uint8_t v = c.rowVolCol;
+	if (v >= 0x10 && v <= 0x50)
+		c.volume = (int16_t)clampi(v - 0x10, 0, 64);
+	else if ((v & 0xF0) == 0xC0)
+		c.pan = (int16_t)((v & 0x0F) << 4);
+}
+
 void processTickN(XmSongState *s, int ch, int tick)
 {
 	XmChannelState &c = s->ch[ch];
 	uint8_t p = c.param;
-
-	/* delayed note fires on its tick */
-	if (c.delayTick && tick == c.delayTick)
-	{
-		int note = c.delayedNote;
-		c.delayTick = 0;
-		if (note == 97)
-			doKeyOff(s, ch);
-		else if (note >= 1 && note <= 96 && c.instr)
-		{
-			triggerNote(s, ch, note);
-			resetInstrument(s, ch);
-		}
-	}
 
 	switch (c.effect)
 	{
@@ -1037,6 +1082,7 @@ void songTick(XmSongState *s)
 				continue;
 			processTickN(s, ch, s->tick);
 			processVolColTickN(s, ch, s->ch[ch].rowVolCol);
+			processNoteDelayTickN(s, ch, s->tick);
 		}
 	}
 

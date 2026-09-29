@@ -185,18 +185,18 @@ static void streamEngineTests(void)
 	check(readSAt(track1) == 1, "CdlReadS accepted");
 	for (int v = 0; v < 4; v++)
 		Port_CdVblank(60);				/* 10 sectors: 0..9 */
-	check(Spu_CdInCountForTest() == XA_SECTOR_SAMPLES,
-		  "4 vblanks: exactly one audio sector decoded (2.5 sectors/vblank)");
+	check(Spu_CdInCount() == XA_PREROLL_FRAMES + XA_SECTOR_SAMPLES,
+		  "4 vblanks: pre-roll + exactly one audio sector (2.5 sectors/vblank)");
 	check(g_cbDataReady == 1 && g_cbTrack0 == 1,
 		  "4 vblanks: one Track==0 data delivery (slot 0)");
 	for (int v = 4; v < 13; v++)
 		Port_CdVblank(60);				/* 32 sectors: 0..31 */
-	check(Spu_CdInCountForTest() == XA_SECTOR_SAMPLES,
+	check(Spu_CdInCount() == XA_PREROLL_FRAMES + XA_SECTOR_SAMPLES,
 		  "13 vblanks: still one audio sector (31.5 < 33 delivered)");
 	for (int v = 13; v < 14; v++)
 		Port_CdVblank(60);				/* 35 sectors: 0..34 */
-	check(Spu_CdInCountForTest() == 2 * XA_SECTOR_SAMPLES,
-		  "14 vblanks: the group-1 chan-1 sector landed");
+	check(Spu_CdInCount() == XA_PREROLL_FRAMES + 2 * XA_SECTOR_SAMPLES,
+		  "14 vblanks: the group-1 chan-1 sector landed, no second pre-roll");
 	check(g_cbLastTermTrack == 2, "chan-2 terminator delivered and seen");
 	check(g_cbDataReady == 3, "zero sectors + other-channel terminator delivered");
 
@@ -206,7 +206,7 @@ static void streamEngineTests(void)
 	check(g_cbTermWord == 0x84000160u,
 		  "own terminator word3 = ID 352 + chan 1 in Track bits 10-14");
 	check(g_cbDataReady == 5, "delivery stopped at the pause (3 zeros + 2 terms)");
-	check(Spu_CdInCountForTest() == 0, "pause cleared the CD-input ring");
+	check(Spu_CdInCount() == 0, "pause cleared the CD-input ring");
 	int before = g_cbDataReady;
 	for (int v = 0; v < 10; v++)
 		Port_CdVblank(60);
@@ -217,8 +217,8 @@ static void streamEngineTests(void)
 	check(readSAt(track1 + 32) == 1, "resume ReadS accepted");
 	for (int v = 0; v < 2; v++)
 		Port_CdVblank(60);				/* 5 sectors: 32..36 */
-	check(Spu_CdInCountForTest() == XA_SECTOR_SAMPLES,
-		  "resume: group-1 audio decoded from the new position");
+	check(Spu_CdInCount() == XA_PREROLL_FRAMES + XA_SECTOR_SAMPLES,
+		  "resume: pre-roll again, then group-1 audio from the new position");
 	check(g_cbTrack0 == 1, "resume: slot-0 zero sector delivered");
 	CdControlF(CdlPause, 0);
 
@@ -227,12 +227,12 @@ static void streamEngineTests(void)
 	check(readSAt(track1) == 1, "ReadS with no callback accepted");
 	for (int v = 0; v < 10; v++)
 		Port_CdVblank(60);
-	check(Spu_CdInCountForTest() == 0, "held stream decodes nothing");
+	check(Spu_CdInCount() == 0, "held stream decodes nothing");
 	CdReadyCallback((CdlCB)testReadyCb);
 	before = g_cbDataReady;
 	for (int v = 0; v < 4; v++)
 		Port_CdVblank(60);
-	check(Spu_CdInCountForTest() == XA_SECTOR_SAMPLES &&
+	check(Spu_CdInCount() == XA_PREROLL_FRAMES + XA_SECTOR_SAMPLES &&
 		  g_cbDataReady == before + 1,
 		  "re-registered callback resumes from the held position");
 	CdControlF(CdlPause, 0);
@@ -246,6 +246,113 @@ static void streamEngineTests(void)
 	XaStream_ResetForTest();
 	remove("xa_test_tmp\\TRACK1.IXA");
 	check(_rmdir("xa_test_tmp") == 0, "synthetic disc cleaned up");
+}
+
+/*****************************************************************************/
+/*	No gap mid-line (issue #59).  xa_test_gap/TRACK1.IXA: 6 groups, slot 0
+	a zero data sector, slots 1-31 audio for chan==slot, every sample
+	0x3000.  For every channel, at 60Hz (735 frames per vblank) and 50Hz
+	(882), the dump path's order - Port_CdVblank, then that vblank's frames
+	rendered - must produce one unbroken run of nonzero output as long as
+	the six sectors: a sector quantized to a vblank lands up to one vblank
+	late, and without the pre-roll the ring ran dry before it on most
+	interleave slots (a 63-sample click at 60Hz, 126 at 50Hz).  */
+static void noGapTest(void)
+{
+	_mkdir("xa_test_gap");
+	FILE *f = fopen("xa_test_gap\\TRACK1.IXA", "wb");
+	check(f != NULL, "gap disc created");
+	if (!f)
+		return;
+	for (int s = 0; s < 6 * 32; s++)
+	{
+		if (s % 32 == 0)
+			writeZeroSector(f);
+		else
+			writeAudioSector(f, s % 32, 0x3);
+	}
+	fclose(f);
+
+	_putenv("SBSP_DATA_DIR=xa_test_gap");
+	Port_CdRebuildDirForTest();
+	XaStream_ResetForTest();
+	CdlFILE cf;
+	check(CdSearchFile(&cf, (char *)"\\TRACK1.IXA;1") != NULL, "gap disc in the virtual dir");
+	long track1 = CdPosToInt(&cf.pos);
+
+	Spu_Lock();
+	memset(g_spuVoice, 0, sizeof(SpuVoiceState) * SPU_NVOICES);
+	g_spuMasterVolL = g_spuMasterVolR = 0x3FFF;
+	g_spuCdVolL = g_spuCdVolR = 0x7FFF;
+	g_spuCdMixOn = 1;
+	Spu_Unlock();
+	Spu_SetCdAtv(128, 0, 0, 128);
+	CdReadyCallback((CdlCB)testReadyCb);
+	u_char mode = 0xE8;
+	CdControlB(CdlSetmode, &mode, 0);
+
+	const int lineFrames = 6 * XA_SECTOR_SAMPLES * 44100 / 18900;	/* 56448 */
+	static int16_t out[120 * 882 * 2];
+	int badRuns = 0;
+	const int rates[2] = { 60, 50 };
+	for (int r = 0; r < 2; r++)
+	{
+		int hz = rates[r], per = 44100 / hz;
+		for (int chan = 1; chan < 32; chan++)
+		{
+			Spu_CdInClear();
+			u_char filt[4] = { 1, (u_char)chan, 0, 0 };
+			CdControlF(CdlSetfilter, filt);
+			readSAt(track1);
+			/*	deliver up to the channel's last audio sector (never past the
+				disc's end), then keep rendering until the ring has drained  */
+			int lastSector = 5 * 32 + chan, n = 0;
+			for (int v = 0; v < 120; v++)
+			{
+				if ((v * 150) / hz < lastSector + 1)
+					Port_CdVblank(hz);
+				Spu_RenderFrames(out + n * 2, per);
+				n += per;
+			}
+			CdControlF(CdlPause, 0);
+
+			int first = -1, last = -1, zeros = 0;
+			for (int i = 0; i < n; i++)
+				if (out[i * 2] != 0)
+				{
+					if (first < 0)
+						first = i;
+					last = i;
+				}
+			for (int i = first; first >= 0 && i <= last; i++)
+				if (out[i * 2] == 0)
+					zeros++;
+			/*	the ramps in and out interpolate against silence, so the run
+				is the sectors' length give or take a source sample  */
+			if (first < 0 || zeros || last - first + 1 < lineFrames - 3)
+			{
+				if (badRuns < 4)
+					std::printf("  (chan %d at %dHz: %d zero frames mid-line, run %d "
+								"of %d)\n", chan, hz, zeros,
+								first < 0 ? 0 : last - first + 1, lineFrames);
+				badRuns++;
+			}
+		}
+	}
+	check(badRuns == 0, "XA pre-roll: no gap mid-line on any slot, 60Hz or 50Hz");
+	if (badRuns)
+		std::printf("  (%d of 62 channel/rate runs broken)\n", badRuns);
+
+	Spu_Lock();
+	g_spuCdMixOn = 0;
+	g_spuCdVolL = g_spuCdVolR = 0;
+	Spu_Unlock();
+	CdReadyCallback(NULL);
+	_putenv("SBSP_DATA_DIR=xa_test_gap\\gone");
+	Port_CdRebuildDirForTest();
+	XaStream_ResetForTest();
+	remove("xa_test_gap\\TRACK1.IXA");
+	check(_rmdir("xa_test_gap") == 0, "gap disc cleaned up");
 }
 
 /*****************************************************************************/
@@ -286,14 +393,56 @@ static void mixSliceTest(void)
 	Spu_Lock();
 	g_spuCdMixOn = 0;
 	Spu_Unlock();
-	unsigned occBefore = Spu_CdInCountForTest();
+	unsigned occBefore = Spu_CdInCount();
 	Spu_RenderFrames(outBuf, 512);
 	bool silent = true;
 	for (int i = 0; i < 512 && silent; i++)
 		silent = outBuf[i * 2] == 0 && outBuf[i * 2 + 1] == 0;
 	check(silent, "CD slice: mix-off contributes nothing");
-	check(Spu_CdInCountForTest() < occBefore,
+	check(Spu_CdInCount() < occBefore,
 		  "CD slice: mix-off still consumes the ring (no back-up)");
+
+	Spu_Lock();
+	g_spuCdMixOn = 0;
+	g_spuCdVolL = g_spuCdVolR = 0;
+	Spu_Unlock();
+	Spu_CdInClear();
+}
+
+/*****************************************************************************/
+/*	Full-swing CD input: alternating +-30000 steps the resampler's taps by
+	60000, and at 18.9kHz the phase reaches 37800, so the interpolation
+	product is ~2.27e9 - past a 32-bit `long`, which is what Windows has on
+	both ABIs.  Interpolating between the two can never leave [-30000,
+	30000]; a wrapped product lands far outside and clips.  */
+static void cdSwingTest(void)
+{
+	Spu_Lock();
+	memset(g_spuVoice, 0, sizeof(SpuVoiceState) * SPU_NVOICES);
+	g_spuMasterVolL = g_spuMasterVolR = 0x3FFF;
+	g_spuCdVolL = g_spuCdVolR = 0x7FFF;
+	g_spuCdMixOn = 1;
+	Spu_Unlock();
+	Spu_SetCdAtv(128, 0, 0, 128);
+	Spu_CdInClear();
+
+	static int16_t mono[XA_SECTOR_SAMPLES];
+	for (int i = 0; i < XA_SECTOR_SAMPLES; i++)
+		mono[i] = (i & 1) ? -30000 : 30000;
+	Spu_CdInPush(mono, XA_SECTOR_SAMPLES);
+
+	static int16_t outBuf[4096 * 2];
+	Spu_RenderFrames(outBuf, 4096);		/* ~1756 of the 4032 source frames */
+	int worst = 0;
+	for (int i = 0; i < 4096 * 2; i++)
+	{
+		int a = outBuf[i] < 0 ? -outBuf[i] : outBuf[i];
+		if (a > worst)
+			worst = a;
+	}
+	check(worst <= 30000, "CD slice: full-swing input interpolates without wrapping");
+	if (worst > 30000)
+		std::printf("  (peak |out| %d)\n", worst);
 
 	Spu_Lock();
 	g_spuCdMixOn = 0;
@@ -341,7 +490,7 @@ static void stereoMixSliceTest(void)
 
 	/*	rate accounting: 512 output frames at 37800/44100 consume ~439
 		ring frames (+-1 for phase).  */
-	unsigned used = 4096 - Spu_CdInCountForTest();
+	unsigned used = 4096 - Spu_CdInCount();
 	unsigned expectUsed = (unsigned)(((int64_t)(8 + 512) * 37800) / 44100);
 	check(used >= expectUsed && used <= expectUsed + 1,
 		  "stereo CD slice: ring drains at the source rate");
@@ -595,7 +744,9 @@ int main(void)
 	}
 
 	streamEngineTests();
+	noGapTest();
 	mixSliceTest();
+	cdSwingTest();
 	stereoMixSliceTest();
 
 	if (g_failures)
