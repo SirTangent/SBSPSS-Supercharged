@@ -1309,29 +1309,39 @@ game `ASSERT`s on.  `readSlot`/`skipSlot` never read past a pattern's
 packed data.  Every shipped PXM walks to exactly its file size and every
 VH table sums exactly to its VB, so none of this is audible.
 
-**Note delay is FT2's.**  On an EDx row (x > 0) nothing of the row happens
-at tick 0 - not the instrument (stashed in `XmChannelState.delayedInstr`),
-not the volume column; at tick x the instrument takes over, the note
-triggers, the instrument resets volume/pan only if the row had one, and
-the row's set-volume or set-pan column lands on the new note.  Before, the
-instrument and volume column hit the old note at tick 0.  A delay that
-never fires in its row (x >= speed) is now dropped at the next row, as FT2
-drops it; before, it stayed armed.  It also follows ft2-clone's
-`noteDelay` (`src/ft2_replayer.c`), which fires when `speed - song.tick`
-equals x: the tick is counted within the row's current pass, so under EEx
-(pattern delay) the note fires once per pass (ED2 + EE1 at speed 6: ticks
-2 and 8) and a delay at or above the speed never fires however long EEx
-makes the row; FT2 runs the volume column before the effect, so a
-volume-column slide on the delay tick moves the old note and the delayed
-note's volume reset stands (`processNoteDelayTickN` runs after
-`processVolColTickN`); and an EDx row with no note replays the channel's
-last triggered note (`triggerNote` takes note 0 as `ch->noteNum`, kept
-here as `XmChannelState.trigNote` - a tone-portamento target does not
-change it).  No shipped module has EEx, a note-less EDx row or a slide on
-an EDx row.  Still not FT2's: a delayed key-off (FT2 follows it with
-`triggerInstrument`, which clears the key-off and restarts the envelopes)
-and ED0 under EEx (FT2 retriggers at each later pass); neither occurs in
-the shipped modules.
+**Note delay is FT2's.**  On an EDx row (x > 0) only the instrument
+number is taken at tick 0 - FT2's `getNewNote` assigns `ch->instrNum`
+before its note-delay return, so a delay that never fires (x >= speed)
+still leaves its instrument for the channel's next note; the volume column
+waits.  At tick x the note triggers on that instrument, the instrument
+resets volume/pan only if the row had one (`XmChannelState.delayedInstr`
+remembers that), and the row's set-volume or set-pan column lands on the
+new note.  Before, the instrument's reset and the volume column hit the
+old note at tick 0.  A delay that never fires in its row is now dropped at
+the next row, as FT2 drops it; before, it stayed armed.  It also follows
+ft2-clone's `noteDelay` (`src/ft2_replayer.c`), which fires when
+`speed - song.tick` equals x: the tick is counted within the row's current
+pass, so under EEx (pattern delay) the note fires once per pass (ED2 + EE1
+at speed 6: ticks 2 and 8) and a delay at or above the speed never fires
+however long EEx makes the row; the note delay runs after the volume
+column (`processNoteDelayTickN` after `processVolColTickN`; the other
+effects are unchanged), so a volume-column slide on the delay tick moves
+the old note and the delayed note's volume reset stands; and an EDx row
+with no note replays the channel's last triggered note (`triggerNote`
+takes note 0 as `ch->noteNum`, kept here as `XmChannelState.trigNote`,
+which is set before the instrument lookup as FT2's is - a note on an
+instrument with no sample still counts - and which a tone-portamento
+target does not change).  No shipped module has EEx, a note-less EDx row
+or a slide on an EDx row.  Still not FT2's: a delayed key-off (FT2 follows
+it with `triggerInstrument`, which clears the key-off and restarts the
+envelopes); ED0 under EEx (FT2 retriggers at each later pass); and the
+envelope, autovibrato and fadeout of the old note between an EDx row's
+tick 0 and its delay tick, which the port reads from the instrument
+number the row just set while FT2 keeps reading the instrument the note
+was triggered with (`ch->instrPtr`).  The first two do not occur in the
+shipped modules; the third does at 11 row-positions (chapters 1, 2, 4
+and 6), every one changing to an instrument whose envelope, autovibrato
+and fadeout bytes are identical to the old one's.
 
 What is audible: the shipped modules have 90 EDx rows (23 in sb-title,
 67 across `CHAPTER1`-`6`), every one with x below its row's speed and a

@@ -562,14 +562,21 @@ int main()
 			F: ED2 + instrument + volume-column slide down 2, with EE1 - the
 			note fires at tick 2 and again at tick 8 (tick 2 of the second
 			pass); each time the slide runs first and the instrument's
-			volume reset stands, as FT2 runs the volume column before the
-			effect.  G: a key-off row, then ED2 with no note (set volume
+			volume reset stands, as the note delay runs after the volume
+			column.  G: a key-off row, then ED2 with no note (set volume
 			32) - FT2's triggerNote takes note 0 as the channel's last note,
 			so 49 plays again; channel 1 has played nothing, so its bare ED2
-			triggers nothing.  H: the last note is the last one TRIGGERED -
-			FT2's noteNum, which a tone-portamento target (row 1, 3xx to 61)
-			does not change - so row 2's bare ED2 replays 49.  */
-		static const Scenario sc[8] = {
+			(with an instrument, so the delay tick is reached) triggers
+			nothing.  H: the last note is the last one TRIGGERED - FT2's
+			noteNum, which a tone-portamento target (row 1, 3xx to 61) does
+			not change - so row 2's bare ED2 replays 49.  I: an EDx row
+			takes its instrument at tick 0 (FT2's getNewNote assigns instrNum
+			before its note-delay return), so ED7's never-firing row still
+			leaves instrument 2 for row 2's plain note.  J: FT2's triggerNote
+			sets noteNum before the instrument lookup, so 65 on instrument 7
+			(no such instrument: silence) is still the note a bare ED2 on
+			instrument 1 replays.  */
+		static const Scenario sc[10] = {
 			{ "A", { { 0, 0, 49, 1, 0,    0,    0    },
 					 { 1, 0, 61, 2, 0x17, 0x0E, 0xD2 } }, 2 },
 			{ "B", { { 0, 0, 49, 1, 0x30, 0,    0    },
@@ -588,16 +595,22 @@ int main()
 			{ "G", { { 0, 0, 49, 1, 0,    0,    0    },
 					 { 1, 0, 97, 0, 0,    0,    0    },
 					 { 2, 0, 0,  0, 0x30, 0x0E, 0xD2 },
-					 { 2, 1, 0,  0, 0,    0x0E, 0xD2 } }, 4 },
+					 { 2, 1, 0,  1, 0,    0x0E, 0xD2 } }, 4 },
 			{ "H", { { 0, 0, 49, 1, 0,    0,    0    },
 					 { 1, 0, 61, 0, 0,    0x03, 0x10 },
 					 { 2, 0, 0,  0, 0,    0x0E, 0xD2 } }, 3 },
+			{ "I", { { 0, 0, 49, 1, 0,    0,    0    },
+					 { 1, 0, 61, 2, 0,    0x0E, 0xD7 },
+					 { 2, 0, 63, 0, 0,    0,    0    } }, 3 },
+			{ "J", { { 0, 0, 49, 1, 0,    0,    0    },
+					 { 1, 0, 65, 7, 0,    0,    0    },
+					 { 2, 0, 0,  1, 0,    0x0E, 0xD2 } }, 3 },
 		};
 		struct Snap
 		{
 			int note, instr, volume, pan, row, speed, keyOff, active, active1;
 		} snap[21];
-		for (int k = 0; k < 8; k++)
+		for (int k = 0; k < 10; k++)
 		{
 			size_t n = buildPxm(mod, 3, sc[k].cells, sc[k].nCells);
 			size_t walked = 0;
@@ -633,9 +646,9 @@ int main()
 				ok = snap[6].note == 49 && snap[6].volume == 40 && snap[6].instr == 1;
 				for (int u = 7; u <= 8; u++)
 					ok = ok && snap[u].note == 49 && snap[u].volume == 40 &&
-						 snap[u].instr == 1;
-				check(ok, "EDx A: ticks 0-1 leave the old note, its volume and "
-						  "the instrument alone");
+						 snap[u].instr == 2;
+				check(ok, "EDx A: ticks 0-1 take the instrument number but leave "
+						  "the old note and its volume alone");
 				check(snap[9].note == 61 && snap[9].volume == 7 && snap[9].instr == 2,
 					  "EDx A: the delay tick plays the new note at the row's volume");
 				break;
@@ -655,7 +668,8 @@ int main()
 					  "EDx D: row 2 runs 8 ticks (the case is live)");
 				ok = true;
 				for (int u = 7; u <= 20; u++)
-					ok = ok && snap[u].note == 49 && snap[u].instr == 1;
+					ok = ok && snap[u].note == 49 && snap[u].instr == 2 &&
+						 snap[u].volume == 40;
 				check(ok, "EDx D: a delay >= speed never fires, not even in a "
 						  "later, longer row");
 				break;
@@ -664,7 +678,8 @@ int main()
 					  "EDx E: EE1 stretches row 1 to 12 ticks (the case is live)");
 				ok = true;
 				for (int u = 7; u <= 18; u++)
-					ok = ok && snap[u].note == 49 && snap[u].instr == 1;
+					ok = ok && snap[u].note == 49 && snap[u].instr == 2 &&
+						 snap[u].volume == 40;
 				check(ok, "EDx E: ED7 at speed 6 never fires, even in a row "
 						  "EE1 runs for 12 ticks");
 				break;
@@ -693,12 +708,32 @@ int main()
 				check(ok, "EDx G: on a channel with no last note it triggers "
 						  "nothing");
 				break;
-			default:
+			case 7:
 				check(snap[14].note == 61,
 					  "EDx H: the portamento row made 61 the channel's note");
 				check(snap[15].note == 49,
 					  "EDx H: ED2 with no note replays the last triggered "
 					  "note, not the portamento target");
+				break;
+			case 8:
+				ok = true;
+				for (int u = 7; u <= 12; u++)
+					ok = ok && snap[u].note == 49 && snap[u].instr == 2 &&
+						 snap[u].volume == 40;
+				check(ok, "EDx I: the row takes its instrument at tick 0 and "
+						  "the old note plays on, as ED7 never fires");
+				check(snap[13].note == 63 && snap[13].instr == 2 &&
+					  snap[13].active == 1,
+					  "EDx I: the next row's plain note plays on that "
+					  "instrument");
+				break;
+			default:
+				check(snap[7].active == 0 && snap[7].instr == 7,
+					  "EDx J: a note on an instrument with no sample is silent");
+				check(snap[15].note == 65 && snap[15].instr == 1 &&
+					  snap[15].active == 1,
+					  "EDx J: a bare ED2 replays that note, the last one "
+					  "triggered");
 				break;
 			}
 			if (g_failures != before)
