@@ -59,13 +59,22 @@ static int32_t fcReg(int i)  { return (int32_t)s_cr[21 + i]; }		/* RFC/G/B  */
 	flag check and sign-extension after EVERY addition (psx-spx: intermediate
 	overflows are detected even when the final sum is back in range).  */
 
+/*	Left shift of a possibly negative value, done on the unsigned bit
+	pattern: a signed left shift of a negative is undefined before C++20
+	(the game dialect is gnu++98), and the unsigned form is the exact bits
+	every compiler already produces.  */
+static int64_t shl64(int64_t v, int n)
+{
+	return (int64_t)((uint64_t)v << n);
+}
+
 static int64_t ext44(int i, int64_t v)			/* i = 1..3 */
 {
 	if (v >= ((int64_t)1 << 43))
 		flagB(31 - i);							/* MAC1/2/3 positive: 30/29/28 */
 	if (v < -((int64_t)1 << 43))
 		flagB(28 - i);							/* MAC1/2/3 negative: 27/26/25 */
-	return (v << 20) >> 20;
+	return shl64(v, 20) >> 20;
 }
 
 static int32_t setMAC0(int64_t v)
@@ -156,7 +165,7 @@ static void pushSXY(int32_t x, int32_t y)
 	y = satSXY(y, 13);							/* SY2 sat: bit 13 */
 	s_dr[12] = s_dr[13];
 	s_dr[13] = s_dr[14];
-	s_dr[14] = (uint32_t)((x & 0xFFFF) | (y << 16));
+	s_dr[14] = (uint32_t)((x & 0xFFFF) | ((uint32_t)y << 16));
 }
 
 static void pushColorFromMAC(void)				/* MAC1-3 >> 4, sat 0..FF */
@@ -273,7 +282,7 @@ static void rtpsCore(const RtTr *g, int v, int sf, int lm, int dq)
 
 	for (int i = 1; i <= 3; i++)
 	{
-		int64_t m = (int64_t)g->tr[i - 1] << 12;
+		int64_t m = shl64(g->tr[i - 1], 12);
 		m = ext44(i, m + (int64_t)g->m[i - 1][0] * vx);
 		m = ext44(i, m + (int64_t)g->m[i - 1][1] * vy);
 		m = ext44(i, m + (int64_t)g->m[i - 1][2] * vz);
@@ -383,7 +392,7 @@ static void opMVMVA(uint32_t inst)
 				side effects (MAC overflow flags + an IR saturation CHECK
 				with lm=0), then discarded; the result restarts from the
 				vy term.  */
-			int64_t bug = ext44(i, ((int64_t)cv[i - 1] << 12)
+			int64_t bug = ext44(i, shl64(cv[i - 1], 12)
 								   + (int64_t)m[i - 1][0] * vx);
 			int32_t chk = (int32_t)(bug >> shift);
 			if (chk < -0x8000 || chk > 0x7FFF)
@@ -393,7 +402,7 @@ static void opMVMVA(uint32_t inst)
 		}
 		else
 		{
-			mac = ext44(i, ((int64_t)cv[i - 1] << 12)
+			mac = ext44(i, shl64(cv[i - 1], 12)
 						   + (int64_t)m[i - 1][0] * vx);
 			mac = ext44(i, mac + (int64_t)m[i - 1][1] * vy);
 			mac = ext44(i, mac + (int64_t)m[i - 1][2] * vz);
@@ -415,7 +424,7 @@ static void depthCue(int sf, int lm, int64_t base1, int64_t base2, int64_t base3
 
 	for (int i = 1; i <= 3; i++)
 	{
-		int64_t d = ext44(i, ((int64_t)fcReg(i - 1) << 12) - base[i]);
+		int64_t d = ext44(i, shl64(fcReg(i - 1), 12) - base[i]);
 		setIR(i, (int32_t)(d >> shift), 0);		/* intermediate: lm forced 0 */
 		int64_t mac = ext44(i, base[i] + (int64_t)irReg(i) * irReg(0)) >> shift;
 		s_dr[24 + i] = (uint32_t)(int32_t)mac;
@@ -513,7 +522,7 @@ extern "C" void GTE_ExecuteCop2(uint32_t inst)
 	case 0x3E:									/* GPL: MAC = MAC<<sf + IR*IR0 */
 		for (int i = 1; i <= 3; i++)
 		{
-			int64_t mac = ext44(i, ((int64_t)(int32_t)s_dr[24 + i] << shift)
+			int64_t mac = ext44(i, shl64((int32_t)s_dr[24 + i], shift)
 								   + (int64_t)irReg(i) * irReg(0)) >> shift;
 			s_dr[24 + i] = (uint32_t)(int32_t)mac;
 			setIR(i, (int32_t)mac, lm);
@@ -538,9 +547,9 @@ extern "C" void GTE_ExecuteCop2(uint32_t inst)
 
 	case 0x11:									/* INTPL: from IR1-3 */
 		depthCue(sf, lm,
-				 (int64_t)irReg(1) << 12,
-				 (int64_t)irReg(2) << 12,
-				 (int64_t)irReg(3) << 12);
+				 shl64(irReg(1), 12),
+				 shl64(irReg(2), 12),
+				 shl64(irReg(3), 12));
 		break;
 
 	default:

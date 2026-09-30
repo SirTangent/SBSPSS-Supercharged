@@ -40,6 +40,7 @@
 
 #include "stub_log.h"
 #include "mdec/mdec_internal.h"
+#include "cd/str_stream.h"
 
 namespace
 {
@@ -85,8 +86,12 @@ const uint16_t AC_LZ11_X4[16] =
 	0x3402, 0x3002, 0x2C02, 0x7C01, 0x7801, 0x7401, 0x7001, 0x6C01,
 };
 
-/*	A frame's compressed data cannot exceed the whole StSetRing buffer
-	(fmv.cpp: 32 sectors = 64KB), so that is the hard read bound.  */
+/*	The bit reader's bound.  A frame handed out by StGetNext ends where
+	its ring region ends (StrStream_FrameEnd) - NOT 64KB from the frame
+	start, which for a frame late in the game's 64KB StSetRing buffer
+	would let a stream with no end code read far past the ring.  A buffer
+	the stream engine did not hand out (the unit tests' hand-built frames)
+	falls back to one whole ring's worth, 32768 halfwords.  */
 const unsigned kMaxBitstreamHalfwords = 32768;
 
 /*	MSB-first bit reader over little-endian halfwords.  Reads past `end`
@@ -293,8 +298,12 @@ extern "C" int DecDCTvlc3(unsigned long *bs, unsigned long *buf)
 	unsigned outMax = declWords * 2;	/* halfwords, the hardware buffer */
 	unsigned n = 0;
 
+	const uint16_t *end = (const uint16_t *)StrStream_FrameEnd(bs);
+	if (!end)
+		end = hdr + 4 + kMaxBitstreamHalfwords;
+
 	Bits b;
-	bitsInit(&b, hdr + 4, hdr + 4 + kMaxBitstreamHalfwords);
+	bitsInit(&b, hdr + 4, end);
 	int predCr = 0, predCb = 0, predY = 0;
 	int blockIdx = 0;					/* 0=Cr 1=Cb 2..5=Y1..Y4 */
 	int bad = 0;

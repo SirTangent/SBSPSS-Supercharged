@@ -491,6 +491,19 @@ extern "C" u_long StGetNext(u_long **addr, u_long **header)
 	}
 }
 
+extern "C" const void *StrStream_FrameEnd(const void *frame)
+{
+	if (!g_ring || !frame)
+		return NULL;
+	for (int i = g_slotTail; i != g_slotHead; i++)
+	{
+		const FrameSlot *s = slotAt(i);
+		if (s->handedOut == 1 && g_ring + s->offset == (const uint8_t *)frame)
+			return g_ring + s->offset + s->bytes;
+	}
+	return NULL;
+}
+
 extern "C" u_long StFreeRing(u_long *base)
 {
 	for (int i = g_slotTail; i != g_slotHead; i++)

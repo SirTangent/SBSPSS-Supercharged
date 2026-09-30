@@ -4,8 +4,8 @@
 	- LoadImage/MoveImage must be synchronous (animtex.cpp reuses the source
 	  buffer immediately after LoadImage; LoadingIcon DrawPrims right after
 	  MoveImage with no DrawSync).
-	- ClearImage must mask/clamp rects like hardware: actor.cpp:299 passes
-	  {512,256,2048,254}, which must degrade harmlessly.
+	- ClearImage clamps and splits rects like libgpu (libgpuFill): actor.cpp
+	  passes {512,256,2048,254}, which must degrade harmlessly.
 	- PutDrawEnv applies ofs/clip/tpage, honours isbg (fill clip with r0g0b0)
 	  and IGNORES dfe - the loading icon deliberately draws into the
 	  displayed VRAM half, which dfe=0 would veto.
@@ -27,10 +27,9 @@ uint16_t g_vram[VRAM_H][VRAM_W];
 GpuState g_gpu;
 
 /*****************************************************************************/
-/*	VRAM fill used by ClearImage and GP0 0x02: hardware masking.
-	X masked to 0x3F0 steps? (fill x is in 16-halfword steps only for the
-	0x02 command); ClearImage routes through the same rules so oversized
-	rects clamp instead of overrunning.  */
+/*	The GP0(02h) fill: hardware masking - x in 16-halfword steps, w rounded
+	up to 16, and the rect wraps at the VRAM edge.  libgpu's aligned
+	ClearImage lands here after its own clamp (libgpuFill below).  */
 void Raster_FillRect15(int x, int y, int w, int h, uint16_t col15)
 {
 	x &= 0x3F0;
@@ -167,6 +166,10 @@ extern "C" uint32_t GPU_DisplayCRC32(int *masked)
 	return crc ^ 0xFFFFFFFFu;
 }
 
+static void libgpuFill(int x, int y, int w, int h, uint16_t col15,
+					   int cx0, int cy0, int cx1, int cy1);
+static uint16_t rgb15(u_char r, u_char g, u_char b);
+
 extern "C" DRAWENV *PutDrawEnv(DRAWENV *env)
 {
 	/*	E1: the hardware word is tpage with dtd in bit 9 (and dfe in bit 10,
@@ -186,10 +189,11 @@ extern "C" DRAWENV *PutDrawEnv(DRAWENV *env)
 
 	if (env->isbg)
 	{
-		uint16_t col = (uint16_t)(((env->r0 >> 3) & 0x1F)
-					 | (((env->g0 >> 3) & 0x1F) << 5)
-					 | (((env->b0 >> 3) & 0x1F) << 10));
-		Raster_FillRect15(env->clip.x, env->clip.y, env->clip.w, env->clip.h, col);
+		/*	libgpu's own clear packet, emitted after the env: the same
+			clamp and 02h/60h split as ClearImage, clipped by the env  */
+		libgpuFill(env->clip.x, env->clip.y, env->clip.w, env->clip.h,
+				   rgb15(env->r0, env->g0, env->b0),
+				   g_gpu.clipX0, g_gpu.clipY0, g_gpu.clipX1, g_gpu.clipY1);
 	}
 	return env;
 }
@@ -216,10 +220,13 @@ extern "C" void SetDrawArea(DR_AREA *p, RECT *r)
 }
 
 /*****************************************************************************/
-/*	rect helper shared by the transfers: top-left masked into VRAM, sizes
-	clamped so a bogus rect cannot overrun the array (hardware wraps; the
-	one oversized caller - actor.cpp ClearImage w=2048 - just wants "a lot",
-	and masking reproduces hardware's 10/9-bit coordinate space).  */
+/*	The transfers model two layers, like ClearImage below (issue #26): the
+	GP0 command masks a rect into the 10/9-bit VRAM space, but the libgpu
+	call in front of it decides first what reaches the command.
+
+	maskRect is the raw GP0 rule - top-left masked into VRAM, size
+	((n-1) & mask) + 1, so 0 means the full 1024/512.  Only MoveImage
+	passes a rect to it verbatim.  */
 static void maskRect(const RECT *r, int *x, int *y, int *w, int *h)
 {
 	*x = r->x & 0x3FF;
@@ -228,10 +235,29 @@ static void maskRect(const RECT *r, int *x, int *y, int *w, int *h)
 	*h = ((r->h - 1) & 0x1FF) + 1;
 }
 
+/*	LoadImage/StoreImage (LIBGPU.LIB module SYS, executors 0x1b44 and
+	0x1d80) clamp w to [0,1024] and h to [0,512] and size the DMA from
+	w*h, so a zero-size rect moves nothing.  Through maskRect it would
+	have become a full 1024- or 512-wide transfer through the caller's
+	buffer (issue #60).  Returns 0 when there is nothing to move.  */
+static int libgpuXferRect(const RECT *r, int *x, int *y, int *w, int *h)
+{
+	int cw = r->w < 0 ? 0 : (r->w > VRAM_W ? VRAM_W : (int)r->w);
+	int ch = r->h < 0 ? 0 : (r->h > VRAM_H ? VRAM_H : (int)r->h);
+	if (cw * ch == 0)
+		return 0;
+	*x = r->x & 0x3FF;
+	*y = r->y & 0x1FF;
+	*w = cw;
+	*h = ch;
+	return 1;
+}
+
 extern "C" int LoadImage(RECT *rect, u_long *p)
 {
 	int x, y, w, h;
-	maskRect(rect, &x, &y, &w, &h);
+	if (!libgpuXferRect(rect, &x, &y, &w, &h))
+		return 0;
 	const uint16_t *src = (const uint16_t *)p;
 	for (int row = 0; row < h; row++)
 	{
@@ -245,7 +271,8 @@ extern "C" int LoadImage(RECT *rect, u_long *p)
 extern "C" int StoreImage(RECT *rect, u_long *p)
 {
 	int x, y, w, h;
-	maskRect(rect, &x, &y, &w, &h);
+	if (!libgpuXferRect(rect, &x, &y, &w, &h))
+		return 0;
 	uint16_t *dst = (uint16_t *)p;
 	for (int row = 0; row < h; row++)
 	{
@@ -256,8 +283,13 @@ extern "C" int StoreImage(RECT *rect, u_long *p)
 	return 0;
 }
 
+/*	libgpu's MoveImage (module SYS, 0x6e8) refuses a zero width or height
+	with -1 and otherwise hands the rect to GP0(80h) unclamped, so the raw
+	rule applies to everything else.  */
 extern "C" int MoveImage(RECT *rect, int x, int y)
 {
+	if (rect->w == 0 || rect->h == 0)
+		return -1;
 	int sx, sy, w, h;
 	maskRect(rect, &sx, &sy, &w, &h);
 	x &= 0x3FF;
@@ -277,43 +309,101 @@ extern "C" int MoveImage(RECT *rect, int x, int y)
 	return 0;
 }
 
+/*****************************************************************************/
+/*	libgpu's fill, shared by ClearImage, ClearImage2 and PutDrawEnv's isbg
+	clear (issues #26, #28, #29).  Disassembled from LIBGPU.LIB module SYS:
+	ClearImage (.text 0x500) and ClearImage2 (0x590) queue the same
+	executor (0x1914), and PutDrawEnv's background clear comes from the
+	same packet builder (0x1470).
+
+	The builder first CLAMPS the rect: w -> [0,1023], h -> [0,511].  Without
+	that, fmv.cpp's teardown ClearImage({0,0,512,512}) would mask h to 0 in
+	the raw fill rule and clear NOTHING, leaving the movie's RGB24 bytes on
+	screen as garbage when playback stops (issue #26).  Then it splits:
+
+	- x and w both 64-aligned: E6=0, E1 (the current mode), then GP0(02h).
+	  That is the raw fill - Raster_FillRect15, which masks and WRAPS at
+	  the VRAM edge like the hardware command.
+
+	- otherwise: E3=0, E4=FFFFFF, E5=0, E6=0, E1, then a GP0(60h) opaque
+	  monochrome rect of (x, y, w, h), and E3/E4/E5 restored from the
+	  library's copy afterwards.  So the draw is NOT clipped by the game's
+	  draw env (issue #28 assumed it was) and ignores the mask bits: it is
+	  an exact, undithered fill with the coordinates sign-extended to 11
+	  bits like any GP0 vertex.  x clips at 1023; y clips at 511 (the
+	  older 160-pin GPU's behaviour; newer GPUs may wrap, since libgpu
+	  emits E4=FFFFFF raw).  No game caller reaches the y edge.
+	  PutDrawEnv's clear runs with the env's own clip and offset in force
+	  and compensates the offset, so it clips to the env's clip rect
+	  instead - pass that as (cx0,cy0)-(cx1,cy1), inclusive; ClearImage
+	  passes the whole of VRAM.
+
+	What survives: libgpu restores only E3/E4/E5.  E6=0 (both paths) and
+	the E1 word it wrote - ClearImage2's with the dfe bit set - stay in
+	force until the next E1 or PutDrawEnv.  The shim models neither: it
+	ignores E6 (the game never sets mask bits) and dfe (header comment),
+	so no state change is visible here.
+
+	The game's calls all land where they did before this split: fmv
+	{0,0,512,512} and {0,0,320,480} and the ClearVRam stripes are aligned
+	(02h), and actor.cpp's cache wipe {512,256,2048,254} clamps to w=1023
+	and so takes the 60h path, which stops at the right edge - the green
+	cache marker never wraps into the framebuffer columns (a wrap there
+	was once a green block behind the loading token).  */
+static int signext11(int v)
+{
+	return ((int)((unsigned)v << 21)) >> 21;
+}
+
+static void libgpuFill(int x, int y, int w, int h, uint16_t col15,
+					   int cx0, int cy0, int cx1, int cy1)
+{
+	w = w < 0 ? 0 : (w > 1023 ? 1023 : w);
+	h = h < 0 ? 0 : (h > 511 ? 511 : h);
+
+	if (!(x & 0x3F) && !(w & 0x3F))
+	{
+		Raster_FillRect15(x, y, w, h, col15);		/* GP0(02h) */
+		return;
+	}
+
+	/* GP0(60h): inclusive edges, clipped to the draw area and to VRAM */
+	int x0 = signext11(x), y0 = signext11(y);
+	int x1 = x0 + w - 1,   y1 = y0 + h - 1;
+	if (x0 < cx0) x0 = cx0;
+	if (y0 < cy0) y0 = cy0;
+	if (x1 > cx1) x1 = cx1;
+	if (y1 > cy1) y1 = cy1;
+	if (x0 < 0) x0 = 0;
+	if (y0 < 0) y0 = 0;
+	if (x1 > VRAM_W - 1) x1 = VRAM_W - 1;
+	if (y1 > VRAM_H - 1) y1 = VRAM_H - 1;
+	for (int row = y0; row <= y1; row++)
+		for (int c = x0; c <= x1; c++)
+			g_vram[row][c] = col15;
+}
+
+static uint16_t rgb15(u_char r, u_char g, u_char b)
+{
+	return (uint16_t)(((r >> 3) & 0x1F)
+					| (((g >> 3) & 0x1F) << 5)
+					| (((b >> 3) & 0x1F) << 10));
+}
+
 extern "C" int ClearImage(RECT *rect, u_char r, u_char g, u_char b)
 {
-	uint16_t col = (uint16_t)(((r >> 3) & 0x1F)
-				 | (((g >> 3) & 0x1F) << 5)
-				 | (((b >> 3) & 0x1F) << 10));
+	libgpuFill(rect->x, rect->y, rect->w, rect->h, rgb15(r, g, b),
+			   0, 0, VRAM_W - 1, VRAM_H - 1);
+	return 0;
+}
 
-	/*	libgpu CLAMPS the rect before emitting the GP0(02h) fill - it does
-		not pass it verbatim (disassembled from LIBGPU.LIB's ClearImage
-		packet builder): w -> [0,1023], h -> [0,511].  Without this,
-		fmv.cpp's teardown ClearImage({0,0,512,512}) would mask h to 0 in
-		the raw fill rules below and clear NOTHING, leaving the movie's
-		RGB24 bytes on screen as garbage when playback stops (issue #26).
-		The raw GP0 masking stays in Raster_FillRect15 - it is correct for
-		the command level, wrong for the library call.  (libgpu also
-		reroutes x not 64-aligned through a GP0(60h) draw, which clips by
-		the DRAW env - no game caller does that; log it.)
-
-		A rect crossing the VRAM edge then CLIPS instead of wrapping:
-		actor.cpp's cache wipe ClearImage({512,256,2048,254}, green) means
-		"to the right edge" - clamp alone gives x=512 w=1023, and a
-		wrapping fill would paint the green cache marker across the
-		framebuffer columns 0..511, a green overlay on every loading
-		screen (the retail game never shows that, so the console result
-		of this exact call cannot have wrapped into the display).  */
-	int x = rect->x & 0x3F0;
-	int y = rect->y & 0x1FF;
-	int w = rect->w < 0 ? 0 : (rect->w > 1023 ? 1023 : (int)rect->w);
-	int h = rect->h < 0 ? 0 : (rect->h > 511 ? 511 : (int)rect->h);
-	if (x + w > 1024)
-		w = 1024 - x;
-	if (y + h > 512)
-		h = 512 - y;
-	if (rect->x & 0x3F)
-		PSYQ_LOG_ONCE_KEYED(60, "[gpu] ClearImage x=%d not 64-aligned - "
-							"libgpu would draw-clip this, shim fills raw\n",
-							rect->x);
-	Raster_FillRect15(x, y, w, h, col);
+/*	The same executor with bit 31 set in the colour word, which only sets
+	E1 bit 10 (dfe) for the fill - and the shim ignores dfe (see the header
+	comment), so the pixels are ClearImage's.  */
+extern "C" int ClearImage2(RECT *rect, u_char r, u_char g, u_char b)
+{
+	libgpuFill(rect->x, rect->y, rect->w, rect->h, rgb15(r, g, b),
+			   0, 0, VRAM_W - 1, VRAM_H - 1);
 	return 0;
 }
 
