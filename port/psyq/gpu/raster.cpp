@@ -88,9 +88,11 @@ static constexpr bool validTri(unsigned F)
 }
 
 /*	cfg -> canonical pixel flags.  The dither rule is the one in the header:
-	texture-modulated pixels, and untextured ones of a gouraud primitive;
-	Raster_Line adds flat lines.  */
-static inline unsigned pixelFlags(const RasterCfg *cfg)
+	texture-modulated pixels, untextured ones of a gouraud primitive, and
+	every untextured line pixel (`line`: the hardware dithers lines flat or
+	gouraud - psx-spx GPU "Dithering", issue #76).  Every entry point says
+	which it is; there is no default.  */
+static inline unsigned pixelFlags(const RasterCfg *cfg, bool line)
 {
 	unsigned F = cfg->semi ? F_SEMI : 0;
 	if (cfg->textured)
@@ -104,7 +106,7 @@ static inline unsigned pixelFlags(const RasterCfg *cfg)
 		else if (cfg->dither)
 			F |= F_DITHER;
 	}
-	else if (cfg->dither && cfg->gouraud)
+	else if (cfg->dither && (cfg->gouraud || line))
 		F |= F_DITHER;
 	return F;
 }
@@ -504,7 +506,7 @@ void Raster_Triangle(const RasterVtx *v0, const RasterVtx *v1, const RasterVtx *
 	/*	Equal vertex colours interpolate to exactly that colour (numerator
 		col*area), so such a gouraud primitive takes the flat loop - its pixel
 		pipeline, dither included, is already fixed by pixelFlags.  */
-	unsigned F = pixelFlags(cfg);
+	unsigned F = pixelFlags(cfg, false);
 	bool flat = !cfg->gouraud
 			 || (a->r == b->r && a->r == c->r && a->g == b->g && a->g == c->g
 				 && a->b == b->b && a->b == c->b);
@@ -554,7 +556,7 @@ void Raster_Rect(int x, int y, int w, int h, int u0, int v0,
 	if (x0 > x1 || y0 > y1)
 		return;
 
-	unsigned F = foldNeutral(pixelFlags(cfg), r, g, b);
+	unsigned F = foldNeutral(pixelFlags(cfg, false), r, g, b);
 	DispatchTable<RectOps, std::make_index_sequence<F_PIXEL_COUNT> >::fn[F]
 		(x0, y0, x1, y1, ustart, vstart, r, g, b, cfg);
 }
@@ -621,11 +623,5 @@ void Raster_Line(const RasterVtx *pa, const RasterVtx *pb, const RasterCfg *cfg)
 	if (dx > 1023 || dy > 511)
 		return;
 
-	/*	The hardware dithers every line when E1 asks, flat or gouraud
-		(psx-spx GPU "Dithering"; issue #76) - pixelFlags' triangle rule
-		would leave a flat line undithered.  */
-	unsigned F = pixelFlags(cfg);
-	if (cfg->dither && !cfg->textured)
-		F |= F_DITHER;
-	DispatchTable<LineOps, std::make_index_sequence<F_PIXEL_COUNT> >::fn[F](pa, pb, cfg);
+	DispatchTable<LineOps, std::make_index_sequence<F_PIXEL_COUNT> >::fn[pixelFlags(cfg, true)](pa, pb, cfg);
 }

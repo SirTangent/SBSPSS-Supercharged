@@ -104,10 +104,12 @@ static inline uint16_t blendSemi(uint16_t back, int fr, int fg, int fb, int mode
 }
 
 /*	The shared per-pixel pipeline.  Returns without writing when the pixel
-	is transparent.  cr/cg/cb are the 8-bit vertex colour at this pixel.  */
+	is transparent.  cr/cg/cb are the 8-bit vertex colour at this pixel;
+	`line` says the pixel is a line's, which dithers flat or gouraud
+	(issue #76) - every caller says, there is no default.  */
 static inline void shadePixel(int x, int y, int u, int v,
 							  int cr, int cg, int cb, const RasterCfg *cfg,
-							  bool line = false)
+							  bool line)
 {
 	int fr, fg, fb, stp = 0;
 	int dith = 0;
@@ -280,7 +282,7 @@ void RasterRef_Triangle(const RasterVtx *v0, const RasterVtx *v1, const RasterVt
 				cr = a->r;  cg = a->g;  cb = a->b;
 			}
 
-			shadePixel(x, y, u, v, cr, cg, cb, cfg);
+			shadePixel(x, y, u, v, cr, cg, cb, cfg, false);
 		}
 	}
 #undef DIVAREA
@@ -308,7 +310,7 @@ void RasterRef_Rect(int x, int y, int w, int h, int u0, int v0,
 
 	for (int py = y0, v = vstart; py <= y1; py++, v++)
 		for (int px = x0, u = ustart; px <= x1; px++, u++)
-			shadePixel(px, py, u, v, r, g, b, cfg);
+			shadePixel(px, py, u, v, r, g, b, cfg, false);
 }
 
 /*****************************************************************************/

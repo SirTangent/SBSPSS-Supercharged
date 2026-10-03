@@ -628,9 +628,10 @@ static void padFileParse(void)
 		fprintf(stderr, "[input] cross-ABI recording (ptr=%d, this exe %d): epoch ram not compared\n",
 				g_recordingPtr, (int)sizeof(void *));
 	if (g_epochCount && g_recordingBuild >= 0 && g_recordingBuild != thisBuildFinal())
-		fprintf(stderr, "[input] cross-build recording (%s, this exe %s): epoch ram not compared, "
-						"nor crc while the pause menu is up\n",
+		fprintf(stderr, "[input] cross-build recording (%s, this exe %s): epoch ram not compared\n",
 				g_recordingBuild ? "final" : "debug", thisBuildFinal() ? "final" : "debug");
+	/*	(nor crc while the pause menu is up - the epochs line below says
+		that, with what is compared: checkEpochsCompare)  */
 	if (g_epochCount && g_recordingRender != GPU_RENDER_REVISION)
 		fprintf(stderr, "[input] recording's renderer revision is %d, this exe's %d: "
 						"epoch crc not compared\n", g_recordingRender, GPU_RENDER_REVISION);
@@ -810,19 +811,39 @@ static void epochCheck(unsigned long vblank)
 	}
 }
 
-/*	Called from Port_Exit: unreached scene references, desyncs, bare-pump
-	vblanks the run passed without firing and a replay whose every epoch
-	compared nothing turn a clean exit into 13 - a route that quietly never
-	pressed half its buttons must not pass, a replay that reached a
-	recorded vblank by another road has diverged, and one that checked
-	nothing has shown nothing.  */
-extern "C" int Port_InputAtExit(void)
+extern "C" int Port_InputBlindEpochs(void)
+{
+	return g_epochsBlind;
+}
+
+/*	Called just before Port_Exit on a clean exit (host/window.cpp; see
+	diag.h for `complete`): unreached scene references, desyncs, bare-pump
+	vblanks the run passed without firing and a replay that compared
+	nothing turn it into 13 - a route that quietly never pressed half its
+	buttons must not pass, a replay that reached a recorded vblank by
+	another road has diverged, and one that checked nothing has shown
+	nothing.  */
+extern "C" int Port_InputAtExit(int complete)
 {
 	int bad = g_desyncs;
 	if (g_epochsReached && g_epochsBlind == g_epochsReached)
 	{
 		fprintf(stderr, "[replay] all %d epochs reached compared nothing on this exe - "
 						"the replay proves nothing\n", g_epochsReached);
+		bad++;
+	}
+	if (!complete)
+		return bad;
+	if (g_epochCount && !g_epochsReached)
+	{
+		/*	--exit-after before the recording's first epoch: nothing was
+			compared, so nothing was shown  */
+		unsigned long first = g_epochs[0].vblank;
+		for (int i = 1; i < g_epochCount; i++)
+			if (g_epochs[i].vblank < first)
+				first = g_epochs[i].vblank;
+		fprintf(stderr, "[replay] none of the recording's %d epochs was reached (the first is at "
+						"vblank %lu) - the replay compared nothing\n", g_epochCount, first);
 		bad++;
 	}
 	for (int i = 0; i < g_entryCount; i++)

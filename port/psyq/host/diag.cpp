@@ -3,7 +3,8 @@
 	  [scene] <name> vblank=<n>                       GameState opened a scene;
 	                                                  FMA scripts add FMA:<script>
 	  [assert] <expr> at <file>:<line> (<scene>, vblank <n>)
-	  [summary] exit=<code> vblanks=<n> scene=<name> asserts=<n>
+	  [summary] exit=<code> vblanks=<n> scene=<name> asserts=<n> ...
+	            render=<GPU_RENDER_REVISION> blind_epochs=<n>
 
 	Exit codes: 0 clean, 10 assert, 11 fault, 12 watchdog, 13 oracle/replay.
 */
@@ -20,6 +21,7 @@
 #include "system/asmport.h"		/* PORT_Scratchpad + guard */
 #include "host/diag.h"
 #include "host/pump.h"
+#include "gpu/gpu_core.h"		/* GPU_RENDER_REVISION, in [summary] */
 
 extern "C" unsigned long GPU_PrimPoolPeak(void);	/* gpu/gp0.cpp */
 
@@ -375,9 +377,11 @@ void writeSummary(int code, int lockFree)
 	char	line[384];
 	int		n = snprintf(line, sizeof(line),
 						 "[summary] exit=%d vblanks=%lu scene=%s asserts=%lu "
-						 "peak_ram=%lu peak_memnodes=%d/256 peak_prim=%lu paused=%.1f",
+						 "peak_ram=%lu peak_memnodes=%d/256 peak_prim=%lu paused=%.1f "
+						 "render=%d blind_epochs=%d",
 						 code, Port_VBlankCount(), g_currentScene, g_assertCount,
-						 g_peakRam, g_peakNodes, GPU_PrimPoolPeak(), Host_PausedSeconds());
+						 g_peakRam, g_peakNodes, GPU_PrimPoolPeak(), Host_PausedSeconds(),
+						 GPU_RENDER_REVISION, Port_InputBlindEpochs());
 	if (n < 0)
 		n = 0;
 	if (n > (int)sizeof(line) - 1)

@@ -1595,9 +1595,15 @@ exactly.
   #76's review fixes): across build types an epoch under the pause menu
   compares no crc, and rng needs the game to have registered its RNG.  An
   epoch left with nothing is named (`[input] epoch at vblank N ...
-  compared nothing: ...`), and a replay all of whose epochs were is
-  refused at exit, 13: `[replay] all N epochs reached compared nothing on
-  this exe`.
+  compared nothing: ...`) and counted in `[summary]` as `blind_epochs=`,
+  which run_tier requires to be 0; the game itself refuses a replay all
+  of whose epochs were, 13: `[replay] all N epochs reached compared
+  nothing on this exe`.  At the scripted exit (`--exit-after`) a replay
+  that reached none of its recording's epochs is refused too (`[replay]
+  none of the recording's N epochs was reached`).  Closing the window
+  judges a replay on the epochs it reached - their desyncs, and all of
+  them blind - and nothing else: what it had not reached yet is no
+  failure.
 - `# render` takes exactly one non-negative number, optionally followed
   by a ` #` comment as after any entry; `# render`, `# render one`,
   `# render -` or other trailing text is refused (exit 13) like a bad
@@ -1611,17 +1617,18 @@ exactly.
   before it), blanks or a ` #` comment around a good one, the refused
   compare-nothing replay (an old-format recording with `# abi ptr=`
   flipped to stand in for the other ABI), the boot line in five more
-  cases, and the two refusals at exit: a child that registers no RNG,
-  and an old-format recording from the other build type with the pause
-  menu up at its only epoch.
+  cases, the two refusals at exit (a child that registers no RNG, and
+  an old-format recording from the other build type with the pause menu
+  up at its only epoch), and a replay stopped before its first epoch -
+  refused at the scripted exit, not when closed like a window.
 - The previous exe's tier 1 recordings (`port/build/lane2-base/art`, made
   before these fixes) replay on the new exe with `run_tier.py --tier1
   --replay-from <art> --compare-frames <the new exe's own logs>`: all 10
   routes pass, with byte-identical cards, on DEBUG and FINAL.  (Since
-  issue #76, run_tier reads the game's boot line for a recording from
-  another revision and then holds only the `[scene]` lines to the
-  recording exe's log, so `--compare-frames` takes that exe's logs as
-  for any cross replay.)
+  issue #76, run_tier compares the recording's `# render` with the exe's
+  `[summary] render=` and, when they differ, holds only the `[scene]`
+  lines to the recording exe's log, so `--compare-frames` takes that
+  exe's logs as for any cross replay.)
 
 ### Flat lines dither (issue #76)
 
@@ -1633,10 +1640,11 @@ The hardware dithers every line while E1 bit 9 is set, flat or gouraud
 bit as it is).  Polygons also need gouraud shading or texture
 modulation.  The rasterizer applied the polygon rule to lines, so
 `LINE_F2` and flat polylines were never dithered although the game keeps
-dtd=1 all frame.  `Raster_Line` now adds
-`F_DITHER` for any untextured line when `cfg->dither` is set; flat +
-dither was already an instantiated pipeline.  The reference rasterizer
-takes the same rule, so `raster_diff_test` still holds the two to each
+dtd=1 all frame.  `pixelFlags` now takes whether the primitive is a
+line (no default; `Raster_Line` passes true) and dithers any untextured
+line when `cfg->dither` is set; flat + dither was already an
+instantiated pipeline.  The reference rasterizer's `shadePixel` takes
+the same flag, so `raster_diff_test` still holds the two to each
 other.
 
 - Where it shows: only the game's flat lines whose colour sits near a
@@ -1672,6 +1680,20 @@ The same change carries the fixes for a `/code-review` of #75's merge:
 - `replay_test` shares its recording edits (`stripRng`, `setRenderLine`,
   `writeText`) and one child launcher; `mdec.cpp`'s two sign-extension
   helpers are one `signN<bits>`.
+
+And for a `/code-review` of this change itself:
+- The exit judgement covers a replay that never reached an epoch and a
+  replay closed by the window (above); `Port_InputAtExit(complete)`.
+- `[summary]` gains `render=<GPU_RENDER_REVISION>` and `blind_epochs=<n>`:
+  run_tier reads the revision there instead of matching a boot line's
+  wording, and fails any run with a blind epoch.
+- `mdec_test` fails on a missing or foreign golden and on bytes left after
+  the last vector; a truncated one is reported once, at the first vector
+  it cut.
+- The cross-build boot line no longer repeats the pause-menu caveat the
+  epochs line states.
+- `replay_test` reads recording A once and uses `buildLine` and
+  `readText` throughout.
 
 ## Game-source changes (keyboard prompt icons, issue #43)
 

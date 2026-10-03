@@ -125,7 +125,7 @@ static void handmadeChecks(void)
 	VSync(0);
 	VSync(0);
 	expectCount(7, "two waits: vblank 7 fired in a wait, not at bare pump 2");
-	check(Port_InputAtExit() == 1, "the exit check counts the recorded vblank the run reached another way");
+	check(Port_InputAtExit(1) == 1, "the exit check counts the recorded vblank the run reached another way");
 }
 
 static int childMain(const char *mode)
@@ -199,7 +199,7 @@ static int childMain(const char *mode)
 		spinChecks();
 
 	if (std::strcmp(mode, "replay") == 0)
-		check(Port_InputAtExit() == 0, "every recorded `# bare` vblank fired where it was recorded");
+		check(Port_InputAtExit(1) == 0, "every recorded `# bare` vblank fired where it was recorded");
 
 	SDL_Quit();
 	return g_failures ? 1 : 0;
