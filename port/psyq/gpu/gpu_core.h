@@ -57,8 +57,9 @@ extern GpuState g_gpu;
 	whose epochs are left comparing nothing is refused (host/input.cpp).
 	  0  the implicit revision of recordings without the line
 	  1  issue #60: polygon tpage attributes keep the E1 dither bit; the
-	     MDEC IDCT saturates to signed 8 bits  */
-#define GPU_RENDER_REVISION	1
+	     MDEC IDCT saturates to signed 8 bits
+	  2  issue #76: flat lines dither like gouraud ones  */
+#define GPU_RENDER_REVISION	2
 
 /* gp0.cpp: execute `count` GP0 words at `words` against g_gpu/g_vram */
 void GPU_ExecWords(const uint32_t *words, int count);
@@ -98,7 +99,8 @@ struct RasterCfg
 		so memset-zeroed configs keep full 0..255 wrapping.  */
 	int		twMaskU, twOrU, twMaskV, twOrV;
 	/*	E1 dtd captured at prim time; the pixel pipeline applies the PS1
-		4x4 dither only to gouraud-shaded or texture-modulated pixels.  */
+		4x4 dither to every line pixel and to gouraud-shaded or
+		texture-modulated triangle pixels.  */
 	int		dither;
 };
 void Raster_Triangle(const RasterVtx *v0, const RasterVtx *v1, const RasterVtx *v2,

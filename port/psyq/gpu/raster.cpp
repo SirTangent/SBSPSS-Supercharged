@@ -10,8 +10,9 @@
 	  prims, and only to texels with the STP bit for textured ones.
 	- Written pixels carry the texel's STP bit (0 for untextured).
 	- Dithering (E1 dtd): the PS1 4x4 matrix added to the 8-bit channel
-	  value before 8->5 truncation, for gouraud-shaded and texture-modulated
-	  pixels only (flat untextured and raw-texture pixels bypass, as do
+	  value before 8->5 truncation, for every line pixel, flat or gouraud
+	  (issue #76), and for gouraud-shaded and texture-modulated triangle
+	  pixels (flat untextured and raw-texture triangles bypass, as do
 	  rects/fills - the interpreter never sets cfg->dither for those).
 	  Dither lands on the foreground colour BEFORE any semi-transparency
 	  blend; the blend itself stays in 5-bit space (M4's emulator A/B pass
@@ -87,7 +88,8 @@ static constexpr bool validTri(unsigned F)
 }
 
 /*	cfg -> canonical pixel flags.  The dither rule is the one in the header:
-	texture-modulated pixels, and untextured ones of a gouraud primitive.  */
+	texture-modulated pixels, and untextured ones of a gouraud primitive;
+	Raster_Line adds flat lines.  */
 static inline unsigned pixelFlags(const RasterCfg *cfg)
 {
 	unsigned F = cfg->semi ? F_SEMI : 0;
@@ -619,5 +621,11 @@ void Raster_Line(const RasterVtx *pa, const RasterVtx *pb, const RasterCfg *cfg)
 	if (dx > 1023 || dy > 511)
 		return;
 
-	DispatchTable<LineOps, std::make_index_sequence<F_PIXEL_COUNT> >::fn[pixelFlags(cfg)](pa, pb, cfg);
+	/*	The hardware dithers every line when E1 asks, flat or gouraud
+		(psx-spx GPU "Dithering"; issue #76) - pixelFlags' triangle rule
+		would leave a flat line undithered.  */
+	unsigned F = pixelFlags(cfg);
+	if (cfg->dither && !cfg->textured)
+		F |= F_DITHER;
+	DispatchTable<LineOps, std::make_index_sequence<F_PIXEL_COUNT> >::fn[F](pa, pb, cfg);
 }

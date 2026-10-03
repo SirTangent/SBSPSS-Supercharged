@@ -364,6 +364,48 @@ int main()
 		checkPx(101, 101, 16 * 0x421, "no dither: 128 >> 3 everywhere");
 	}
 
+	/*	--- dithering: every line, flat or gouraud (issue #76) ---------------
+		The hardware dithers lines whenever E1 asks, unlike polygons, which
+		need gouraud or texture modulation.  Mid-grey 128 along rows 100-102
+		walks the table's first three rows: -4 0 -3 1 / 2 -2 3 -1 /
+		-3 1 -4 0, i.e. 15 16 15 16 / 16 15 16 15 / 15 16 15 16.  A flat
+		triangle under the same E1 stays undithered.  */
+	{
+		resetEnv();
+		static const uint32_t on[] =
+		{
+			0xE1000200,							/* dtd = 1 */
+			0x40808080, 0x00640064, 0x00640067,	/* LINE_F2 (100,100)-(103,100) */
+			0x48808080, 0x00650064, 0x00650067,	/* flat polyline, row 101 */
+			0x55555555,
+			0x50808080, 0x00660064,				/* LINE_G2, uniform, row 102 */
+			0x00808080, 0x00660067,
+			0x20808080, 0x00C80064, 0x00C800A4, 0x00F00064,	/* flat F3 at y 200 */
+		};
+		GPU_ExecWords(on, (int)(sizeof(on) / sizeof(on[0])));
+		static const int row0[4] = { 15, 16, 15, 16 };
+		static const int row1[4] = { 16, 15, 16, 15 };
+		static const int row2[4] = { 15, 16, 15, 16 };
+		for (int i = 0; i < 4; i++)
+		{
+			checkPx(100 + i, 100, (uint16_t)(row0[i] * 0x421), "flat LINE_F2 with dtd=1 dithers");
+			checkPx(100 + i, 101, (uint16_t)(row1[i] * 0x421), "flat polyline with dtd=1 dithers");
+			checkPx(100 + i, 102, (uint16_t)(row2[i] * 0x421), "gouraud LINE_G2 with dtd=1 dithers as before");
+		}
+		checkPx(100, 200, 16 * 0x421, "flat F3 with dtd=1 stays undithered (0,0)");
+		checkPx(101, 200, 16 * 0x421, "flat F3 with dtd=1 stays undithered (1,0)");
+
+		resetEnv();
+		static const uint32_t off[] =
+		{
+			0xE1000000,							/* dtd = 0 */
+			0x40808080, 0x00640064, 0x00640067,
+		};
+		GPU_ExecWords(off, 4);
+		for (int i = 0; i < 4; i++)
+			checkPx(100 + i, 100, 16 * 0x421, "flat LINE_F2 with dtd=0: 128 >> 3");
+	}
+
 	/*	--- libgpu transfers: zero-size rects move nothing (issue #60) --------
 		LoadImage/StoreImage clamp w to [0,1024] and h to [0,512] and size
 		the DMA from w*h; the raw GP0 rule would have made w=0 a full

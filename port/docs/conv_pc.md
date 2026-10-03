@@ -1575,7 +1575,8 @@ desync, #55's human sessions included, although the game itself replays
 exactly.
 - `GPU_RENDER_REVISION` (gpu_core.h) names the renderer's pixel
   revision, and --record-pad writes it as `# render N` after `# build`.
-  It is 1 now; a recording without the line is revision 0.
+  It is 2 now (issue #76, below); a recording without the line is
+  revision 0.
 - When a recording's revision differs from the exe's, no epoch's crc is
   compared (the reason reads "renderer revision").  rng still is when the
   epochs carry it (every recording since issue #58), and ram under the
@@ -1605,6 +1606,42 @@ exactly.
   before these fixes) replay on the new exe with `run_tier.py --tier1
   --replay-from <art> --compare-frames <the new exe's own logs>`: all 10
   routes pass, with byte-identical cards, on DEBUG and FINAL.
+
+### Flat lines dither (issue #76)
+
+Shim-only: `gpu/raster.cpp`, `gpu/gpu_core.h` (`GPU_RENDER_REVISION` 2),
+`tests/raster_ref.cpp` and `tests/gpu_test.cpp`.
+
+The hardware dithers every line while E1 bit 9 is set, flat or gouraud
+(psx-spx GPU "Dithering"; DuckStation's `gpu.cpp` hands a line the E1
+bit as it is).  Polygons also need gouraud shading or texture
+modulation.  The rasterizer applied the
+polygon rule to lines, so `LINE_F2` and flat polylines were never
+dithered although the game keeps dtd=1 all frame.  `Raster_Line` now adds
+`F_DITHER` for any untextured line when `cfg->dither` is set; flat +
+dither was already an instantiated pipeline.  The reference rasterizer
+takes the same rule, so `raster_diff_test` still holds the two to each
+other.
+
+- Where it shows: only the game's flat lines whose colour sits near a
+  5-bit step.  The options SCREEN/SOUND sliders (`CGUIBarReadout`, grey
+  245 selected / 110 not) and the balloon pickup's strings change; the
+  laser (255) and the chains and ropes (0) cannot, and the other
+  `DrawLine` callers are debug-only.  Options > Sound at vblank 1300
+  differs in 171 pixels, all on the SFX slider's row 121, where the
+  table's +2/+3 cells lift 110 to the next step.  The BGM and SPEECH
+  lines sit on rows whose offsets never cross a step for their grey.
+- No harness route draws one: tier 1 + tier 2 `--short` give 41,090
+  `[scene]`/`[frame]` lines identical to the previous exe, and all 25
+  levels under `walk_right.pad` for 1,500 vblanks match too.
+- `gpu_test` checks a flat `LINE_F2` and a flat polyline with dtd=1
+  (the table's first two rows on mid-grey 128) and dtd=0, a uniform
+  `LINE_G2` dithering as before, and a flat F3 staying undithered.
+  Reverting the one change fails four of those checks and ten
+  `raster_diff_test` cases.
+- The previous exe's tier 1 recordings (`# render 1`) replay on this one
+  with `--replay-from`: all 9 routes pass with byte-identical cards,
+  comparing rng and ram.
 
 ## Game-source changes (keyboard prompt icons, issue #43)
 
