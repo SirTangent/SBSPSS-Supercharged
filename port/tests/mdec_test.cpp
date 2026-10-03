@@ -167,11 +167,19 @@ static void testRlDecode(void)
 /*****************************************************************************/
 static FILE *g_golden;
 
+/*	false when there is no fixture (main has said the golden layers are
+	skipped) or it ends early.  An open fixture that ends early is a
+	failure: an old or truncated mdec_golden.bin would otherwise skip the
+	vectors after the cut - the IDCT saturation one is last - and pass.  */
 static bool goldenRead(void *dst, size_t n, const char *what)
 {
-	if (!g_golden || fread(dst, 1, n, g_golden) != n)
+	if (!g_golden)
+		return false;
+	if (fread(dst, 1, n, g_golden) != n)
 	{
-		printf("mdec_test: golden fixture short read (%s)\n", what);
+		char msg[96];
+		snprintf(msg, sizeof(msg), "golden fixture short read (%s)", what);
+		check(false, msg);
 		return false;
 	}
 	return true;

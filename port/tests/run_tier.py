@@ -71,6 +71,12 @@ no [replay] desync, the first exe's streams and a byte-identical card.
 
     run_tier.py --exe <x86> --tier1 --logs L32 --keep-artifacts A32
     run_tier.py --exe <x64> --tier1 --logs L64 --compare-frames L32 --replay-from A32
+
+When the recording exe drew with another renderer revision (`# render`,
+issue #60), the second exe reports it at boot and draws the same game state
+differently, so only the [scene] lines are held to the first exe's log
+there; the [frame] lines are not compared, and the replay's own epochs
+still hold rng and ram where they can.
 """
 import argparse
 import difflib
@@ -241,20 +247,24 @@ def run_game(exe, args, env, timeout, log_path=None):
 BASELINE = None     # --compare-frames: directory of an earlier run's --logs
 
 
-def compare_baseline(res, name, log_name):
+def compare_baseline(res, name, log_name, scenes_only=False):
     """--compare-frames: this run's [scene] + [frame] lines must equal those
     of the same-named log another build left with --logs.  Everything here
     runs under the determinism set, so the streams are a pure function of
     the exe: a rasterizer (or any other) change that moves one displayed
-    pixel on one vblank shows up as the first differing line."""
+    pixel on one vblank shows up as the first differing line.  scenes_only
+    holds the [scene] lines alone (a cross replay across renderer
+    revisions, run_route_cross)."""
     if BASELINE is None:
         return True
     path = Path(BASELINE) / log_name
     if not path.exists():
         print(f"  FAIL {name}: no baseline log {path}")
         return False
+    tags = ("[scene] ",) if scenes_only else ("[frame] ", "[scene] ")
+    what = "[scene]" if scenes_only else "[scene]/[frame]"
     def stream(lines):
-        return [l for l in lines if l.startswith("[frame] ") or l.startswith("[scene] ")]
+        return [l for l in lines if l.startswith(tags)]
     want = stream(path.read_text(encoding="utf-8").splitlines())
     got = stream(res.lines)
     # An empty stream on BOTH sides compares equal, so a baseline captured
@@ -262,10 +272,10 @@ def compare_baseline(res, name, log_name):
     # lost --frame-crc, the log was truncated - would pass every run against
     # every other.  The oracle has to have something to say.
     if not want:
-        print(f"  FAIL {name}: baseline {path} has no [scene]/[frame] lines to compare against")
+        print(f"  FAIL {name}: baseline {path} has no {what} lines to compare against")
         return False
     if want == got:
-        print(f"       baseline: {len(got)} [scene]/[frame] lines identical to {path}")
+        print(f"       baseline: {len(got)} {what} lines identical to {path}")
         return True
     for i, (w, g) in enumerate(zip(want, got)):
         if w != g:
@@ -273,7 +283,7 @@ def compare_baseline(res, name, log_name):
             print(f"       baseline: {w}")
             print(f"       this run: {g}")
             return False
-    print(f"  FAIL {name}: baseline {path} has {len(want)} [scene]/[frame] lines, this run {len(got)}")
+    print(f"  FAIL {name}: baseline {path} has {len(want)} {what} lines, this run {len(got)}")
     return False
 
 
@@ -291,6 +301,8 @@ def report_common(res, name):
 
 
 KEEP = None         # --keep-artifacts: where passing routes leave <route>.rec.pad / <route>.mcd
+# host/input.cpp's boot line for a recording from another renderer revision
+RENDER_DIFFERS = re.compile(r"^\[input\] recording's renderer revision is (\d+), this exe's (\d+):")
 REPLAY_FROM = None  # --replay-from: another exe's --keep-artifacts directory
 
 
@@ -307,7 +319,10 @@ def run_route_cross(exe, route, seed, logdir):
     host/input.cpp); on top of that the [scene]/[frame] streams must equal
     the recording exe's log (--compare-frames, required with this option)
     and the memory card the run leaves must be byte-identical to the one the
-    recording run left."""
+    recording run left.  A recording from another renderer revision draws
+    every frame differently on this exe by design (the game says so at
+    boot and skips the epochs' crc), so there only [scene] is held to the
+    log; the card, the epochs' rng/ram and the route's checks still are."""
     rec = Path(REPLAY_FROM) / f"{route.name}.rec.pad"
     name = route.name + " (cross replay)"
     if not rec.exists():
@@ -336,7 +351,11 @@ def run_route_cross(exe, route, seed, logdir):
         if v > ceiling:
             print(f"  FAIL {name}: {k}={v} exceeds {ceiling}")
             ok = False
-    ok &= compare_baseline(res, name, f"{route.name}.log")
+    rev = next((m for m in map(RENDER_DIFFERS.match, res.lines) if m), None)
+    if rev:
+        print(f"       renderer revision {rev.group(1)} -> {rev.group(2)}: "
+              "[frame] lines not compared with the recording exe's")
+    ok &= compare_baseline(res, name, f"{route.name}.log", scenes_only=rev is not None)
     frames = len(res.frame_crcs())
     if frames < route.min_frames:
         print(f"  FAIL {name}: {frames} distinct unmasked frame CRC(s), {route.min_frames} required")

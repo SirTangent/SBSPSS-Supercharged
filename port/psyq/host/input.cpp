@@ -176,6 +176,11 @@ static EpochCheck	*g_epochs;
 static int			g_epochCount, g_epochCap;
 static int			g_scriptParsed;
 static int			g_desyncs;
+/*	epochs this run reached, and those of them that compared nothing - the
+	boot check (checkEpochsCompare) can only count what holds for the whole
+	run; the cross-build pause-menu crc skip and an unregistered game RNG
+	are only known per epoch (epochCheck, Port_InputAtExit)  */
+static int			g_epochsReached, g_epochsBlind;
 /*	Pointer size of the exe that made the recording (`# abi ptr=N`, written
 	by --record-pad since M9; absent = 4, every older recording is 32-bit).
 	RamUsed depends on it - x64 objects are bigger and the heap aligns to 16 -
@@ -232,8 +237,8 @@ extern "C" void Port_PauseMenuDrawn(int drawn)
 	GPU_RENDER_REVISION the same game state draws a different picture, so
 	no epoch's crc is compared.  rng still is, when the epochs carry it,
 	and ram under the usual rules (not across ABIs or build types,
-	ramSkipped); an epoch left with none of the three refuses the replay at
-	boot (checkEpochsCompare).  */
+	ramSkipped); a replay whose epochs are left with none of the three is
+	refused (checkEpochsCompare at boot, Port_InputAtExit at the end).  */
 static int				g_recordingRender = 0;
 
 /*	Every skip above can stack: a recording from before issue #58 has no
@@ -242,8 +247,12 @@ static int				g_recordingRender = 0;
 	three would pass whatever the run did, and a replay made only of such
 	epochs would exit 0 having compared nothing - so it is refused at boot
 	(exit 13).  Otherwise the boot line says exactly what the epochs
-	compare on this exe.  (The cross-build pause-menu crc skip is per
-	epoch and only while the menu is up; it is not counted here.)  */
+	compare on this exe.  rng is counted on the game registering its RNG,
+	which it does before the first frame (main.cpp).  What only shows per
+	epoch - the cross-build pause-menu crc skip, an RNG never registered -
+	is counted as the epochs are reached: one that compares nothing is
+	named, and a replay all of whose epochs did is refused at exit
+	(Port_InputAtExit).  */
 static void checkEpochsCompare(const char *path)
 {
 	if (!g_epochCount)
@@ -270,8 +279,10 @@ static void checkEpochsCompare(const char *path)
 		n += snprintf(what + n, sizeof(what) - n, "%sram", n ? ", " : "");
 	if (crc)
 		n += snprintf(what + n, sizeof(what) - n, "%scrc", n ? ", " : "");
-	fprintf(stderr, "[input] epochs: comparing %s%s\n", what,
-			(withRng != 0) + ram + crc == 1 ? " only" : "");
+	fprintf(stderr, "[input] epochs: comparing %s%s%s\n", what,
+			(withRng != 0) + ram + crc == 1 ? " only" : "",
+			crc && g_recordingBuild >= 0 && g_recordingBuild != thisBuildFinal()
+				? "; crc not while the pause menu is up" : "");
 }
 
 /*	why an epoch's crc is not compared, or NULL when it is  */
@@ -380,7 +391,8 @@ static void padFileFail(const char *path, int line, const char *why)
 }
 
 /*	`# render`'s argument: one non-negative decimal (at most 9 digits),
-	whitespace around it allowed, nothing else.  -1 when malformed.  */
+	whitespace around it allowed, then nothing or a ` #` comment, as after
+	any entry.  -1 when malformed.  */
 static int parseRevision(const char *p)
 {
 	while (isspace((unsigned char)*p))
@@ -392,9 +404,10 @@ static int parseRevision(const char *p)
 			return -1;
 		v = v * 10 + (*p++ - '0');
 	}
+	const char *end = p;
 	while (isspace((unsigned char)*p))
 		p++;
-	return digits && !*p ? v : -1;
+	return digits && (!*p || (*p == '#' && p > end)) ? v : -1;
 }
 
 /*	One pad-file line, comments already stripped, whitespace-trimmed.  */
@@ -472,10 +485,12 @@ static void padFileParse(void)
 			s++;
 
 		/*	`# epoch <vblank> ram=<n> crc=<hex>`, `# abi ptr=<n>`,
-			`# build <word>`, `# seed <n>`, `# pace <word>`, `# loads <word>`,
-			`# prompt <vblank> <word>` and `# bare <vblank> <k>` are data;
-			every other comment (a leading `#`, or ` #` after an entry) is
-			dropped.  */
+			`# build <word>`, `# render <n>`, `# seed <n>`, `# pace <word>`,
+			`# loads <word>`, `# prompt <vblank> <word>` and
+			`# bare <vblank> <k>` are data; every other comment (a leading
+			`#`, or ` #` after an entry) is dropped.  `# render` is held to
+			its number: anything but one non-negative decimal (a ` #`
+			comment may follow) is refused rather than read as revision 0.  */
 		if (*s == '#')
 		{
 			EpochCheck	ep = {};
@@ -520,10 +535,11 @@ static void padFileParse(void)
 			else if (strncmp(s, "# render", 8) == 0 &&
 					 (s[8] == 0 || isspace((unsigned char)s[8])))
 			{
-				/*	exactly one non-negative decimal and nothing after it: a
-					bare, misspelt or signed value would otherwise fall through
-					as a comment and leave revision 0, turning the crc check
-					off by accident - refused like a bad `# abi`  */
+				/*	exactly one non-negative decimal, then nothing or a ` #`
+					comment: a bare, misspelt or signed value would otherwise
+					fall through as a comment and leave revision 0, turning
+					the crc check off by accident - refused like a bad
+					`# abi`  */
 				render = parseRevision(s + 8);
 				if (render < 0)
 				{
@@ -754,12 +770,26 @@ static void epochCheck(unsigned long vblank)
 		const PortGameGlobals *g = Port_GameGlobals();
 		unsigned long ram = g->ramUsed ? *g->ramUsed : 0;
 		uint32_t      crc = GPU_DisplayCRC32(NULL);
-		uint32_t      rng = (ep.hasRng && g->randomSeed) ? (uint32_t)*g->randomSeed : ep.rng;
+		/*	rng is compared only when the recording carries it and the game
+			registered its RNG - without one there is nothing live to hold
+			it against  */
+		const int		withRng = ep.hasRng && g->randomSeed;
+		uint32_t      rng = withRng ? (uint32_t)*g->randomSeed : ep.rng;
 		const char   *skip   = ramSkipped();		/* see g_recordingPtr, g_recordingBuild */
 		const char   *crcSkip = crcSkipped();	/* see g_pauseDrawn */
 		const int		badRam = !skip && ram != ep.ram;
 		const int		badCrc = !crcSkip && crc != ep.crc;
-		const int		badRng = rng != ep.rng;
+		const int		badRng = withRng && rng != ep.rng;
+		g_epochsReached++;
+		if (skip && crcSkip && !withRng)
+		{
+			/*	not a desync - nothing was compared to find one - but named,
+				and Port_InputAtExit refuses a replay made only of these  */
+			g_epochsBlind++;
+			fprintf(stderr, "[input] epoch at vblank %lu (line %d) compared nothing: ram %s, crc %s, %s\n",
+					vblank, ep.line, skip, crcSkip,
+					ep.hasRng ? "the game registered no RNG" : "no rng recorded");
+		}
 		if (badRam || badCrc || badRng)
 		{
 			/*	names what differed, and prints ram and crc even when they are
@@ -780,13 +810,21 @@ static void epochCheck(unsigned long vblank)
 	}
 }
 
-/*	Called from Port_Exit: unreached scene references, desyncs and bare-pump
-	vblanks the run passed without firing turn a clean exit into 13 - a
-	route that quietly never pressed half its buttons must not pass, and a
-	replay that reached a recorded vblank by another road has diverged.  */
+/*	Called from Port_Exit: unreached scene references, desyncs, bare-pump
+	vblanks the run passed without firing and a replay whose every epoch
+	compared nothing turn a clean exit into 13 - a route that quietly never
+	pressed half its buttons must not pass, a replay that reached a
+	recorded vblank by another road has diverged, and one that checked
+	nothing has shown nothing.  */
 extern "C" int Port_InputAtExit(void)
 {
 	int bad = g_desyncs;
+	if (g_epochsReached && g_epochsBlind == g_epochsReached)
+	{
+		fprintf(stderr, "[replay] all %d epochs reached compared nothing on this exe - "
+						"the replay proves nothing\n", g_epochsReached);
+		bad++;
+	}
 	for (int i = 0; i < g_entryCount; i++)
 	{
 		const PadEntry &e = g_entries[i];
@@ -815,8 +853,9 @@ extern "C" int Port_InputAtExit(void)
 	relative grammar above, plus `# scene` markers at each open, a `# prompt`
 	line when the prompt-icon device changes, a `# bare` line for each vblank
 	fired outside a wait and an `# epoch` line every 300 vblanks, under a
-	header of `# abi`, `# build`, `# seed` (if one was given), `# pace` and
-	`# loads`.  Flushed per line so a crash still leaves a usable file.  */
+	header of `# abi`, `# build`, `# render`, `# seed` (if one was given),
+	`# pace` and `# loads`.  Flushed per line so a crash still leaves a
+	usable file.  */
 static FILE			*g_rec;
 static int			g_recTried;
 static unsigned		g_recLastMask;
