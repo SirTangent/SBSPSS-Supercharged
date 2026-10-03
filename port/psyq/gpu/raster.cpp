@@ -10,8 +10,9 @@
 	  prims, and only to texels with the STP bit for textured ones.
 	- Written pixels carry the texel's STP bit (0 for untextured).
 	- Dithering (E1 dtd): the PS1 4x4 matrix added to the 8-bit channel
-	  value before 8->5 truncation, for gouraud-shaded and texture-modulated
-	  pixels only (flat untextured and raw-texture pixels bypass, as do
+	  value before 8->5 truncation, for every line pixel, flat or gouraud
+	  (issue #76), and for gouraud-shaded and texture-modulated triangle
+	  pixels (flat untextured and raw-texture triangles bypass, as do
 	  rects/fills - the interpreter never sets cfg->dither for those).
 	  Dither lands on the foreground colour BEFORE any semi-transparency
 	  blend; the blend itself stays in 5-bit space (M4's emulator A/B pass
@@ -87,8 +88,11 @@ static constexpr bool validTri(unsigned F)
 }
 
 /*	cfg -> canonical pixel flags.  The dither rule is the one in the header:
-	texture-modulated pixels, and untextured ones of a gouraud primitive.  */
-static inline unsigned pixelFlags(const RasterCfg *cfg)
+	texture-modulated pixels, untextured ones of a gouraud primitive, and
+	every untextured line pixel (`line`: the hardware dithers lines flat or
+	gouraud - psx-spx GPU "Dithering", issue #76).  Every entry point says
+	which it is; there is no default.  */
+static inline unsigned pixelFlags(const RasterCfg *cfg, bool line)
 {
 	unsigned F = cfg->semi ? F_SEMI : 0;
 	if (cfg->textured)
@@ -102,7 +106,7 @@ static inline unsigned pixelFlags(const RasterCfg *cfg)
 		else if (cfg->dither)
 			F |= F_DITHER;
 	}
-	else if (cfg->dither && cfg->gouraud)
+	else if (cfg->dither && (cfg->gouraud || line))
 		F |= F_DITHER;
 	return F;
 }
@@ -502,7 +506,7 @@ void Raster_Triangle(const RasterVtx *v0, const RasterVtx *v1, const RasterVtx *
 	/*	Equal vertex colours interpolate to exactly that colour (numerator
 		col*area), so such a gouraud primitive takes the flat loop - its pixel
 		pipeline, dither included, is already fixed by pixelFlags.  */
-	unsigned F = pixelFlags(cfg);
+	unsigned F = pixelFlags(cfg, false);
 	bool flat = !cfg->gouraud
 			 || (a->r == b->r && a->r == c->r && a->g == b->g && a->g == c->g
 				 && a->b == b->b && a->b == c->b);
@@ -552,7 +556,7 @@ void Raster_Rect(int x, int y, int w, int h, int u0, int v0,
 	if (x0 > x1 || y0 > y1)
 		return;
 
-	unsigned F = foldNeutral(pixelFlags(cfg), r, g, b);
+	unsigned F = foldNeutral(pixelFlags(cfg, false), r, g, b);
 	DispatchTable<RectOps, std::make_index_sequence<F_PIXEL_COUNT> >::fn[F]
 		(x0, y0, x1, y1, ustart, vstart, r, g, b, cfg);
 }
@@ -619,5 +623,5 @@ void Raster_Line(const RasterVtx *pa, const RasterVtx *pb, const RasterCfg *cfg)
 	if (dx > 1023 || dy > 511)
 		return;
 
-	DispatchTable<LineOps, std::make_index_sequence<F_PIXEL_COUNT> >::fn[pixelFlags(cfg)](pa, pb, cfg);
+	DispatchTable<LineOps, std::make_index_sequence<F_PIXEL_COUNT> >::fn[pixelFlags(cfg, true)](pa, pb, cfg);
 }

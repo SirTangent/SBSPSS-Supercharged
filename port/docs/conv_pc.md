@@ -1575,7 +1575,8 @@ desync, #55's human sessions included, although the game itself replays
 exactly.
 - `GPU_RENDER_REVISION` (gpu_core.h) names the renderer's pixel
   revision, and --record-pad writes it as `# render N` after `# build`.
-  It is 1 now; a recording without the line is revision 0.
+  It is 2 now (issue #76, below); a recording without the line is
+  revision 0.
 - When a recording's revision differs from the exe's, no epoch's crc is
   compared (the reason reads "renderer revision").  rng still is when the
   epochs carry it (every recording since issue #58), and ram under the
@@ -1587,24 +1588,112 @@ exactly.
   13: `[replay] pad-file ...: N of M epochs compare nothing on this exe
   (render revision differs, ram skipped cross-ABI, no rng recorded)`.
   Every replay with epochs prints what they compare, e.g. `[input]
-  epochs: comparing rng only` or `comparing rng, ram, crc`.  #55's
-  sessions carry rng, so they still replay anywhere.
-- `# render` takes exactly one non-negative number; `# render`, `# render
-  one`, `# render -` or trailing text is refused (exit 13) like a bad
+  epochs: comparing rng only` or `comparing rng, ram, crc` (with `; crc
+  not while the pause menu is up` across build types).  #55's sessions
+  carry rng, so they still replay anywhere.
+- What only shows per epoch is counted as the epochs are reached (issue
+  #76's review fixes): across build types an epoch under the pause menu
+  compares no crc, and rng needs the game to have registered its RNG.  An
+  epoch left with nothing is named (`[input] epoch at vblank N ...
+  compared nothing: ...`) and counted in `[summary]` as `blind_epochs=`,
+  which run_tier requires to be 0; the game itself refuses a replay all
+  of whose epochs were, 13: `[replay] all N epochs reached compared
+  nothing on this exe`.  At the scripted exit (`--exit-after`) a replay
+  that reached none of its recording's epochs is refused too (`[replay]
+  none of the recording's N epochs was reached`).  Closing the window
+  judges a replay on the epochs it reached - their desyncs, and all of
+  them blind - and nothing else: what it had not reached yet is no
+  failure.
+- `# render` takes exactly one non-negative number, optionally followed
+  by a ` #` comment as after any entry; `# render`, `# render one`,
+  `# render -` or other trailing text is refused (exit 13) like a bad
   `# abi`, instead of reading as a comment and leaving revision 0.
 - **Rule: bump `GPU_RENDER_REVISION` in any change that moves displayed
   pixels on purpose**, and add a line to its comment.  A refactor that
   keeps `--compare-frames` identical must not bump it.
 - `replay_test` covers the line, a missing line, another revision, ram
   and rng still being caught, refused malformed values (negative, bare,
-  a word, a lone `-`, two numbers, trailing text) and blanks around a
-  good one, the refused compare-nothing replay (an old-format recording
-  with `# abi ptr=` flipped to stand in for the other ABI), and the boot
-  line in four more cases.
+  a word, a lone `-`, two numbers, trailing text, a `#` with no blank
+  before it), blanks or a ` #` comment around a good one, the refused
+  compare-nothing replay (an old-format recording with `# abi ptr=`
+  flipped to stand in for the other ABI), the boot line in five more
+  cases, the two refusals at exit (a child that registers no RNG, and
+  an old-format recording from the other build type with the pause menu
+  up at its only epoch), and a replay stopped before its first epoch -
+  refused at the scripted exit, not when closed like a window.
 - The previous exe's tier 1 recordings (`port/build/lane2-base/art`, made
   before these fixes) replay on the new exe with `run_tier.py --tier1
   --replay-from <art> --compare-frames <the new exe's own logs>`: all 10
-  routes pass, with byte-identical cards, on DEBUG and FINAL.
+  routes pass, with byte-identical cards, on DEBUG and FINAL.  (Since
+  issue #76, run_tier compares the recording's `# render` with the exe's
+  `[summary] render=` and, when they differ, holds only the `[scene]`
+  lines to the recording exe's log, so `--compare-frames` takes that
+  exe's logs as for any cross replay.)
+
+### Flat lines dither (issue #76)
+
+Shim-only: `gpu/raster.cpp`, `gpu/gpu_core.h` (`GPU_RENDER_REVISION` 2),
+`tests/raster_ref.cpp` and `tests/gpu_test.cpp`.
+
+The hardware dithers every line while E1 bit 9 is set, flat or gouraud
+(psx-spx GPU "Dithering"; DuckStation's `gpu.cpp` hands a line the E1
+bit as it is).  Polygons also need gouraud shading or texture
+modulation.  The rasterizer applied the polygon rule to lines, so
+`LINE_F2` and flat polylines were never dithered although the game keeps
+dtd=1 all frame.  `pixelFlags` now takes whether the primitive is a
+line (no default; `Raster_Line` passes true) and dithers any untextured
+line when `cfg->dither` is set; flat + dither was already an
+instantiated pipeline.  The reference rasterizer's `shadePixel` takes
+the same flag, so `raster_diff_test` still holds the two to each
+other.
+
+- Where it shows: only the game's flat lines whose colour sits near a
+  5-bit step.  The options SCREEN/SOUND sliders (`CGUIBarReadout`, grey
+  245 selected / 110 not) and the balloon pickup's strings change; the
+  laser (255) and the chains and ropes (0) cannot, and the other
+  `DrawLine` callers are debug-only.  Options > Sound at vblank 1300
+  differs in 171 pixels, all on the SFX slider's row 121, where the
+  table's +2/+3 cells lift 110 to the next step.  The BGM and SPEECH
+  lines sit on rows whose offsets never cross a step for their grey.
+- No harness route draws one: tier 1 + tier 2 `--short` give 41,090
+  `[scene]`/`[frame]` lines identical to the previous exe, and all 25
+  levels under `walk_right.pad` for 1,500 vblanks match too.
+- `gpu_test` checks a flat `LINE_F2` and a flat polyline with dtd=1
+  (the table's first two rows on mid-grey 128) and dtd=0, a uniform
+  `LINE_G2` dithering as before, and a flat F3 staying undithered.
+  Reverting the one change fails four of those checks and ten
+  `raster_diff_test` cases.
+- The previous exe's tier 1 recordings (`# render 1`) replay on this one
+  with `--replay-from`: all 9 routes pass with byte-identical cards,
+  comparing rng and ram.
+
+The same change carries the fixes for a `/code-review` of #75's merge:
+- `mdec_test`: an open golden that ends early is a failure, so an old or
+  truncated `mdec_golden.bin` can no longer skip the saturation vector.
+- `run_tier --replay-from` across renderer revisions holds `[scene]` only
+  (above), instead of needing the new exe's own logs.
+- Per-epoch blindness is counted and a replay made only of it is refused
+  at exit (above); the boot line says when crc is not compared under the
+  pause menu.
+- `# render` accepts a trailing ` #` comment; the recorder and parser
+  comments list it.
+- `replay_test` shares its recording edits (`stripRng`, `setRenderLine`,
+  `writeText`) and one child launcher; `mdec.cpp`'s two sign-extension
+  helpers are one `signN<bits>`.
+
+And for a `/code-review` of this change itself:
+- The exit judgement covers a replay that never reached an epoch and a
+  replay closed by the window (above); `Port_InputAtExit(complete)`.
+- `[summary]` gains `render=<GPU_RENDER_REVISION>` and `blind_epochs=<n>`:
+  run_tier reads the revision there instead of matching a boot line's
+  wording, and fails any run with a blind epoch.
+- `mdec_test` fails on a missing or foreign golden and on bytes left after
+  the last vector; a truncated one is reported once, at the first vector
+  it cut.
+- The cross-build boot line no longer repeats the pause-menu caveat the
+  epochs line states.
+- `replay_test` reads recording A once and uses `buildLine` and
+  `readText` throughout.
 
 ## Game-source changes (keyboard prompt icons, issue #43)
 

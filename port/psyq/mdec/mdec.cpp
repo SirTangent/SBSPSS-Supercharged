@@ -108,14 +108,13 @@ void initTables(void)
 	g_tablesReady = 1;
 }
 
-inline int sign10(unsigned v)
+/*	the low BITS bits of v as a two's-complement number: 10 for a
+	run-level code's level, 9 for the IDCT output's wrap  */
+template <unsigned BITS>
+inline int signN(unsigned v)
 {
-	return (int)((v ^ 0x200u) - 0x200u);
-}
-
-inline int sign9(int v)
-{
-	return (int)(((unsigned)v & 0x1FFu) ^ 0x100u) - 0x100;
+	const unsigned top = 1u << (BITS - 1);
+	return (int)(((v & ((1u << BITS) - 1)) ^ top) - top);
 }
 
 inline int clampi(int v, int lo, int hi)
@@ -149,11 +148,11 @@ extern "C" int Mdec_RlDecodeBlock(int16_t blk[64], const uint16_t **srcp,
 
 	int qscale = (n >> 10) & 0x3F;
 	int k = 0;
-	int32_t val = sign10(n & 0x3FF) * qt[0];
+	int32_t val = signN<10>(n) * qt[0];
 	for (;;)
 	{
 		if (qscale == 0)
-			val = sign10(n & 0x3FF) * 2;
+			val = signN<10>(n) * 2;
 		val = clampi(val, -0x400, 0x3FF);
 		if (qscale > 0)
 			blk[g_zagzig[k]] = (int16_t)val;
@@ -165,7 +164,7 @@ extern "C" int Mdec_RlDecodeBlock(int16_t blk[64], const uint16_t **srcp,
 		k += ((n >> 10) & 0x3F) + 1;
 		if (k > 63)
 			break;						/* EOB (run 63 overshoots) or done */
-		val = (sign10(n & 0x3FF) * qt[k] * qscale + 4) / 8;
+		val = (signN<10>(n) * qt[k] * qscale + 4) / 8;
 	}
 	*srcp = src;
 	return 0;
@@ -208,7 +207,7 @@ extern "C" void Mdec_Idct(int16_t blk[64])
 		}
 	}
 	for (int i = 0; i < 64; i++)
-		blk[i] = (int16_t)clampi(sign9(a[i]), -128, 127);
+		blk[i] = (int16_t)clampi(signN<9>((unsigned)a[i]), -128, 127);
 }
 
 /*****************************************************************************/

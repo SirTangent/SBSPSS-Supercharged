@@ -213,7 +213,9 @@ int main(int argc, char **argv)
 	rc = spawnSelf("fault", NULL);
 	check(rc == PORT_EXIT_FAULT, "fault: exit code 11");
 	check(count("[summary] exit=11 ") == 1, "fault: one [summary] saying exit=11");
-	check(std::strstr(g_text, "paused=0.0\r\n") != NULL, "fault: lock-free [summary] ends in CRLF like the stream's");
+	check(std::strstr(g_text, " paused=0.0 render=") != NULL &&
+		  std::strstr(g_text, " blind_epochs=0\r\n") != NULL,
+		  "fault: lock-free [summary] carries every field and ends in CRLF like the stream's");
 	check(count("hook B") == 1, "fault: the faultSafe hook ran");
 	check(count("hook A") == 0, "fault: the other hook did not");
 	if (g_failures != before)

@@ -20,11 +20,20 @@ enum
 	PORT_EXIT_ORACLE   = 13,	/* replay/oracle mismatch */
 };
 
-/*	host/input.cpp: reports pad-file entries the run never satisfied and
-	replay desyncs; nonzero = the run failed its own script.  Only the
-	scripted exit (SBSP_EXIT_AFTER) consults it - a user closing the window
-	mid-route is not a failure.  */
-int		Port_InputAtExit(void);
+/*	host/input.cpp: judges a scripted run as it ends; nonzero = the run
+	failed its own script.  complete = 1 at the scripted exit
+	(SBSP_EXIT_AFTER): unsatisfied pad-file entries, unfired bare-pump
+	vblanks, desyncs, and a replay that compared nothing - no epoch
+	reached, or every one reached blind.  complete = 0 when the user
+	closes the window: what has not been reached yet is not a failure, so
+	only the epochs reached so far are judged - their desyncs, and all of
+	them blind.  */
+int		Port_InputAtExit(int complete);
+
+/*	host/input.cpp: how many epochs this replay reached that compared
+	nothing (no rng, ram skipped, crc skipped) - [summary]'s blind_epochs,
+	which run_tier requires to be 0  */
+int		Port_InputBlindEpochs(void);
 
 /*	The one way out of the process: prints [summary], runs the exit hooks
 	(Port_OnExit), then _exit(code).  _exit, not exit: the game never shuts
