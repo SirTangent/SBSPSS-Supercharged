@@ -47,6 +47,19 @@ struct GpuState
 
 extern GpuState g_gpu;
 
+/*	The software renderer's pixel revision.  Bump it whenever a change moves
+	displayed pixels on purpose (a fidelity fix, not a refactor): --record-pad
+	writes it as `# render N`, and a replay whose recording names another
+	revision - or none, as every recording before the line existed does -
+	does not compare the display CRC at its epochs, since the same game
+	state now draws a different picture.  rng is still compared when the
+	epochs carry it, and ram only on the same ABI and build type; a replay
+	whose epochs are left comparing nothing is refused (host/input.cpp).
+	  0  the implicit revision of recordings without the line
+	  1  issue #60: polygon tpage attributes keep the E1 dither bit; the
+	     MDEC IDCT saturates to signed 8 bits  */
+#define GPU_RENDER_REVISION	1
+
 /* gp0.cpp: execute `count` GP0 words at `words` against g_gpu/g_vram */
 void GPU_ExecWords(const uint32_t *words, int count);
 
@@ -59,6 +72,11 @@ extern "C" uint32_t GPU_DisplayCRC32(int *masked);
 	semi-transparency mode, depth, dither).  Shared with PutDrawEnv, which
 	assembles the same layout from DRAWENV.tpage/dtd.  */
 void GPU_ApplyTexpage(uint32_t tp);
+
+/*	gp0.cpp: the subset a textured polygon's tpage attribute reprograms -
+	texture page base, semi-transparency mode and depth, but not dither
+	(hardware leaves E1 bits 9-10 alone for the attribute).  */
+void GPU_ApplyPolyTexpage(uint32_t tp);
 
 /*	gp0.cpp: decode an E2 texture-window word into g_gpu (raw word plus the
 	sampler's mask/or form).  Shared with the GPU reset path.  */

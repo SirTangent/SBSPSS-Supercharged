@@ -113,6 +113,11 @@ inline int sign10(unsigned v)
 	return (int)((v ^ 0x200u) - 0x200u);
 }
 
+inline int sign9(int v)
+{
+	return (int)(((unsigned)v & 0x1FFu) ^ 0x100u) - 0x100;
+}
+
 inline int clampi(int v, int lo, int hi)
 {
 	return v < lo ? lo : (v > hi ? hi : v);
@@ -171,7 +176,14 @@ extern "C" int Mdec_RlDecodeBlock(int16_t blk[64], const uint16_t **srcp,
 	two passes with src/dst swapped.  psx-spx says the hardware keeps the
 	upper 13 bits of the scale entries (>>3 here) and rounds the sum with
 	"(sum+0FFFh)/2000h ... or so"; we use arithmetic shifts for both - the
-	one spot the hardware is documented as not-perfectly-known.  */
+	one spot the hardware is documented as not-perfectly-known.
+
+	Each output sample is then saturated to signed 8 bits before the colour
+	conversion, as the MDEC does: sign-extended from 9 bits first, then
+	clamped to -128..127 (DuckStation's IDCT; Mednafen keeps int8 blocks).
+	Without it a ringing sample past 127 at a bright edge fed the colour
+	matrix unclamped - Y=150 with a -20 chroma term gave 255 where the
+	hardware gives 235 (issue #60).  */
 extern "C" void Mdec_Idct(int16_t blk[64])
 {
 	int32_t a[64], b[64];
@@ -196,7 +208,7 @@ extern "C" void Mdec_Idct(int16_t blk[64])
 		}
 	}
 	for (int i = 0; i < 64; i++)
-		blk[i] = (int16_t)a[i];
+		blk[i] = (int16_t)clampi(sign9(a[i]), -128, 127);
 }
 
 /*****************************************************************************/

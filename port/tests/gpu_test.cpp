@@ -159,6 +159,7 @@ int main()
 
 		DRAWENV env;
 		SetDefDrawEnv(&env, 0, 0, 1024, 512);
+		env.dtd = 0;						/* exact texels: undithered */
 		PutDrawEnv(&env);
 
 		POLY_FT4 p;
@@ -194,6 +195,44 @@ int main()
 		setUVWH(&t0, 32, 0, 1, 1);
 		DrawPrim(&t0);
 		checkPx(220, 100, 0x1234, "FT4: texel 0000 leaves dest untouched");
+
+		/*	The poly tpage attribute leaves E1 dither alone (issue #60): with
+			dtd=1 in force, a modulated FT4 dithers - white 31*128 is 248 in
+			8 bits, so the (0,0) cell's -4 gives 30 and the (1,0) cell's 0
+			gives 31 - and a G4 drawn after it still dithers.  */
+		env.dtd = 1;
+		PutDrawEnv(&env);
+		POLY_FT4 wd = p;
+		setRGB0(&wd, 128, 128, 128);
+		setXYWH(&wd, 240, 100, 2, 1);		/* x 240 = cell column 0 */
+		setUVWH(&wd, 3, 0, 0, 0);			/* every pixel samples u=3: index 4, white */
+		DrawPrim(&wd);
+		checkPx(240, 100, (uint16_t)(30 * 0x421), "FT4 with dtd=1: dither cell (0,0)");
+		checkPx(241, 100, (uint16_t)(31 * 0x421), "FT4 with dtd=1: dither cell (1,0)");
+		check(g_gpu.dither == 1, "the FT4's tpage attribute kept E1 dither on");
+
+		static const uint32_t g4[] =
+		{
+			0x38808080, 0x00C80064,				/* (100,200) mid grey */
+			0x00808080, 0x00C80068,				/* (104,200) */
+			0x00808080, 0x00CC0064,				/* (100,204) */
+			0x00808080, 0x00CC0068,				/* (104,204) */
+		};
+		GPU_ExecWords(g4, 8);
+		checkPx(100, 200, 15 * 0x421, "G4 after an FT4 still dithers (0,0): 128-4 >> 3");
+		checkPx(101, 200, 16 * 0x421, "G4 after an FT4 still dithers (1,0): 128+0 >> 3");
+
+		/*	and the reverse: dtd=0 in force, an attribute with bit 9 set
+			(which getTPage never makes) must not turn dither on  */
+		env.dtd = 0;
+		PutDrawEnv(&env);
+		POLY_FT4 nd = wd;
+		nd.tpage = (u_short)(wd.tpage | 0x200);
+		setXYWH(&nd, 244, 100, 2, 1);
+		DrawPrim(&nd);
+		checkPx(244, 100, 0x7FFF, "dtd=0 and attribute bit 9: FT4 undithered (0,0)");
+		checkPx(245, 100, 0x7FFF, "dtd=0 and attribute bit 9: FT4 undithered (1,0)");
+		check(g_gpu.dither == 0, "attribute bit 9 did not turn E1 dither on");
 	}
 
 	/*	--- POLY_G3 gouraud interpolation ------------------------------------

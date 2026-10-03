@@ -59,7 +59,9 @@
 	RamUsed differs across either, so a replay across them compares the CRC
 	and rng alone - issue #67 for the build - and across build types not
 	the CRC either while the pause menu, which DEBUG draws with one more
-	line, is on screen), the seed when one was
+	line, is on screen), the renderer revision (`# render N`: a replay on
+	an exe of another revision compares no crc, issue #60), the seed when
+	one was
 	given (`# seed`, adopted by a replay that has no --seed; without one the
 	game seeds itself the same way every boot - host/seed.cpp) and
 	its pacing (`# pace capped|uncapped`, `# loads paced|instant`).  A live
@@ -78,7 +80,9 @@
 	a different frame 111 times and still match every epoch (issue #58).
 	`long` is 32 bits on both Windows ABIs, so rng, like crc, is compared
 	across them; an epoch without it (an older recording) skips it.  Replaying
-	such a file re-checks the epochs and reports "[replay] desync".  A
+	such a file re-checks the epochs and reports "[replay] desync"; the boot
+	line says which of rng, ram and crc they compare on this exe, and a
+	recording whose epochs would compare none of them is refused.  A
 	malformed line, a desync, a scene reference the run never reached or a
 	`# bare` vblank it reached some other way (both reported at exit) makes
 	the process exit 13.
@@ -86,6 +90,7 @@
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL.h>
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -222,9 +227,58 @@ extern "C" void Port_PauseMenuDrawn(int drawn)
 	g_pauseDrawn = ((g_pauseDrawn << 1) | (drawn != 0)) & 7;
 }
 
+/*	Renderer revision of the exe that made the recording (`# render N`,
+	written since issue #60; absent = 0).  When it is not this exe's
+	GPU_RENDER_REVISION the same game state draws a different picture, so
+	no epoch's crc is compared.  rng still is, when the epochs carry it,
+	and ram under the usual rules (not across ABIs or build types,
+	ramSkipped); an epoch left with none of the three refuses the replay at
+	boot (checkEpochsCompare).  */
+static int				g_recordingRender = 0;
+
+/*	Every skip above can stack: a recording from before issue #58 has no
+	rng, one replayed across ABIs or build types compares no ram, and one
+	from another renderer revision no crc.  An epoch left with none of the
+	three would pass whatever the run did, and a replay made only of such
+	epochs would exit 0 having compared nothing - so it is refused at boot
+	(exit 13).  Otherwise the boot line says exactly what the epochs
+	compare on this exe.  (The cross-build pause-menu crc skip is per
+	epoch and only while the menu is up; it is not counted here.)  */
+static void checkEpochsCompare(const char *path)
+{
+	if (!g_epochCount)
+		return;
+	const int	ram = ramSkipped() == NULL;
+	const int	crc = g_recordingRender == GPU_RENDER_REVISION;
+	int			withRng = 0;
+	for (int i = 0; i < g_epochCount; i++)
+		withRng += g_epochs[i].hasRng != 0;
+	const int	blind = (ram || crc) ? 0 : g_epochCount - withRng;
+	if (blind)
+	{
+		fprintf(stderr, "[replay] pad-file %s: %d of %d epochs compare nothing on this exe "
+						"(render revision differs, ram skipped %s, no rng recorded) - aborting\n",
+				path, blind, g_epochCount, ramSkipped());
+		Port_Exit(PORT_EXIT_ORACLE);
+	}
+	char	what[64] = "";
+	int		n = 0;
+	if (withRng)
+		n += snprintf(what + n, sizeof(what) - n, "%srng%s", n ? ", " : "",
+					  withRng < g_epochCount ? " (where recorded)" : "");
+	if (ram)
+		n += snprintf(what + n, sizeof(what) - n, "%sram", n ? ", " : "");
+	if (crc)
+		n += snprintf(what + n, sizeof(what) - n, "%scrc", n ? ", " : "");
+	fprintf(stderr, "[input] epochs: comparing %s%s\n", what,
+			(withRng != 0) + ram + crc == 1 ? " only" : "");
+}
+
 /*	why an epoch's crc is not compared, or NULL when it is  */
 static const char *crcSkipped(void)
 {
+	if (g_recordingRender != GPU_RENDER_REVISION)
+		return "renderer revision";
 	if (g_recordingBuild >= 0 && g_recordingBuild != thisBuildFinal() &&
 		g_pauseDrawn && g_pauseScene == Port_LastSceneOpenVblank())
 		return "cross-build pause menu";
@@ -325,6 +379,24 @@ static void padFileFail(const char *path, int line, const char *why)
 	Port_Exit(PORT_EXIT_ORACLE);
 }
 
+/*	`# render`'s argument: one non-negative decimal (at most 9 digits),
+	whitespace around it allowed, nothing else.  -1 when malformed.  */
+static int parseRevision(const char *p)
+{
+	while (isspace((unsigned char)*p))
+		p++;
+	int v = 0, digits = 0;
+	while (*p >= '0' && *p <= '9')
+	{
+		if (++digits > 9)
+			return -1;
+		v = v * 10 + (*p++ - '0');
+	}
+	while (isspace((unsigned char)*p))
+		p++;
+	return digits && !*p ? v : -1;
+}
+
 /*	One pad-file line, comments already stripped, whitespace-trimmed.  */
 static int parsePadEntry(const char *tok, PadEntry *e, const char **why)
 {
@@ -410,7 +482,7 @@ static void padFileParse(void)
 			PromptMark	pm = {};
 			BareMark	bm = {};
 			char		word[16];
-			int			ptr;
+			int			ptr, render;
 			int			nep = sscanf(s, "# epoch %lu ram=%lu crc=%x rng=%x",
 									 &ep.vblank, &ep.ram, &ep.crc, &ep.rng);
 			if (nep >= 3)
@@ -444,6 +516,21 @@ static void padFileParse(void)
 					fclose(f);
 					padFileFail(path, line, "bad `# build' (expected debug or final)");
 				}
+			}
+			else if (strncmp(s, "# render", 8) == 0 &&
+					 (s[8] == 0 || isspace((unsigned char)s[8])))
+			{
+				/*	exactly one non-negative decimal and nothing after it: a
+					bare, misspelt or signed value would otherwise fall through
+					as a comment and leave revision 0, turning the crc check
+					off by accident - refused like a bad `# abi`  */
+				render = parseRevision(s + 8);
+				if (render < 0)
+				{
+					fclose(f);
+					padFileFail(path, line, "bad `# render' (expected one revision number)");
+				}
+				g_recordingRender = render;
 			}
 			else if (sscanf(s, "# seed %ld", &g_recordingSeed) == 1)
 				g_haveSeed = 1;
@@ -528,6 +615,10 @@ static void padFileParse(void)
 		fprintf(stderr, "[input] cross-build recording (%s, this exe %s): epoch ram not compared, "
 						"nor crc while the pause menu is up\n",
 				g_recordingBuild ? "final" : "debug", thisBuildFinal() ? "final" : "debug");
+	if (g_epochCount && g_recordingRender != GPU_RENDER_REVISION)
+		fprintf(stderr, "[input] recording's renderer revision is %d, this exe's %d: "
+						"epoch crc not compared\n", g_recordingRender, GPU_RENDER_REVISION);
+	checkEpochsCompare(path);
 	/*	Capped against uncapped needs no word: a replay fires the recording's
 		vblanks where it did, `# bare` ones included (host/pump.cpp, issue
 		#67).  Instant loads against paced ones
@@ -749,6 +840,7 @@ static void recordFrame(unsigned long vblank, unsigned mask)
 							   "CIRCLE=0020 SQUARE=0080 TRIANGLE=0010 L1=0004 R1=0008 L2=0001 R2=0002)\n"
 							   "# abi ptr=%d\n", (int)sizeof(void *));
 				fprintf(g_rec, "# build %s\n", thisBuildFinal() ? "final" : "debug");
+				fprintf(g_rec, "# render %d\n", GPU_RENDER_REVISION);
 				/*	host/seed.cpp decides now if the game has not asked yet.  No
 					seed given: the game seeds itself, identically every boot,
 					and so will the replay - there is nothing to write down.  */

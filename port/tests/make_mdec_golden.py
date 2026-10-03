@@ -5,7 +5,9 @@ Independent transcription of the psx-spx "MDEC Decompression" pseudocode
 (real_idct_core + yuv_to_rgb), mirroring the two documented-as-unknown
 rounding choices made in port/psyq/mdec/mdec.cpp (scaletable >> 3,
 (sum + 0xFFF) >> 13, 16.16 truncating YUV) so a mismatch means a
-transcription typo in the C side, not a design difference.
+transcription typo in the C side, not a design difference.  The IDCT
+output is saturated like the MDEC's (9-bit sign extension, then -128..127;
+issue #60), which psx-spx's pseudocode omits.
 
 Run from the repo root:  py port/tests/make_mdec_golden.py
 Writes port/tests/mdec_golden.bin (committed).
@@ -40,7 +42,12 @@ def idct(blk):
                     s += src[y + z * 8] * sar(SCALETABLE[x + z * 8], 3)
                 dst[x + y * 8] = sar(s + 0xFFF, 13)
         src = dst
-    return src
+    return [clamp(sign9(v), -128, 127) for v in src]
+
+
+def sign9(v):
+    v &= 0x1FF
+    return v - 0x200 if v & 0x100 else v
 
 
 def clamp(v, lo, hi):
@@ -89,6 +96,18 @@ def main():
     for q, (xx, yy) in enumerate([(0, 0), (8, 0), (0, 8), (8, 8)]):
         yuv_to_rgb24(cr, cb, ys[q], xx, yy, rgb)
     out += bytes(rgb)
+
+    # 4) IDCT saturation: large DC + AC terms whose raw outputs land in
+    #    every regime of the 9-bit sign extension followed by the -128..127
+    #    clamp: in range (unchanged); 128..255 (clamped to 127); 256..383
+    #    (wrap to -256..-129, clamped to -128); 384..511 (wrap to -128..-1,
+    #    passed unclamped); 512 and up (wrap back positive: 551 -> 39);
+    #    -256..-129 (clamped to -128); -384..-257 (wrap to 128..255,
+    #    clamped to 127); -512..-385 (wrap to 0..127, passed unclamped)
+    blk = [0] * 64
+    for i, v in {0: 300, 1: 1023, 8: 1023, 9: 1023, 10: -1023}.items():
+        blk[i] = v
+    out += struct.pack("<64h", *idct(blk))
 
     with open("port/tests/mdec_golden.bin", "wb") as f:
         f.write(out)
