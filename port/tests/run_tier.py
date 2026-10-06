@@ -123,10 +123,15 @@ DETERMINISM = ["--uncapped", "--no-cd-pace", "--frame-crc"]
 
 # Tier 2's frame oracle: the level's fade-in alone gives ~25 distinct frames,
 # so a count over the whole run cannot tell a level that wedges after opening
-# from one that plays (issue #61).  The run's last TIER2_LATE_WINDOW vblanks
-# must still show at least TIER2_LATE_FLOOR distinct pictures; the walk-right
-# sweep scrolls, animates and jumps, and the quietest short level measured
-# (24, chapter 5 level 5) gives 66 there, the others 212-300.
+# from one that plays (issue #61).  The TIER2_LATE_WINDOW vblanks starting
+# TIER2_LATE_START after [scene] Game - well past the fade - must show at
+# least TIER2_LATE_FLOOR distinct pictures: the walk-right sweep scrolls,
+# animates and jumps, and over the full tier's 25 levels the quietest (7)
+# gives 132 there, the rest 136-300.  Not the run's tail: on the long budget
+# walk-right reaches the exit of levels 9, 19 and 24 and the game then sits
+# on the map, 8 distinct frames in the last 300.  A level whose Game scene
+# ends before the window closes has played through and passes.
+TIER2_LATE_START = 300
 TIER2_LATE_WINDOW = 300
 TIER2_LATE_FLOOR = 30
 
@@ -231,13 +236,22 @@ class RunResult:
                 crcs.add(l.split()[2])
         return crcs
 
-    def late_frame_crcs(self, window):
-        """distinct unmasked [frame] CRCs over the run's last `window` vblanks"""
-        frames = [l.split() for l in self.lines if l.startswith("[frame] ")]
-        if not frames:
-            return set()
-        last = int(frames[-1][1])
-        return {f[2] for f in frames if int(f[1]) > last - window and "masked" not in f}
+    def frame_crcs_after_open(self, scene, start, end):
+        """(distinct unmasked [frame] CRCs over vblanks open+start < v <= open+end
+        after the first open of `scene`, whether another scene opened by
+        open+end) - (set(), False) when the scene never opened"""
+        opens = [int(l.split("vblank=")[1]) for l in self.lines
+                 if l.startswith("[scene] ") and "vblank=" in l]
+        mine = [int(l.split("vblank=")[1]) for l in self.lines
+                if l.startswith("[scene] ") and l.split()[1] == scene]
+        if not mine:
+            return set(), False
+        open_at = mine[0]
+        ended = any(open_at < v <= open_at + end for v in opens)
+        crcs = {l.split()[2] for l in self.lines
+                if l.startswith("[frame] ") and "masked" not in l
+                and open_at + start < int(l.split()[1]) <= open_at + end}
+        return crcs, ended
 
     def summary_int(self, key):
         """an integer [summary] field, or None when the line or the key is
@@ -391,9 +405,12 @@ def report_common(res, name):
         print(f"  FAIL {name}: {blind} epoch(s) compared nothing ([summary] blind_epochs)")
         ok = False
     # The audio the run rendered (run_game's --dump-audio): the exit hook
-    # closed the WAV, and it holds exactly one vblank of 44.1 kHz stereo -
-    # 735 frames at 60 Hz, 882 at 50 - for every vblank the run delivered
-    # (the dump is armed at the first vblank, audio_out.cpp).
+    # closed the WAV, and it holds exactly one vblank of 44.1 kHz stereo for
+    # every vblank the run delivered (the dump is armed at the first vblank,
+    # audio_out.cpp): 735 frames at 60 Hz, 882 at 50.  A PAL build boots at
+    # 60 Hz until VidInit sets the video mode - a paced boot spends ~34
+    # vblanks loading before that - so the count is k * 735 + (V - k) * 882
+    # for some whole k in 0..V, i.e. k = (882 V - F) / 147 (k = V on USA).
     if res.code == 0 and res.audio is not None:
         vblanks = res.summary_int("vblanks")
         if res.audio == "missing":
@@ -407,13 +424,13 @@ def report_common(res, name):
                 print(f"  FAIL {name}: the exit hook did not close the audio dump at {frames} frames "
                       f"({closed[-1] if closed else 'no [host] audio dump closed line'})")
                 ok = False
-            fits = [fpv for fpv in (735, 882) if vblanks is not None and frames == vblanks * fpv]
-            if not fits:
-                print(f"  FAIL {name}: the audio dump holds {frames} frames, not {vblanks} vblanks "
-                      f"of 735 or 882 (vblanks={vblanks})")
+            k, rem = divmod(882 * vblanks - frames, 147) if vblanks is not None else (-1, 1)
+            if rem or not 0 <= k <= vblanks:
+                print(f"  FAIL {name}: the audio dump holds {frames} frames, not a mix of whole "
+                      f"vblanks at 735 and 882 adding up to vblanks={vblanks}")
                 ok = False
             else:
-                print(f"       audio: {vblanks} vblanks x {fits[0]} frames rendered, crc {crc}")
+                print(f"       audio: {vblanks} vblanks rendered ({k} at 60 Hz, {vblanks - k} at 50 Hz), crc {crc}")
     return ok
 
 
@@ -663,13 +680,16 @@ def tier2(exe, seed, short, logdir, only):
         if len(crcs) < 2:
             print(f"  FAIL {name}: only {len(crcs)} distinct unmasked frame CRC(s) after [scene] Game")
             good = False
-        late = res.late_frame_crcs(TIER2_LATE_WINDOW)		# see TIER2_LATE_FLOOR
-        if len(late) < TIER2_LATE_FLOOR:
-            print(f"  FAIL {name}: only {len(late)} distinct unmasked frame CRC(s) in the last "
-                  f"{TIER2_LATE_WINDOW} vblanks ({TIER2_LATE_FLOOR} required) - the level stopped moving")
+        late, ended = res.frame_crcs_after_open("Game", TIER2_LATE_START,
+                                                TIER2_LATE_START + TIER2_LATE_WINDOW)	# see TIER2_LATE_FLOOR
+        if len(late) < TIER2_LATE_FLOOR and not ended:
+            print(f"  FAIL {name}: only {len(late)} distinct unmasked frame CRC(s) in vblanks "
+                  f"{TIER2_LATE_START}-{TIER2_LATE_START + TIER2_LATE_WINDOW} after [scene] Game "
+                  f"({TIER2_LATE_FLOOR} required) - the level stopped moving after its fade-in")
             good = False
         print(f"  {'PASS' if good else 'FAIL'} {name}: {res.wall:.1f}s wall, {len(crcs)} distinct frames "
-              f"({len(late)} in the last {TIER2_LATE_WINDOW} vblanks), "
+              f"({len(late)} in vblanks {TIER2_LATE_START}-{TIER2_LATE_START + TIER2_LATE_WINDOW} after open"
+              f"{', level ended inside the window' if ended else ''}), "
               f"peak_ram={res.summary.get('peak_ram', '?')} peak_prim={res.summary.get('peak_prim', '?')} "
               f"peak_memnodes={res.summary.get('peak_memnodes', '?')}")
         ok &= good

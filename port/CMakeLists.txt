@@ -449,7 +449,8 @@ endfunction()
 add_executable(lznp_roundtrip tools/lznp-src/roundtrip_test.cpp tools/lznp-src/lznp_encode.cpp
                               ${SBSP_ROOT}/source/utils/lznp.cpp)
 target_include_directories(lznp_roundtrip PRIVATE ${SBSP_ROOT}/source/utils)
-target_compile_options(lznp_roundtrip PRIVATE ${SBSP_DEBUG_FLAGS})
+# the game's lznp.cpp includes "lznp.h" for lznp.H, as the game flavour allows
+target_compile_options(lznp_roundtrip PRIVATE ${SBSP_DEBUG_FLAGS} -Wno-nonportable-include-path)
 sbsp_plain_exe_link(lznp_roundtrip)
 add_test(NAME lznp_roundtrip COMMAND lznp_roundtrip ${SBSP_ROOT}/port/tests/str_frame1.bin
          WORKING_DIRECTORY ${SBSP_ROOT})
