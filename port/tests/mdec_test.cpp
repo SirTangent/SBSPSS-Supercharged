@@ -167,11 +167,23 @@ static void testRlDecode(void)
 /*****************************************************************************/
 static FILE *g_golden;
 
+/*	false when there is no fixture left to read (main has already failed
+	a missing one) or it ends early.  A fixture that ends early is one
+	failure, named after the first vector it cut: an old or truncated
+	mdec_golden.bin would otherwise skip the vectors after the cut - the
+	IDCT saturation one is last - and pass.  It is closed there, so the
+	vectors after it are not each reported again.  */
 static bool goldenRead(void *dst, size_t n, const char *what)
 {
-	if (!g_golden || fread(dst, 1, n, g_golden) != n)
+	if (!g_golden)
+		return false;
+	if (fread(dst, 1, n, g_golden) != n)
 	{
-		printf("mdec_test: golden fixture short read (%s)\n", what);
+		char msg[96];
+		snprintf(msg, sizeof(msg), "golden fixture short read (%s)", what);
+		check(false, msg);
+		fclose(g_golden);
+		g_golden = NULL;
 		return false;
 	}
 	return true;
@@ -490,20 +502,23 @@ static void testOutBounds(void)
 /*****************************************************************************/
 int main(void)
 {
+	/*	The golden layers are the oracle, so a missing or foreign fixture is
+		a failure, not a skip: ctest runs this from the repo root
+		(CMakeLists.txt sbsp_shim_test), and an LFS pointer or a deleted
+		file must not pass.  */
 	g_golden = fopen("port/tests/mdec_golden.bin", "rb");
 	if (g_golden)
 	{
 		char magic[4];
 		if (fread(magic, 1, 4, g_golden) != 4 || memcmp(magic, "MDG1", 4))
 		{
-			printf("mdec_test: bad golden magic - golden layers SKIPPED\n");
+			check(false, "golden fixture: bad magic (not an MDG1 file)");
 			fclose(g_golden);
 			g_golden = NULL;
 		}
 	}
 	else
-		printf("mdec_test: port/tests/mdec_golden.bin not found (run "
-					"from the repo root) - golden layers SKIPPED\n");
+		check(false, "golden fixture: port/tests/mdec_golden.bin not found (run from the repo root)");
 
 	testIqTable();
 	testRlDecode();
@@ -515,7 +530,12 @@ int main(void)
 	testOutBounds();
 
 	if (g_golden)
+	{
+		/*	every vector read: anything left is one this test does not
+			check - a regenerated golden with a vector added and no reader  */
+		check(fgetc(g_golden) == EOF, "golden fixture: bytes left after the last vector");
 		fclose(g_golden);
+	}
 	if (g_failures)
 	{
 		printf("mdec_test: %d FAILURES\n", g_failures);

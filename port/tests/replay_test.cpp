@@ -36,13 +36,17 @@
 	the scene has not changed (six children), and last the renderer revision
 	(issue #60): a recording without `# render`, or naming another revision,
 	replays clean with its crc doctored but is still caught on a doctored ram
-	or rng, and a `# render` that is not exactly one non-negative number is
-	refused at boot (eleven children), and last what the epochs compare:
-	an old-format recording (no rng, no `# render`) replayed across ABIs
-	compares nothing and is refused, one with rng says at boot that it
-	compares rng only, and the boot line names the set in three more cases
-	(five children, their stderr captured).  The
-	children step vblanks with VSync(0) under SBSP_UNCAPPED=1,
+	or rng, a `# render` with blanks or a ` #` comment after this exe's
+	number is read as it, and one that is not exactly one non-negative
+	number is refused at boot (thirteen children), and last what the epochs
+	compare: an old-format recording (no rng, no `# render`) replayed across
+	ABIs compares nothing and is refused, one with rng says at boot that it
+	compares rng only, the boot line names the set in four more cases, and
+	a replay whose every epoch is left comparing nothing - its RNG never
+	registered, or the pause menu up across build types - is refused at exit
+	(eight children, their stderr captured), and a replay stopped before
+	its first epoch: refused at the scripted exit, not when closed like a
+	window (two children).  The children step vblanks with VSync(0) under SBSP_UNCAPPED=1,
 	so Port_VBlankCount advances and Host_VBlank calls Port_InputFrame exactly
 	as in the game, and open scenes through Port_SceneEvent at chosen counts.
 	Headless: the dummy video driver; the test pumps SDL events itself, as
@@ -52,7 +56,6 @@
 #include <SDL3/SDL.h>
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <process.h>
 
 #include <cctype>
 #include <cstdio>
@@ -179,6 +182,12 @@ enum { RUN_VBLANKS = 320 };
 	has no pause menu and so reports nothing from then on.  */
 static unsigned long g_pauseFirst = 1, g_pauseLast = 0, g_mapAt = 0;
 
+/*	REPLAY_TEST_VBLANKS <n> ends the run after n vblanks instead of
+	RUN_VBLANKS, and REPLAY_TEST_CLOSE=1 ends it the way closing the window
+	does (Port_InputAtExit(0)) rather than as --exit-after does  */
+static unsigned long g_runVblanks = RUN_VBLANKS;
+static int			 g_closeEarly;
+
 static void readPauseEnv(void)
 {
 	const char *p = std::getenv("REPLAY_TEST_PAUSE");
@@ -187,6 +196,11 @@ static void readPauseEnv(void)
 	const char *m = std::getenv("REPLAY_TEST_MAP_AT");
 	if (m && *m)
 		g_mapAt = std::strtoul(m, NULL, 10);
+	const char *v = std::getenv("REPLAY_TEST_VBLANKS");
+	if (v && *v)
+		g_runVblanks = std::strtoul(v, NULL, 10);
+	const char *c = std::getenv("REPLAY_TEST_CLOSE");
+	g_closeEarly = c && *c == '1';
 }
 
 static void drive(SDL_Joystick *joy, bool replay)
@@ -195,7 +209,7 @@ static void drive(SDL_Joystick *joy, bool replay)
 	PadInitDirect(pad0, pad1);
 
 	char what[128];
-	for (unsigned long vb = 1; vb <= RUN_VBLANKS; vb++)
+	for (unsigned long vb = 1; vb <= g_runVblanks; vb++)
 	{
 		if (replay)
 		{
@@ -255,11 +269,11 @@ static void drive(SDL_Joystick *joy, bool replay)
 }
 
 /*	-------- the children  */
-enum Mode { RECORD, RECORD_UNSEEDED, REPLAY, WRONG_SEED, EXPECT_DESYNC };
+enum Mode { RECORD, RECORD_UNSEEDED, REPLAY, WRONG_SEED, EXPECT_DESYNC, REPLAY_NO_RNG };
 
 static int childMain(Mode mode)
 {
-	bool replay = mode == REPLAY || mode == WRONG_SEED || mode == EXPECT_DESYNC;
+	bool replay = mode == REPLAY || mode == WRONG_SEED || mode == EXPECT_DESYNC || mode == REPLAY_NO_RNG;
 	if (!sdlUp())
 		return 1;
 	setEnv("SBSP_UNCAPPED", "1");			/* before the first VSync: Port_Uncapped caches */
@@ -277,15 +291,20 @@ static int childMain(Mode mode)
 	/*	main.cpp: setRndSeed(Port_BootSeed(&seed) ? seed : VidGetTickCount()),
 		and VidGetTickCount() is 0 at that point on every boot  */
 	g_fakeRng = Port_BootSeed(&seed) ? seed : 0;
-	Port_RegisterGameGlobals(&g_fakeRam, NULL, NULL, NULL, NULL, NULL, NULL, &g_fakeRng);
+	/*	"replay-norng" registers no RNG, as the shim-only unit exes do: its
+		epochs' rng has nothing live to be held against  */
+	Port_RegisterGameGlobals(&g_fakeRam, NULL, NULL, NULL, NULL, NULL, NULL,
+							 mode == REPLAY_NO_RNG ? NULL : &g_fakeRng);
 	drive(joy, replay);
-	int bad = Port_InputAtExit();
+	int bad = Port_InputAtExit(g_closeEarly ? 0 : 1);
 	if (mode == REPLAY)
 		check(bad == 0, "replay: no desync, every entry satisfied");
 	if (mode == WRONG_SEED)
 		check(bad > 0, "wrong seed: the epoch's rng catches it though picture and RamUsed match");
 	if (mode == EXPECT_DESYNC)
 		check(bad > 0, "a doctored epoch is reported");
+	if (mode == REPLAY_NO_RNG)
+		check(bad > 0, "epochs that compared nothing refuse the replay at exit");
 	SDL_Quit();
 	return g_failures ? 1 : 0;
 }
@@ -306,20 +325,91 @@ static char *slurp(const char *path, size_t *n)
 	return d;
 }
 
+/*	-------- recording edits the cases below share  */
+
+/*	the whole file, "" when it cannot be read  */
+static std::string readText(const char *path)
+{
+	size_t n = 0;
+	char *d = slurp(path, &n);
+	std::string s = d ? std::string(d, n) : std::string();
+	std::free(d);
+	return s;
+}
+
+static void writeText(const char *path, const std::string &s)
+{
+	FILE *f = std::fopen(path, "wb");
+	if (!f)
+	{
+		std::printf("FAIL: cannot write %s\n", path);
+		g_failures++;
+		return;
+	}
+	std::fwrite(s.data(), 1, s.size(), f);
+	std::fclose(f);
+}
+
+/*	s with every epoch's ` rng=<hex>` removed: what a recording made before
+	issue #58 looks like  */
+static std::string stripRng(const std::string &s)
+{
+	std::string cut;
+	for (size_t i = 0; i < s.size();)
+	{
+		if (s.compare(i, 5, " rng=") == 0)
+		{
+			i += 5;
+			while (i < s.size() && std::isxdigit((unsigned char)s[i]))
+				i++;
+			continue;
+		}
+		cut += s[i++];
+	}
+	return cut;
+}
+
+/*	this exe's `# render N` line in s replaced by `line`, or removed with
+	its newline when `line` is NULL (a recording from before issue #60);
+	false when s has no such line  */
+static bool setRenderLine(std::string &s, const char *line)
+{
+	char mine[32];
+	std::snprintf(mine, sizeof(mine), "# render %d", GPU_RENDER_REVISION);
+	const size_t rl = s.find(mine);
+	if (rl == std::string::npos)
+		return false;
+	if (line)
+		s.replace(rl, std::strlen(mine), line);
+	else
+	{
+		const size_t eol = s.find('\n', rl);
+		s.erase(rl, (eol == std::string::npos ? s.size() : eol + 1) - rl);
+	}
+	return true;
+}
+
+/*	the `# build` line naming this build, and the one naming the other  */
+static std::string buildLine(bool other)
+{
+	const bool isFinal = std::strcmp(thisBuild(), "final") == 0;
+	return std::string("# build ") + ((isFinal != other) ? "final" : "debug");
+}
+
 /*	A, line by line.  Text mode strips the CRLF the recorder's text-mode
 	fopen produced.  */
 static void checkRecording(const char *path)
 {
 	struct Want { const char *text; bool prefix; };
-	char abi[32], build[32], render[32];
+	char abi[32], render[32];
 	std::snprintf(abi, sizeof(abi), "# abi ptr=%d", (int)sizeof(void *));
-	std::snprintf(build, sizeof(build), "# build %s", thisBuild());
 	std::snprintf(render, sizeof(render), "# render %d", GPU_RENDER_REVISION);
+	const std::string build = buildLine(false);
 	const Want want[] =
 	{
 		{ "# recorded by sbsp --record-pad", true  },
 		{ abi,                              false },
-		{ build,                            false },	/* issue #67 */
+		{ build.c_str(),                    false },	/* issue #67 */
 		{ render,                           false },	/* issue #60 */
 		{ "# seed 4242",                    false },	/* the recording was given one */
 		{ "# pace uncapped",                false },
@@ -374,18 +464,24 @@ static void checkRecording(const char *path)
 	}
 }
 
-/*	spawnSelf with the child's stderr in `log`, then echoed to ours; the
-	text is returned (malloc'd, "" when unreadable)  */
-static char *spawnCapture(const char *exe, const char *mode, const char *log, int *rc)
+/*	Run this exe as the child `mode` and return its exit code (-1 when it
+	could not start).  With `log`, the child's stderr goes there, is echoed
+	to ours and lands in *err with the child's text-mode CRLF made LF ("" when
+	unreadable).  */
+static int spawnSelf(const char *exe, const char *mode, const char *log = NULL,
+					 std::string *err = NULL)
 {
-	*rc = -1;
-	SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
-	HANDLE h = CreateFileA(log, GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS,
-						   FILE_ATTRIBUTE_NORMAL, NULL);
-	if (h == INVALID_HANDLE_VALUE)
+	HANDLE h = INVALID_HANDLE_VALUE;
+	if (log)
 	{
-		std::printf("FAIL: cannot create %s\n", log);
-		return (char *)std::calloc(1, 1);
+		SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
+		h = CreateFileA(log, GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS,
+						FILE_ATTRIBUTE_NORMAL, NULL);
+		if (h == INVALID_HANDLE_VALUE)
+		{
+			std::printf("FAIL: cannot create %s\n", log);
+			return -1;
+		}
 	}
 	char cmd[MAX_PATH * 2];
 	std::snprintf(cmd, sizeof(cmd), "\"%s\" %s", exe, mode);
@@ -394,42 +490,39 @@ static char *spawnCapture(const char *exe, const char *mode, const char *log, in
 	si.dwFlags    = STARTF_USESTDHANDLES;
 	si.hStdInput  = GetStdHandle(STD_INPUT_HANDLE);
 	si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
-	si.hStdError  = h;
+	si.hStdError  = log ? h : GetStdHandle(STD_ERROR_HANDLE);
 	PROCESS_INFORMATION pi = {};
 	std::fflush(stdout);
+	std::fflush(stderr);
+	int rc = -1;
 	if (CreateProcessA(exe, cmd, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi))
 	{
 		WaitForSingleObject(pi.hProcess, INFINITE);
 		DWORD code = 0;
 		GetExitCodeProcess(pi.hProcess, &code);
-		*rc = (int)code;
+		rc = (int)code;
 		CloseHandle(pi.hThread);
 		CloseHandle(pi.hProcess);
 	}
 	else
 		std::printf("FAIL: CreateProcess(%s) failed\n", mode);
+	if (!log)
+		return rc;
 	CloseHandle(h);
 	size_t n = 0;
 	char *text = slurp(log, &n);
-	if (!text)
-		return (char *)std::calloc(1, 1);
-	std::fputs(text, stderr);
-	char *w = text;							/* the child's text-mode CRLF -> LF */
-	for (const char *r = text; *r; r++)
-		if (*r != '\r')
-			*w++ = *r;
-	*w = 0;
-	return text;
-}
-
-static int spawnSelf(const char *exe, const char *mode)
-{
-	char quoted[MAX_PATH + 4];
-	std::snprintf(quoted, sizeof(quoted), "\"%s\"", exe);
-	intptr_t rc = _spawnl(_P_WAIT, exe, quoted, mode, (const char *)NULL);
-	if (rc == -1)
-		std::printf("FAIL: _spawnl(%s) failed\n", mode);
-	return (int)rc;
+	if (err)
+		err->clear();
+	if (text)
+	{
+		std::fputs(text, stderr);
+		if (err)
+			for (const char *r = text; *r; r++)
+				if (*r != '\r')
+					*err += *r;
+		std::free(text);
+	}
+	return rc;
 }
 
 int main(int argc, char **argv)
@@ -444,6 +537,8 @@ int main(int argc, char **argv)
 		return childMain(RECORD_UNSEEDED);
 	if (argc > 1 && std::strcmp(argv[1], "expect-desync") == 0)
 		return childMain(EXPECT_DESYNC);
+	if (argc > 1 && std::strcmp(argv[1], "replay-norng") == 0)
+		return childMain(REPLAY_NO_RNG);
 
 	char exe[MAX_PATH], tmp[MAX_PATH], a[MAX_PATH + 48], b[MAX_PATH + 48];
 	if (!GetModuleFileNameA(NULL, exe, sizeof(exe)) || !GetTempPathA(sizeof(tmp), tmp))
@@ -480,20 +575,17 @@ int main(int argc, char **argv)
 
 	/*	3. B == A, byte for byte: same seed, same prompt device, same
 		entries, same epochs  */
-	size_t na = 0, nb = 0;
-	char *da = slurp(a, &na);
-	char *db = slurp(b, &nb);
-	check(da != NULL && db != NULL, "both recordings exist");
-	if (da && db)
+	const std::string recA = readText(a);		/* every edited copy below starts from it */
 	{
-		bool same = na == nb && std::memcmp(da, db, na) == 0;
-		check(same, "the replay's recording is byte-identical to the original");
-		if (!same)
+		const std::string recB = readText(b);
+		check(!recA.empty() && !recB.empty(), "both recordings exist");
+		if (!recA.empty() && !recB.empty() && recA != recB)
+		{
+			check(false, "the replay's recording is byte-identical to the original");
 			std::printf("--- A (%u bytes)\n%s--- B (%u bytes)\n%s---\n",
-						(unsigned)na, da, (unsigned)nb, db);
+						(unsigned)recA.size(), recA.c_str(), (unsigned)recB.size(), recB.c_str());
+		}
 	}
-	std::free(da);
-	std::free(db);
 
 	/*	4. replay A with the wrong seed and record nothing: same input, same
 		picture, same RamUsed - only the RNG differs, and the epoch must still
@@ -513,53 +605,33 @@ int main(int argc, char **argv)
 	setEnv("SBSP_RECORD_PAD", c);
 	rc = spawnSelf(exe, "record-unseeded");
 	check(rc == 0, "unseeded record child exited 0");
-	size_t nc = 0;
-	char *dc = slurp(c, &nc);
-	check(dc != NULL, "unseeded recording exists");
-	if (dc)
 	{
-		check(std::strstr(dc, "# seed") == NULL, "an unseeded recording carries no `# seed`");
-		check(std::strstr(dc, "# epoch 300 ") && std::strstr(dc, " rng="), "its epochs still carry rng");
+		const std::string recC = readText(c);
+		check(!recC.empty(), "unseeded recording exists");
+		if (!recC.empty())
+		{
+			check(recC.find("# seed") == std::string::npos, "an unseeded recording carries no `# seed`");
+			check(recC.find("# epoch 300 ") != std::string::npos && recC.find(" rng=") != std::string::npos,
+				  "its epochs still carry rng");
+		}
 	}
-	std::free(dc);
 
 	/*	6. an older recording - A without its rng fields - still replays
 		clean, and its 3-field epochs are really parsed and checked: the same
 		copy with the epoch's crc doctored must be reported  */
 	char bent[MAX_PATH + 48];
 	std::snprintf(bent, sizeof(bent), "%ssbsp_replay_test_%lu_bent.pad", tmp, pid);
-	da = slurp(a, &na);
-	if (da)
 	{
-		std::string s(da, na), cut;
-		for (size_t i = 0; i < s.size();)
-		{
-			if (s.compare(i, 5, " rng=") == 0)
-			{
-				i += 5;
-				while (i < s.size() && std::isxdigit((unsigned char)s[i]))
-					i++;
-				continue;
-			}
-			cut += s[i++];
-		}
+		const std::string cut = stripRng(recA);
 		check(cut.find(" rng=") == std::string::npos && cut.find("# epoch 300 ") != std::string::npos,
 			  "the old-format copy has epochs without rng");
 		std::string doctored = cut;
 		size_t crc = doctored.find(" crc=", doctored.find("# epoch 300 "));
 		if (crc != std::string::npos)
 			doctored.replace(crc + 5, 8, doctored.compare(crc + 5, 8, "DEADBEEF") ? "DEADBEEF" : "FEEDFACE");
-		for (const auto &out : { std::make_pair(old, &cut), std::make_pair(bent, &doctored) })
-		{
-			FILE *f = std::fopen(out.first, "wb");
-			if (f)
-			{
-				std::fwrite(out.second->data(), 1, out.second->size(), f);
-				std::fclose(f);
-			}
-		}
+		writeText(old, cut);
+		writeText(bent, doctored);
 	}
-	std::free(da);
 	setEnv("SBSP_RECORD_PAD", "");
 	setEnv("SBSP_PAD_FILE", old);
 	rc = spawnSelf(exe, "replay");
@@ -577,12 +649,9 @@ int main(int argc, char **argv)
 	std::snprintf(xbuild, sizeof(xbuild), "%ssbsp_replay_test_%lu_xbuild.pad", tmp, pid);
 	std::snprintf(ramd, sizeof(ramd), "%ssbsp_replay_test_%lu_ram.pad", tmp, pid);
 	std::snprintf(badb, sizeof(badb), "%ssbsp_replay_test_%lu_badbuild.pad", tmp, pid);
-	da = slurp(a, &na);
-	if (da)
 	{
-		std::string s(da, na);
-		const std::string mine  = std::string("# build ") + thisBuild();
-		const std::string other = std::string("# build ") + (std::strcmp(thisBuild(), "final") ? "final" : "debug");
+		const std::string s = recA;
+		const std::string mine = buildLine(false), other = buildLine(true);
 		const size_t bl = s.find(mine);
 		const size_t rl = s.find(" ram=0 ", s.find("# epoch 300 "));
 		check(bl != std::string::npos && rl != std::string::npos,
@@ -595,19 +664,11 @@ int main(int argc, char **argv)
 			cross.replace(bl, mine.size(), other);
 			std::string bad = s;
 			bad.replace(bl, mine.size(), "# build release");
-			for (const auto &out : { std::make_pair(xbuild, &cross), std::make_pair(ramd, &ramOnly),
-										   std::make_pair(badb, &bad) })
-			{
-				FILE *f = std::fopen(out.first, "wb");
-				if (f)
-				{
-					std::fwrite(out.second->data(), 1, out.second->size(), f);
-					std::fclose(f);
-				}
-			}
+			writeText(xbuild, cross);
+			writeText(ramd, ramOnly);
+			writeText(badb, bad);
 		}
 	}
-	std::free(da);
 	setEnv("SBSP_PAD_FILE", xbuild);
 	rc = spawnSelf(exe, "replay");
 	check(rc == 0, "a recording from the other build type: ram is not compared (a doctored ram replays clean)");
@@ -625,12 +686,9 @@ int main(int argc, char **argv)
 	char xcrc[MAX_PATH + 48], scrc[MAX_PATH + 48];
 	std::snprintf(xcrc, sizeof(xcrc), "%ssbsp_replay_test_%lu_xcrc.pad", tmp, pid);
 	std::snprintf(scrc, sizeof(scrc), "%ssbsp_replay_test_%lu_crc.pad", tmp, pid);
-	da = slurp(a, &na);
-	if (da)
 	{
-		std::string s(da, na);
-		const std::string mine  = std::string("# build ") + thisBuild();
-		const std::string other = std::string("# build ") + (std::strcmp(thisBuild(), "final") ? "final" : "debug");
+		const std::string s = recA;
+		const std::string mine = buildLine(false), other = buildLine(true);
 		const size_t bl = s.find(mine);
 		const size_t cl = s.find(" crc=", s.find("# epoch 300 "));
 		check(bl != std::string::npos && cl != std::string::npos,
@@ -641,18 +699,10 @@ int main(int argc, char **argv)
 			same.replace(cl + 5, 8, s.compare(cl + 5, 8, "DEADBEEF") ? "DEADBEEF" : "FEEDFACE");
 			std::string cross = same;
 			cross.replace(bl, mine.size(), other);
-			for (const auto &out : { std::make_pair(xcrc, &cross), std::make_pair(scrc, &same) })
-			{
-				FILE *f = std::fopen(out.first, "wb");
-				if (f)
-				{
-					std::fwrite(out.second->data(), 1, out.second->size(), f);
-					std::fclose(f);
-				}
-			}
+			writeText(xcrc, cross);
+			writeText(scrc, same);
 		}
 	}
-	std::free(da);
 	struct PauseCase { const char *file, *pause, *mapAt, *mode, *what; };
 	const PauseCase pauseCases[] =
 	{
@@ -684,91 +734,73 @@ int main(int argc, char **argv)
 		game state differently, so a recording made before it - no `# render`
 		line - or by another revision does not compare crc; ram and rng still
 		are.  A doctored crc stands in for the changed picture.  */
-	struct RenderCase { const char *tag, *renderLine; char field; const char *mode, *what; };
-	char other[32];
-	std::snprintf(other, sizeof(other), "# render %d", GPU_RENDER_REVISION + 1);
-	const RenderCase renderCases[] =
 	{
-		{ "rnone",  NULL,          'c', "replay",
-		  "no `# render` line (an older recording): crc is not compared" },
-		{ "rother", other,         'c', "replay",
-		  "another renderer revision: crc is not compared" },
-		{ "rram",   NULL,          'r', "expect-desync",
-		  "no `# render` line: a doctored ram is still caught" },
-		{ "rrng",   NULL,          'n', "expect-desync",
-		  "no `# render` line: a doctored rng is still caught" },
-		{ "rbad",   "# render -1", 0,   "replay", NULL },
-		/*	`# render` takes exactly one non-negative number: anything else
-			used to fall through as a comment and leave revision 0  */
-		{ "rbare",  "# render",       0, "replay", NULL },
-		{ "rword",  "# render one",   0, "replay", NULL },
-		{ "rdash",  "# render -",     0, "replay", NULL },
-		{ "rtwo",   "# render 1 2",   0, "replay", NULL },
-		{ "rtail",  "# render 1x",    0, "replay", NULL },
-		{ "rspace", NULL,             'c', "expect-desync",		/* line set below */
-		  "`# render` with blanks around this exe's revision is read as it: crc is compared" },
-	};
-	const int nRenderCases = (int)(sizeof(renderCases) / sizeof(renderCases[0]));
-	char spaced[32];
-	std::snprintf(spaced, sizeof(spaced), "# render  %d  ", GPU_RENDER_REVISION);
-	char renderFiles[sizeof(renderCases) / sizeof(renderCases[0])][MAX_PATH + 48];
-	int  nRender = 0;
-	for (int k = 0; k < nRenderCases; k++)
-	{
-		const RenderCase &rc9 = renderCases[k];
-		const char *renderLine = std::strcmp(rc9.tag, "rspace") ? rc9.renderLine : spaced;
-		char *path = renderFiles[nRender++];
-		std::snprintf(path, MAX_PATH + 48, "%ssbsp_replay_test_%lu_%s.pad", tmp, pid, rc9.tag);
-		da = slurp(a, &na);
-		if (!da)
-			continue;
-		std::string s(da, na);
-		std::free(da);
-		char mine[32];
-		std::snprintf(mine, sizeof(mine), "# render %d", GPU_RENDER_REVISION);
-		const size_t ep = s.find("# epoch 300 ");
-		const size_t rl = s.find(mine);
-		check(rl != std::string::npos && ep != std::string::npos,
-			  "A carries this exe's `# render` line and an epoch at 300");
-		if (rl == std::string::npos || ep == std::string::npos)
-			continue;
-		const char *key = rc9.field == 'c' ? " crc=" : rc9.field == 'r' ? " ram=" : " rng=";
-		if (rc9.field)
+		char other[32], spaced[32], noted[64];
+		std::snprintf(other, sizeof(other), "# render %d", GPU_RENDER_REVISION + 1);
+		std::snprintf(spaced, sizeof(spaced), "# render  %d  ", GPU_RENDER_REVISION);
+		std::snprintf(noted, sizeof(noted), "# render %d   # made on another exe", GPU_RENDER_REVISION);
+		struct RenderCase { const char *tag, *renderLine; char field; const char *mode, *what; };
+		const RenderCase renderCases[] =
 		{
-			size_t at = s.find(key, ep);
-			check(at != std::string::npos, "A's epoch at 300 carries the field to doctor");
-			if (at == std::string::npos)
+			{ "rnone",  NULL,          'c', "replay",
+			  "no `# render` line (an older recording): crc is not compared" },
+			{ "rother", other,         'c', "replay",
+			  "another renderer revision: crc is not compared" },
+			{ "rram",   NULL,          'r', "expect-desync",
+			  "no `# render` line: a doctored ram is still caught" },
+			{ "rrng",   NULL,          'n', "expect-desync",
+			  "no `# render` line: a doctored rng is still caught" },
+			{ "rspace", spaced,        'c', "expect-desync",
+			  "`# render` with blanks around this exe's revision is read as it: crc is compared" },
+			{ "rnote",  noted,         'c', "expect-desync",
+			  "`# render` with a ` #` comment after this exe's revision is read as it: crc is compared" },
+			/*	`# render` takes exactly one non-negative number: anything else
+				used to fall through as a comment and leave revision 0  */
+			{ "rbad",   "# render -1",    0, "replay", NULL },
+			{ "rbare",  "# render",       0, "replay", NULL },
+			{ "rword",  "# render one",   0, "replay", NULL },
+			{ "rdash",  "# render -",     0, "replay", NULL },
+			{ "rtwo",   "# render 1 2",   0, "replay", NULL },
+			{ "rtail",  "# render 1x",    0, "replay", NULL },
+			{ "rglue",  "# render 1#x",   0, "replay", NULL },	/* a comment needs the blank */
+		};
+		for (const RenderCase &rc9 : renderCases)
+		{
+			char path[MAX_PATH + 48];
+			std::snprintf(path, sizeof(path), "%ssbsp_replay_test_%lu_%s.pad", tmp, pid, rc9.tag);
+			std::string s = recA;
+			const size_t ep = s.find("# epoch 300 ");
+			check(ep != std::string::npos, "A carries an epoch at 300");
+			if (ep == std::string::npos)
 				continue;
-			at += 5;
-			if (rc9.field == 'r')
-				s.replace(at, 1, "1");					/* ram=0 -> ram=1 */
+			if (rc9.field)
+			{
+				const char *key = rc9.field == 'c' ? " crc=" : rc9.field == 'r' ? " ram=" : " rng=";
+				size_t at = s.find(key, ep);
+				check(at != std::string::npos, "A's epoch at 300 carries the field to doctor");
+				if (at == std::string::npos)
+					continue;
+				at += 5;
+				if (rc9.field == 'r')
+					s.replace(at, 1, "1");					/* ram=0 -> ram=1 */
+				else
+					s.replace(at, 8, s.compare(at, 8, "DEADBEEF") ? "DEADBEEF" : "FEEDFACE");
+			}
+			check(setRenderLine(s, rc9.renderLine), "A carries this exe's `# render` line");
+			writeText(path, s);
+			setEnv("SBSP_PAD_FILE", path);
+			rc = spawnSelf(exe, rc9.mode);
+			if (rc9.what)
+				check(rc == 0, rc9.what);
 			else
-				s.replace(at, 8, s.compare(at, 8, "DEADBEEF") ? "DEADBEEF" : "FEEDFACE");
-		}
-		const size_t eol = s.find('\n', rl);
-		if (renderLine)
-			s.replace(rl, std::strlen(mine), renderLine);
-		else
-			s.erase(rl, eol + 1 - rl);
-		FILE *f = std::fopen(path, "wb");
-		if (f)
-		{
-			std::fwrite(s.data(), 1, s.size(), f);
-			std::fclose(f);
-		}
-		setEnv("SBSP_PAD_FILE", path);
-		rc = spawnSelf(exe, rc9.mode);
-		if (rc9.what)
-			check(rc == 0, rc9.what);
-		else
-		{
-			char what[96];
-			std::snprintf(what, sizeof(what), "`%s' is refused at boot (exit 13)", renderLine);
-			check(rc == 13, what);
+			{
+				char what[96];
+				std::snprintf(what, sizeof(what), "`%s' is refused at boot (exit 13)", rc9.renderLine);
+				check(rc == 13, what);
+			}
+			std::remove(path);
 		}
 	}
-	for (int i = 0; i < nRender; i++)
-		std::remove(renderFiles[i]);
 
 	/*	10. what the epochs compare (review of #75).  The skips stack: an
 		old-format recording (no rng, no `# render`) replayed across ABIs
@@ -776,99 +808,118 @@ int main(int argc, char **argv)
 		did - it is refused at boot instead.  Flipping `# abi ptr=` stands in
 		for the other exe: it is exactly the header the ram skip reads.  With
 		rng the same replay passes, and the boot line names what is
-		compared.  */
+		compared.  What only shows per epoch is counted at the end: an RNG
+		the game never registered compares no rng, and across build types
+		an epoch under the pause menu compares no crc - a replay made only
+		of epochs left with nothing is refused at exit.  */
 	{
-		char abiMine[32], abiOther[32], renderMine[32];
+		char abiMine[32], abiOther[32], renderOther[32];
 		std::snprintf(abiMine, sizeof(abiMine), "# abi ptr=%d", (int)sizeof(void *));
 		std::snprintf(abiOther, sizeof(abiOther), "# abi ptr=%d", sizeof(void *) == 8 ? 4 : 8);
-		std::snprintf(renderMine, sizeof(renderMine), "# render %d", GPU_RENDER_REVISION);
+		std::snprintf(renderOther, sizeof(renderOther), "# render %d", GPU_RENDER_REVISION + 1);
 		struct CompareCase
 		{
 			const char *tag;
-			bool		stripRng, dropRender, flipAbi, otherRender;
+			bool		stripRng, dropRender, flipAbi, otherRender, flipBuild;
+			const char	*pause, *mode;
 			int			wantRc;
 			const char	*wantText, *what;
 		};
 		const CompareCase cases[] =
 		{
-			{ "blind",   true,  true,  true,  false, 13,
+			{ "blind",   true,  true,  true,  false, false, "", "replay", 13,
 			  "epochs compare nothing on this exe (render revision differs, ram skipped cross-ABI, "
 			  "no rng recorded)",
 			  "an old-format recording across ABIs compares nothing: refused" },
-			{ "rngonly", false, false, true,  true,  0,
+			{ "rngonly", false, false, true,  true,  false, "", "replay", 0,
 			  "[input] epochs: comparing rng only\n",
 			  "rng recorded, another revision, across ABIs: replays clean, comparing rng only" },
-			{ "rngram",  false, true,  false, false, 0,
+			{ "rngram",  false, true,  false, false, false, "", "replay", 0,
 			  "[input] epochs: comparing rng, ram\n",
 			  "no `# render`, same ABI: comparing rng, ram" },
-			{ "ramonly", true,  true,  false, false, 0,
+			{ "ramonly", true,  true,  false, false, false, "", "replay", 0,
 			  "[input] epochs: comparing ram only\n",
 			  "old format on the same ABI: comparing ram only" },
-			{ "all",     false, false, false, false, 0,
+			{ "all",     false, false, false, false, false, "", "replay", 0,
 			  "[input] epochs: comparing rng, ram, crc\n",
 			  "this exe's own recording: comparing rng, ram, crc" },
+			{ "norng",   false, false, true,  true,  false, "", "replay-norng", 0,
+			  "[replay] all 1 epochs reached compared nothing on this exe",
+			  "rng recorded but no RNG registered, another revision, across ABIs: refused at exit" },
+			{ "crconly", true,  false, false, false, true,  "", "replay", 0,
+			  "[input] epochs: comparing crc only; crc not while the pause menu is up\n",
+			  "old format from the other build: the boot line says crc is not compared under the menu" },
+			{ "paused",  true,  false, false, false, true,  "290-299", "expect-desync", 0,
+			  "compared nothing: ram cross-build, crc cross-build pause menu, no rng recorded",
+			  "old format from the other build, every epoch under the menu: refused at exit" },
 		};
 		for (const CompareCase &cc : cases)
 		{
 			char path[MAX_PATH + 48], log[MAX_PATH + 48];
 			std::snprintf(path, sizeof(path), "%ssbsp_replay_test_%lu_%s.pad", tmp, pid, cc.tag);
 			std::snprintf(log, sizeof(log), "%ssbsp_replay_test_%lu_%s.log", tmp, pid, cc.tag);
-			da = slurp(a, &na);
-			if (!da)
-				continue;
-			std::string s(da, na);
-			std::free(da);
-			const size_t al = s.find(abiMine), rl = s.find(renderMine);
-			check(al != std::string::npos && rl != std::string::npos && al < rl,
-				  "A carries this exe's `# abi` line, then its `# render` line");
-			if (al == std::string::npos || rl == std::string::npos || al > rl)
-				continue;
-			if (cc.dropRender || cc.otherRender)	/* the later line first, so al stays valid */
-			{
-				const size_t eol = s.find('\n', rl);
-				if (cc.dropRender)
-					s.erase(rl, eol + 1 - rl);
-				else
-				{
-					char other[32];
-					std::snprintf(other, sizeof(other), "# render %d", GPU_RENDER_REVISION + 1);
-					s.replace(rl, std::strlen(renderMine), other);
-				}
-			}
+			std::string s = recA;
+			if (cc.dropRender || cc.otherRender)
+				check(setRenderLine(s, cc.dropRender ? NULL : renderOther),
+					  "A carries this exe's `# render` line");
 			if (cc.flipAbi)
-				s.replace(al, std::strlen(abiMine), abiOther);
+			{
+				const size_t al = s.find(abiMine);
+				check(al != std::string::npos, "A carries this exe's `# abi` line");
+				if (al != std::string::npos)
+					s.replace(al, std::strlen(abiMine), abiOther);
+			}
+			if (cc.flipBuild)
+			{
+				const std::string mine = buildLine(false);
+				const size_t bl = s.find(mine);
+				check(bl != std::string::npos, "A carries this build's `# build` line");
+				if (bl != std::string::npos)
+					s.replace(bl, mine.size(), buildLine(true));
+			}
 			if (cc.stripRng)
-			{
-				std::string cut;
-				for (size_t i = 0; i < s.size();)
-				{
-					if (s.compare(i, 5, " rng=") == 0)
-					{
-						i += 5;
-						while (i < s.size() && std::isxdigit((unsigned char)s[i]))
-							i++;
-						continue;
-					}
-					cut += s[i++];
-				}
-				s = cut;
-			}
-			FILE *f = std::fopen(path, "wb");
-			if (f)
-			{
-				std::fwrite(s.data(), 1, s.size(), f);
-				std::fclose(f);
-			}
+				s = stripRng(s);
+			writeText(path, s);
 			setEnv("SBSP_PAD_FILE", path);
-			int rc10 = -1;
-			char *err = spawnCapture(exe, "replay", log, &rc10);
+			setEnv("REPLAY_TEST_PAUSE", cc.pause);
+			std::string err;
+			const int rc10 = spawnSelf(exe, cc.mode, log, &err);
 			char what[256];
 			std::snprintf(what, sizeof(what), "%s (exit %d, want %d)", cc.what, rc10, cc.wantRc);
-			check(rc10 == cc.wantRc && std::strstr(err, cc.wantText) != NULL, what);
-			std::free(err);
+			check(rc10 == cc.wantRc && err.find(cc.wantText) != std::string::npos, what);
 			std::remove(path);
 			std::remove(log);
 		}
+		setEnv("REPLAY_TEST_PAUSE", "");
+	}
+
+	/*	11. a replay that stops before the recording's first epoch (review
+		of #77): at --exit-after it compared nothing and is refused; closed
+		like a window, what was not reached yet is no failure  */
+	{
+		struct EarlyCase { const char *close, *mode, *wantText, *what; };
+		const EarlyCase cases[] =
+		{
+			{ "",  "expect-desync",
+			  "[replay] none of the recording's 1 epochs was reached (the first is at vblank 300)",
+			  "--exit-after before the first epoch: refused" },
+			{ "1", "replay", "",
+			  "closed before the first epoch: not a failure" },
+		};
+		char log[MAX_PATH + 48];
+		std::snprintf(log, sizeof(log), "%ssbsp_replay_test_%lu_early.log", tmp, pid);
+		setEnv("SBSP_PAD_FILE", a);
+		setEnv("REPLAY_TEST_VBLANKS", "250");
+		for (const EarlyCase &ec : cases)
+		{
+			setEnv("REPLAY_TEST_CLOSE", ec.close);
+			std::string err;
+			rc = spawnSelf(exe, ec.mode, log, &err);
+			check(rc == 0 && err.find(ec.wantText) != std::string::npos, ec.what);
+			std::remove(log);
+		}
+		setEnv("REPLAY_TEST_VBLANKS", "");
+		setEnv("REPLAY_TEST_CLOSE", "");
 	}
 
 	std::remove(a);

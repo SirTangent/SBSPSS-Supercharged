@@ -17,8 +17,9 @@
 	  prims, and only to texels with the STP bit for textured ones.
 	- Written pixels carry the texel's STP bit (0 for untextured).
 	- Dithering (E1 dtd): the PS1 4x4 matrix added to the 8-bit channel
-	  value before 8->5 truncation, for gouraud-shaded and texture-modulated
-	  pixels only (flat untextured and raw-texture pixels bypass, as do
+	  value before 8->5 truncation, for every line pixel, flat or gouraud
+	  (issue #76), and for gouraud-shaded and texture-modulated triangle
+	  pixels (flat untextured and raw-texture triangles bypass, as do
 	  rects/fills - the interpreter never sets cfg->dither for those).
 	  Dither lands on the foreground colour BEFORE any semi-transparency
 	  blend; the blend itself stays in 5-bit space (M4's emulator A/B pass
@@ -103,9 +104,12 @@ static inline uint16_t blendSemi(uint16_t back, int fr, int fg, int fb, int mode
 }
 
 /*	The shared per-pixel pipeline.  Returns without writing when the pixel
-	is transparent.  cr/cg/cb are the 8-bit vertex colour at this pixel.  */
+	is transparent.  cr/cg/cb are the 8-bit vertex colour at this pixel;
+	`line` says the pixel is a line's, which dithers flat or gouraud
+	(issue #76) - every caller says, there is no default.  */
 static inline void shadePixel(int x, int y, int u, int v,
-							  int cr, int cg, int cb, const RasterCfg *cfg)
+							  int cr, int cg, int cb, const RasterCfg *cfg,
+							  bool line)
 {
 	int fr, fg, fb, stp = 0;
 	int dith = 0;
@@ -135,7 +139,7 @@ static inline void shadePixel(int x, int y, int u, int v,
 			fr = mod5(tr, cr);  fg = mod5(tg, cg);  fb = mod5(tb, cb);
 		}
 	}
-	else if (cfg->dither && cfg->gouraud)
+	else if (cfg->dither && (cfg->gouraud || line))
 	{
 		dith = s_dither[y & 3][x & 3];
 		fr = clamp8(cr + dith) >> 3;
@@ -278,7 +282,7 @@ void RasterRef_Triangle(const RasterVtx *v0, const RasterVtx *v1, const RasterVt
 				cr = a->r;  cg = a->g;  cb = a->b;
 			}
 
-			shadePixel(x, y, u, v, cr, cg, cb, cfg);
+			shadePixel(x, y, u, v, cr, cg, cb, cfg, false);
 		}
 	}
 #undef DIVAREA
@@ -306,7 +310,7 @@ void RasterRef_Rect(int x, int y, int w, int h, int u0, int v0,
 
 	for (int py = y0, v = vstart; py <= y1; py++, v++)
 		for (int px = x0, u = ustart; px <= x1; px++, u++)
-			shadePixel(px, py, u, v, r, g, b, cfg);
+			shadePixel(px, py, u, v, r, g, b, cfg, false);
 }
 
 /*****************************************************************************/
@@ -344,8 +348,9 @@ void RasterRef_Line(const RasterVtx *pa, const RasterVtx *pb, const RasterCfg *c
 			}
 			/*	lines are never textured, so the shared pipeline's untextured
 				path (8->5 bit colour, optional semi-transparency, STP 0) is
-				exactly the line write rule - u/v are ignored  */
-			shadePixel(x0, y0, 0, 0, cr, cg, cb, cfg);
+				exactly the line write rule - u/v are ignored.  A line
+				dithers flat or gouraud (issue #76).  */
+			shadePixel(x0, y0, 0, 0, cr, cg, cb, cfg, true);
 		}
 
 		if (x0 == x1 && y0 == y1)

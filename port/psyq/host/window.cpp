@@ -242,7 +242,8 @@ static void handleHostEvent(const SDL_Event *ev)
 	{
 	case SDL_EVENT_QUIT:
 		fprintf(stderr, "[host] window closed - exiting\n");
-		Port_Exit(PORT_EXIT_CLEAN);
+		/*	a replay closed early is judged on the epochs it reached  */
+		Port_Exit(Port_InputAtExit(0) ? PORT_EXIT_ORACLE : PORT_EXIT_CLEAN);
 	case SDL_EVENT_GAMEPAD_ADDED:
 	case SDL_EVENT_GAMEPAD_REMOVED:
 		Port_InputHandleEvent(ev);
@@ -356,7 +357,7 @@ extern "C" void Host_VBlank(unsigned long vblankNo)
 	if (g_exitAfter && vblankNo >= g_exitAfter)
 	{
 		fprintf(stderr, "[host] SBSP_EXIT_AFTER=%lu reached - exiting\n", g_exitAfter);
-		Port_Exit(Port_InputAtExit() ? PORT_EXIT_ORACLE : PORT_EXIT_CLEAN);
+		Port_Exit(Port_InputAtExit(1) ? PORT_EXIT_ORACLE : PORT_EXIT_CLEAN);
 	}
 
 	inHere = 0;
