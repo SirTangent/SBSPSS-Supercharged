@@ -438,11 +438,19 @@ sbsp_shim_test(exit_test)       # Port_Exit owner rule + exit hooks, in child pr
 # (source/utils/lznp.cpp): synthetic, structured and fuzzed buffers plus a
 # committed fixture must round-trip byte for byte.  No shim - the encoder, the
 # decoder and the test alone.  It was a hand-built proof until issue #61.
+# A plain tool without SDL: static on MinGW so it runs from the build tree
+# without the mingw32 DLLs, and none of sbsp_exe_link's runtime-DLL copy,
+# which fails on a target that has no DLLs to copy.
+function(sbsp_plain_exe_link target)
+    if(NOT SBSP_MSVC)
+        target_link_options(${target} PRIVATE -static)
+    endif()
+endfunction()
 add_executable(lznp_roundtrip tools/lznp-src/roundtrip_test.cpp tools/lznp-src/lznp_encode.cpp
                               ${SBSP_ROOT}/source/utils/lznp.cpp)
 target_include_directories(lznp_roundtrip PRIVATE ${SBSP_ROOT}/source/utils)
 target_compile_options(lznp_roundtrip PRIVATE ${SBSP_DEBUG_FLAGS})
-sbsp_exe_link(lznp_roundtrip)
+sbsp_plain_exe_link(lznp_roundtrip)
 add_test(NAME lznp_roundtrip COMMAND lznp_roundtrip ${SBSP_ROOT}/port/tests/str_frame1.bin
          WORKING_DIRECTORY ${SBSP_ROOT})
 set_tests_properties(lznp_roundtrip PROPERTIES LABELS unit)
@@ -451,7 +459,7 @@ set_tests_properties(lznp_roundtrip PROPERTIES LABELS unit)
 # inputs identically (tests/lznp_exe_check.py).
 add_executable(lznp_tool tools/lznp-src/lznp_cli.cpp tools/lznp-src/lznp_encode.cpp)
 target_compile_options(lznp_tool PRIVATE ${SBSP_DEBUG_FLAGS})
-sbsp_exe_link(lznp_tool)
+sbsp_plain_exe_link(lznp_tool)
 if(Python3_Interpreter_FOUND)
     add_test(NAME lznp_exe_matches_source
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/lznp_exe_check.py
