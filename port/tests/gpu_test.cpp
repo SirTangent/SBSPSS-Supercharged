@@ -699,8 +699,10 @@ int main()
 		g_vram[16][8] = (uint16_t)((0x1F << 10) | (0x08 << 5) | 0x11);
 		unsigned char rgb[3];
 		GPU_ReadDisplayPixelRGB(0, 0, rgb);
-		check(rgb[0] == (0x11 << 3) && rgb[1] == (0x08 << 3) && rgb[2] == 0xF8,
-			  "display unpack: 15bpp channels x8");
+		/*	5 -> 8 bits as (c << 3) | (c >> 2), full range: 0x11 -> 0x8C,
+			0x08 -> 0x42, 0x1F -> 0xFF - the presenter's expansion (#63)  */
+		check(rgb[0] == 0x8C && rgb[1] == 0x42 && rgb[2] == 0xFF,
+			  "display unpack: 15bpp channels expand to full range");
 
 		/*	24bpp: pixels 0,1 = (R0 G0 B0)(R1 G1 B1) packed little-endian
 			into three halfwords: G0R0, R1B0, B1G1.  disp.w is in PIXELS
@@ -722,7 +724,7 @@ int main()
 		disp.isrgb24 = 0;
 		PutDispEnv(&disp);
 		GPU_ReadDisplayPixelRGB(0, 0, rgb);
-		check(rgb[2] == ((0x22 >> 2) << 3),
+		check(rgb[2] == 0x42,	/* blue = 5-bit 8 (0x22 >> 2): (8 << 3) | (8 >> 2) */
 			  "display unpack: isrgb24 clears on the next PutDispEnv");
 	}
 

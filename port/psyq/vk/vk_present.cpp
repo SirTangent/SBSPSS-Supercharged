@@ -9,12 +9,26 @@
 
 	Vulkan is reached through SDL (SDL_Vulkan_LoadLibrary + the returned
 	vkGetInstanceProcAddr) - no link dependency on vulkan-1; the runtime
-	loader comes from the user's GPU driver.  Sync model is deliberately
-	simple for a 60fps 1MB blit: one command buffer, acquire/render
-	semaphores, vkQueueWaitIdle per frame.
+	loader comes from the user's GPU driver.
 
-	Aspect: the PS1's 512x256 mode scans out on a 4:3 CRT, so the image is
-	letterboxed to 4:3 regardless of window shape (authentic-first).
+	Sync model: FRAMES_IN_FLIGHT (2) slots, each with its own command
+	buffer, staging buffer, acquire semaphore and fence.  A frame is
+	skipped, never waited for, when its slot's fence is still unsignalled
+	or the swapchain has no image free (timeout-0 acquire): emulated time
+	never blocks on the display.  Render-finished semaphores are per
+	swapchain IMAGE (present waits on one, and it stays pending until that
+	image comes back through acquire), and the whole set is retired when
+	the swapchain is rebuilt.  The queue is never drained per frame; only a
+	swapchain rebuild waits for the device.
+
+	Errors: a swapchain that cannot be built yet (a minimized window has no
+	extent) is retried every frame, at init too; device loss, surface loss
+	and a submit that cannot be recovered stop the presenter with one [vk]
+	line and leave the game running behind the last picture (issue #63).
+
+	Aspect: the PS1's 512x256 mode scans out on a 4:3 CRT, so the picture
+	is 4:3 in the fit and integer modes and fills the window only in
+	stretch (vk/viewport.cpp, SBSP_SCALE).
 */
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL.h>
@@ -158,7 +172,36 @@ static uint32_t			s_frame;						/* frame slot cursor */
 
 static int				s_vramInShaderLayout;	/* image layout tracking */
 
+/*	issue #63: a hard error - device or surface lost, a submit that cannot
+	be recovered, a swapchain that will not build for a window that has a
+	size - stops the presenter for good: one [vk] line, then every frame
+	returns at once and the game runs on behind the last picture.
+	s_swapRetries counts consecutive failed rebuilds; s_announceSwap asks
+	for one "[vk] swapchain built" line after an init-time deferral;
+	s_selfTestLose (SBSP_SELFTEST=vklost) makes the next fence read as
+	DEVICE_LOST so the path can be exercised without a real TDR.  */
+static int				s_dead;
+static int				s_swapRetries;
+static int				s_swapZeroExtent;	/* the last build found a 0x0 surface (minimized) */
+static int				s_announceSwap;
+static int				s_selfTestLose;
+
 struct PushConsts { int32_t disp[4]; int32_t mask; int32_t rgb24; };
+
+static void presenterLost(const char *what, VkResult r)
+{
+	if (!s_dead)
+		fprintf(stderr, "[vk] %s failed (%d)%s - presenter stopped; the game runs on behind the "
+						"last picture\n", what, (int)r,
+				r == VK_ERROR_DEVICE_LOST ? ", device lost" :
+				r == VK_ERROR_SURFACE_LOST_KHR ? ", surface lost" : "");
+	s_dead = 1;
+}
+
+void VkPresent_SelfTestLose(void)
+{
+	s_selfTestLose = 1;
+}
 
 #define CHECK(expr)															\
 	do {																	\
@@ -304,8 +347,13 @@ static bool buildSwapchain(void)
 		extent.width  = (uint32_t)pw;
 		extent.height = (uint32_t)ph;
 	}
-	if (extent.width == 0 || extent.height == 0)
-		return false;	/* minimized - retry later */
+	/*	minimized - retry later.  SDL still reports the window's logical
+		size while it is iconic, so this is the one place that knows; the
+		flag keeps such a frame off the rebuild-failure count and tells
+		init's message what happened.  */
+	s_swapZeroExtent = extent.width == 0 || extent.height == 0;
+	if (s_swapZeroExtent)
+		return false;
 
 	uint32_t imgCount = caps.minImageCount + 1;
 	if (caps.maxImageCount && imgCount > caps.maxImageCount)
@@ -606,6 +654,22 @@ bool VkPresent_Init(SDL_Window *window)
 		sub.colorAttachmentCount = 1;
 		sub.pColorAttachments    = &ref;
 
+		/*	The attachment starts UNDEFINED and the implicit external
+			dependency begins at TOP_OF_PIPE, so without this the layout
+			transition and the clear could run before the presentation
+			engine has released the image: the acquire semaphore is only
+			waited for at COLOR_ATTACHMENT_OUTPUT (synchronization validation
+			reports SYNC-HAZARD-WRITE-AFTER-PRESENT on every present; issue
+			#63).  Chain them to that stage.  */
+		VkSubpassDependency dep;
+		memset(&dep, 0, sizeof(dep));
+		dep.srcSubpass    = VK_SUBPASS_EXTERNAL;
+		dep.dstSubpass    = 0;
+		dep.srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		dep.dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		dep.srcAccessMask = 0;
+		dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
 		VkRenderPassCreateInfo rpci;
 		memset(&rpci, 0, sizeof(rpci));
 		rpci.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -613,11 +677,25 @@ bool VkPresent_Init(SDL_Window *window)
 		rpci.pAttachments    = &att;
 		rpci.subpassCount    = 1;
 		rpci.pSubpasses      = &sub;
+		rpci.dependencyCount = 1;
+		rpci.pDependencies   = &dep;
 		CHECK(p_vkCreateRenderPass(s_dev, &rpci, NULL, &s_renderPass));
 	}
 
+	/*	The swapchain is the one thing init may do without.  A window that is
+		minimized at launch (a "Run: Minimized" shortcut, start /min) has a
+		0x0 extent, buildSwapchain's "retry later", and a driver can report
+		a transient error here; init used to fail on that, window.cpp then
+		never called the presenter again, and the window stayed black for
+		the whole session once restored (issue #63).  Leave s_swapValid at 0
+		and let VkPresent_Frame build it once the window has a size.  */
 	if (!createSwapchain())
-		return false;
+	{
+		fprintf(stderr, "[vk] no swapchain yet (%s) - built when the window shows\n",
+				s_swapZeroExtent ? "the surface has no size: minimized?"
+								 : "the build failed; retried each frame");
+		s_announceSwap = 1;
+	}
 
 	/* descriptors: one usampler2D */
 	{
@@ -826,11 +904,12 @@ bool VkPresent_Init(SDL_Window *window)
 /*****************************************************************************/
 void VkPresent_Frame(void)
 {
-	if (!s_dev)
+	if (!s_dev || s_dead)
 		return;
 
-	/*	handle resize (and any earlier failed recreation) before touching the
-		swapchain: s_swapValid == 0 means the framebuffers are gone  */
+	/*	handle resize (and any earlier failed recreation, init's included)
+		before touching the swapchain: s_swapValid == 0 means the
+		framebuffers are gone  */
 	int pw = 0, ph = 0;
 	SDL_GetWindowSizeInPixels(s_window, &pw, &ph);
 	if (pw == 0 || ph == 0)
@@ -839,7 +918,25 @@ void VkPresent_Frame(void)
 		(uint32_t)pw != s_swapExtent.width || (uint32_t)ph != s_swapExtent.height)
 	{
 		if (!createSwapchain())
+		{
+			/*	transient by contract (createSwapchain) - but a surface with a
+				size whose swapchain will not build 300 frames running (~5 s)
+				is not mid-resize, and every such attempt logs a line: stop.
+				A 0x0 surface (the window is iconic; SDL still reports its
+				logical size, so the guard above let us through) is waited
+				for, however long.  */
+			if (s_swapZeroExtent)
+				s_swapRetries = 0;
+			else if (++s_swapRetries >= 300)
+				presenterLost("swapchain rebuild (300 attempts)", VK_ERROR_INITIALIZATION_FAILED);
 			return;
+		}
+		s_swapRetries = 0;
+		if (s_announceSwap)
+		{
+			s_announceSwap = 0;
+			fprintf(stderr, "[vk] swapchain built: %ux%u\n", s_swapExtent.width, s_swapExtent.height);
+		}
 	}
 
 	/*	NEVER block emulated time on the display (M4).  This runs once per
@@ -856,8 +953,17 @@ void VkPresent_Frame(void)
 		abandoned frame must leave it signalled, or the next lap round the
 		ring waits forever.  */
 	uint32_t slot = s_frame % FRAMES_IN_FLIGHT;
-	if (p_vkGetFenceStatus(s_dev, s_fence[slot]) != VK_SUCCESS)
+	VkResult fs = s_selfTestLose ? VK_ERROR_DEVICE_LOST : p_vkGetFenceStatus(s_dev, s_fence[slot]);
+	if (fs == VK_NOT_READY)
 		return;		/* slot busy on the GPU - skip, don't stall */
+	if (fs != VK_SUCCESS)
+	{
+		/*	DEVICE_LOST (a TDR, a driver reset mid-session) used to read as
+			"busy", and the presenter returned here every vblank, silently,
+			for the rest of the session (issue #63)  */
+		presenterLost("vkGetFenceStatus", fs);
+		return;
+	}
 
 	uint32_t imgIdx = 0;
 	VkResult r = p_vkAcquireNextImageKHR(s_dev, s_swapchain, 0,
@@ -880,7 +986,10 @@ void VkPresent_Frame(void)
 		recreateAfter = 1;
 	}
 	else if (r != VK_SUCCESS)
+	{
+		presenterLost("vkAcquireNextImageKHR", r);	/* surface or device lost, out of memory */
 		return;
+	}
 
 	/* fresh VRAM into this slot's staging buffer */
 	memcpy(s_stagingMap[slot], g_vram, sizeof(g_vram));
@@ -1003,14 +1112,37 @@ void VkPresent_Frame(void)
 	si.pSignalSemaphores    = &s_semRender[imgIdx];
 
 	p_vkResetFences(s_dev, 1, &s_fence[slot]);
-	if (p_vkQueueSubmit(s_queue, 1, &si, s_fence[slot]) != VK_SUCCESS)
+	VkResult sr = p_vkQueueSubmit(s_queue, 1, &si, s_fence[slot]);
+	if (sr != VK_SUCCESS)
 	{
-		/*	nothing was queued against the fence - drain and re-signal it by
-			hand so the ring stays consistent  */
-		p_vkQueueWaitIdle(s_queue);
-		p_vkDeviceWaitIdle(s_dev);
-		p_vkResetFences(s_dev, 1, &s_fence[slot]);
-		p_vkQueueSubmit(s_queue, 0, NULL, s_fence[slot]);
+		/*	Nothing was queued.  The acquired image will never be presented
+			and s_semAcquire[slot] keeps a pending signal that no wait will
+			consume - reusing either is invalid, and this used to do both:
+			the next frame acquired with the same semaphore and each failure
+			leaked an image until acquire returned NOT_READY for good (issue
+			#63).  Drain, replace the semaphore, re-signal the fence by hand
+			so the ring stays consistent, and rebuild the swapchain, which
+			retires the orphaned image with the old one.  A lost device, or
+			a recovery step that fails itself, stops the presenter.  */
+		fprintf(stderr, "[vk] vkQueueSubmit failed (%d) - frame dropped, swapchain rebuilt\n", (int)sr);
+		if (sr == VK_ERROR_DEVICE_LOST || p_vkDeviceWaitIdle(s_dev) != VK_SUCCESS)
+		{
+			presenterLost("vkQueueSubmit", sr);
+			return;
+		}
+		VkSemaphoreCreateInfo sci;
+		memset(&sci, 0, sizeof(sci));
+		sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+		p_vkDestroySemaphore(s_dev, s_semAcquire[slot], NULL);
+		s_semAcquire[slot] = VK_NULL_HANDLE;
+		if (p_vkCreateSemaphore(s_dev, &sci, NULL, &s_semAcquire[slot]) != VK_SUCCESS ||
+			p_vkResetFences(s_dev, 1, &s_fence[slot]) != VK_SUCCESS ||
+			p_vkQueueSubmit(s_queue, 0, NULL, s_fence[slot]) != VK_SUCCESS)
+		{
+			presenterLost("recovery after vkQueueSubmit", sr);
+			return;
+		}
+		createSwapchain();
 		return;
 	}
 	s_frame++;
@@ -1026,6 +1158,11 @@ void VkPresent_Frame(void)
 	r = p_vkQueuePresentKHR(s_queue, &pi);
 	if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR)
 		recreateAfter = 1;
+	else if (r != VK_SUCCESS)
+	{
+		presenterLost("vkQueuePresentKHR", r);		/* surface or device lost */
+		return;
+	}
 
 	/*	Recreation waits until here: createSwapchain drains the device, so the
 		frame we just submitted completes first and nothing is abandoned.  */

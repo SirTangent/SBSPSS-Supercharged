@@ -24,6 +24,7 @@
 #include "gpu/gpu_core.h"		/* GPU_RENDER_REVISION, in [summary] */
 
 extern "C" unsigned long GPU_PrimPoolPeak(void);	/* gpu/gp0.cpp */
+void VkPresent_SelfTestLose(void);						/* vk/vk_present.cpp */
 
 namespace
 {
@@ -141,6 +142,8 @@ void selfTest(void)
 	}
 	else if (strcmp(mode, "stack-overflow") == 0)
 		g_recurse(NULL);
+	else if (strcmp(mode, "vklost") == 0)
+		VkPresent_SelfTestLose();	/* the presenter reads its next fence as DEVICE_LOST (#63) */
 	else
 		fprintf(stderr, "[selftest] unknown mode '%s' - ignored\n", mode);
 	mode[0] = 0;

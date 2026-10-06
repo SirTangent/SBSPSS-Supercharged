@@ -657,7 +657,9 @@ the resume edge the pump assigns `g_vblankBase = g_vblank` and re-stamps
 `g_qpcBase` (not via `wallVblank()`, which is by then far ahead), so the
 game continues from the frame it stopped on with no `MAX_PENDING_VBLANKS`
 catch-up burst; the audio device is paused across the edge
-(`Host_AudioPause`, else the SPU drones on its last voice state), the
+(`Host_AudioPause`, else the SPU drones on its last voice state - a
+title-bar drag, which stalls the pump inside `SDL_PollEvent`, gets the
+same pause and rebase through an event watch since issue #63), the
 watchdog thread resets its stall count while `Port_Paused()`, and
 `[summary]` gains `paused=<seconds>`.  The M3 invariants (one vblank per
 pump, no nesting, backlog rebased not skipped, `Port_NowSeconds` off the
@@ -1714,7 +1716,10 @@ own (no device, sample-exact: the M5 contract), sums the WAV up as one
 `[audio] frames=<n> crc=<CRC-32 of the PCM>` line at the end of the log,
 and `report_common` requires the exit hook's `[host] audio dump closed`
 to name those frames and the count to be exactly `[summary] vblanks=`
-vblanks of audio (735 frames each at 60 Hz, 882 at 50).  That exactness
+vblanks of audio: 735 frames each at 60 Hz, 882 at 50, as a whole mix
+`k * 735 + (V - k) * 882` with `k = (882 V - F) / 147` in `0..V`, because a
+PAL build boots at 60 Hz until `VidInit` sets the video mode (a paced EUR
+boot renders 34 vblanks at 735 before 366 at 882).  That exactness
 needed one shim change: the dump used to be armed with the device at the
 first `ResetGraph`, and a paced boot spends ~36 vblanks in `CdReadSync`
 before `VidInit`, so a paced run's WAV was that much shorter than the run;
@@ -1725,14 +1730,18 @@ line like a frame whenever the baseline log carries one (a log from
 before this change has none, and is compared as before), across renderer
 revisions too.
 
-**Tier 2 judges the end of the run.**  Its oracle was "at least 2
-distinct unmasked CRCs after `[scene] Game`", which the level fade-in
+**Tier 2 judges the level after its fade-in.**  Its oracle was "at least
+2 distinct unmasked CRCs after `[scene] Game`", which the level fade-in
 alone satisfies (~25 distinct frames), so a level that wedged after
-opening but kept calling VSync passed.  The last `TIER2_LATE_WINDOW`
-(300) vblanks must now show at least `TIER2_LATE_FLOOR` (30) distinct
-pictures.  Measured on the existing short-tier logs: 300 / 232 / 212 /
-300 / 66 for levels 0 / 4 / 12 / 19 / 24 - the quietest is level 24 at
-twice the floor.
+opening but kept calling VSync passed.  The `TIER2_LATE_WINDOW` (300)
+vblanks starting `TIER2_LATE_START` (300) after the Game scene opens must
+now show at least `TIER2_LATE_FLOOR` (30) distinct pictures.  Measured
+over all 25 levels of the full tier (`parity64`'s 3,600-vblank runs): the
+quietest, level 7, gives 132 there, the rest 136-300.  The run's tail is
+the wrong window: on that budget walk-right reaches the exit of levels 9,
+19 and 24, a `Map` scene opens and the game sits on it (8 distinct frames
+in the last 300) - so a level whose Game scene ends before the window
+closes has played through and passes.
 
 **Skips are never passes.**  `fmv_pipeline_test` returned 0 after
 printing SKIPPED when a movie was not staged or a golden was missing;
@@ -1786,6 +1795,101 @@ fails it too.  `stretch_keycaps.py --check` was already a CI step.
 Two findings of the review were fixed before this change: the ClearImage
 row checks sample column 512 since issue #60, and the maximum-size G3
 compares every pixel against an int64 reference (above).
+
+### Vulkan presenter and window robustness (issue #63)
+
+Shim-only: `vk/vk_present.cpp`, `vk/shaders/present.frag` (and its
+regenerated `.spv.h`), `vk/viewport.cpp`, `gpu/vram.cpp`, `host/window.cpp`,
+`host/diag.cpp`, `tests/gpu_test.cpp`.  Game logic, frame CRCs and the
+renderer revision are untouched; what changed is what the presenter does
+when something goes wrong, and one colour expansion.
+
+**A swapchain that cannot be built yet no longer ends the presenter.**
+`VkPresent_Init` failed when `createSwapchain` did, and `window.cpp` then
+never called the presenter again - so a window minimized at launch (a
+"Run: Minimized" shortcut, `start /min`), whose surface is 0x0 and whose
+build is `buildSwapchain`'s "retry later", stayed black for the whole
+session once restored.  Init now finishes without a swapchain, says
+`[vk] no swapchain yet (the surface has no size: minimized?)`, and
+`VkPresent_Frame` builds it when the window has a size, announcing
+`[vk] swapchain built: WxH` once.  `buildSwapchain` records a 0x0 surface
+in `s_swapZeroExtent`, because SDL still reports the window's logical size
+while it is iconic: such frames are waited for however long, while a
+surface with a size whose swapchain fails to build 300 frames running
+stops the presenter (below).  Verified by launching minimized from
+PowerShell and restoring the SDL window after a second: the two lines
+appear in that order.
+
+**The render pass chains the acquire.**  The attachment starts
+`UNDEFINED` with no subpass dependency, so the implicit one began at
+`TOP_OF_PIPE` and the layout transition and clear were not ordered after
+the acquire semaphore's wait at `COLOR_ATTACHMENT_OUTPUT`.  A
+`VK_SUBPASS_EXTERNAL -> 0` dependency on that stage with
+`COLOR_ATTACHMENT_WRITE` fixes it.  Measured with the Khronos validation
+layer's synchronization validation on the x64 build (the SDK ships no
+32-bit layer, so the MinGW exe cannot load it): 180 vblanks of level 1-1
+raise 10 `SYNC-HAZARD-WRITE-AFTER-READ` reports on the previous exe and
+none on this one.
+
+**Hard errors are said once and stop the presenter.**  `DEVICE_LOST` from
+`vkGetFenceStatus` read as "slot busy", and `DEVICE_LOST` / `SURFACE_LOST`
+from acquire or present fell into a bare `return`, so after a TDR the game
+ran on behind a frozen frame with nothing in the log.  `presenterLost`
+prints one `[vk] <call> failed (<code>), device lost - presenter stopped;
+the game runs on behind the last picture` and sets `s_dead`; every later
+frame returns at once.  `SBSP_SELFTEST=vklost@<vblank>` makes the next
+fence read as `DEVICE_LOST` so the path can be exercised: one line, the
+run reaches its `--exit-after`, exit 0.
+
+**A failed submit is recovered, not papered over.**  When `vkQueueSubmit`
+failed, the acquired image was never presented and `s_semAcquire[slot]`
+kept a pending signal that the next frame then passed to acquire again
+(invalid), while each failure leaked an image until acquire returned
+`NOT_READY` for good.  The path now drains the device, replaces the
+semaphore, re-signals the fence by hand and rebuilds the swapchain, which
+retires the orphaned image with the old one; a lost device, or a recovery
+step that fails itself, stops the presenter instead.
+
+**No Vulkan loader still gives a window.**  `SDL_WINDOW_VULKAN` makes
+`SDL_CreateWindow` load the loader, so without `vulkan-1.dll` there was no
+window at all - no focus, no close button, the music playing until the
+console was killed - and the promised black window was unreachable.  The
+window is created again without the flag, the presenter is not started,
+and the "window will stay black (frame dumps still work)" line is printed.
+Verified with `SDL_VULKAN_LIBRARY=no-such-vulkan-loader.dll`: the previous
+exe logs `SDL_CreateWindow failed` and runs windowless, this one makes the
+window and exits cleanly at its `--exit-after`.
+
+**A title-bar drag pauses the audio like a focus loss.**  Win32's modal
+move/size (and system-menu) loop runs inside `SDL_PollEvent`, so the pump
+delivered no vblank for as long as the user held the title bar while the
+audio thread droned on the frozen voice state and speech drained.  SDL
+sends `SDL_EVENT_WINDOW_EXPOSED` with `data1 == 1` from inside that loop,
+which only an event watch can see: `liveResizeWatch` pauses the audio
+device, prints `[host] paused (window move/size)` and keeps the picture up
+(a throttled `VkPresent_Frame`); the first poll after the loop resumes the
+audio, books the time into `[summary] paused=`, prints `resumed after
+N.Ns (window move/size)`, and answers one `Host_PausePoll` with "paused"
+so the pump rebases its clock on the resume edge instead of bursting the
+vblanks the loop ate.  Verified with a real drag driven from PowerShell
+(mouse down on the caption, move, hold, up): `paused` / `resumed after
+3.0s` and `paused=3.0`, with the run still ending at its scripted vblank.
+
+**Dumps and the window agree.**  The shader expanded 5-bit channels as
+`c / 31` (white 0xFF) while `GPU_ReadDisplayPixelRGB`, which feeds
+`--dump-frames`, used `c << 3` (white 0xF8), up to 7 levels apart per
+channel.  Both now use `(c << 3) | (c >> 2)`, the full-range expansion
+DuckStation and Mednafen use for the same conversion; the dump side is
+`gpu_test`'s "15bpp channels expand to full range".  BMPs dumped before
+this change are darker by that amount; the frame CRCs, over VRAM
+halfwords, do not move, so `--compare-frames` and the renderer revision
+are unaffected.
+
+**Comments.**  The presenter header describes the two-slot, fence-gated
+sync model and the scale modes instead of the M2 "one command buffer,
+vkQueueWaitIdle per frame"; `viewport.cpp`'s integer mode says 2k/3 window
+pixels per source column (2 only at k=3), as the Presenter paragraph above
+already did.
 
 ## Game-source changes (keyboard prompt icons, issue #43)
 
