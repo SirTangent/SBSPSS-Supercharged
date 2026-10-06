@@ -9,9 +9,13 @@
 	flavour (gnu++98, game includes/defines) since it consumes game headers.
 */
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "system\global.h"
 #include "fileio\fileio.h"
+
+extern "C" const char *Port_CdDataRoot(void);	/* port/psyq/cd/cd.cpp */
 
 /*	The known-good FAT values verified in M0 (FAT parser + LZNP round-trip):
 	entry 0 SYSTEM_CACHE at 2048, 3920 bytes; entry 1 SPRITES_SPRITES_SPR at
@@ -49,6 +53,11 @@ static u32 crc32buf(const u8 *p, s32 len)
 	return crc ^ 0xffffffff;
 }
 
+/*	The bytes loadFile returns must be the bytes at the file's FAT offset in
+	BIGLUMP.BIN itself (issue #61): size > 0 and a non-NULL buffer said
+	nothing about a read from the wrong sector or with the wrong stride,
+	and the CRC was only printed.  The comparison reads the host file the
+	libcd shim resolved, so it holds whatever a data build puts in it.  */
 static void loadAndReport(FileEquate fe, char *name)
 {
 	s32	size = CFileIO::getFileSize(fe);
@@ -61,6 +70,22 @@ static void loadAndReport(FileEquate fe, char *name)
 		printf("loaded %-32s size=%8ld sector=%6ld crc32=%08lx\n",
 			   name, (long)size, (long)CFileIO::getFileSector(fe),
 			   (unsigned long)crc32buf(data, size));
+
+		char path[1200];
+		sprintf(path, "%s/BIGLUMP.BIN", Port_CdDataRoot());
+		FILE *f = fopen(path, "rb");
+		check(f != NULL, "BIGLUMP.BIN opens at the libcd shim's data root");
+		if (f)
+		{
+			u8 *direct = (u8 *)malloc(size);
+			int same = direct != NULL
+					&& fseek(f, CFileIO::getFileOffset(fe), SEEK_SET) == 0
+					&& (s32)fread(direct, 1, size, f) == size
+					&& memcmp(direct, data, size) == 0;
+			check(same, "loadFile's bytes are the bytes at the file's FAT offset in BIGLUMP.BIN");
+			free(direct);
+			fclose(f);
+		}
 		MemFree(data);
 	}
 }

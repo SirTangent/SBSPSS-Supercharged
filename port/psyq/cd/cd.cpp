@@ -253,6 +253,14 @@ extern "C" void Port_CdRebuildDirForTest(void)
 	g_inited = 1;
 }
 
+/*	Test support (sbsp_headless): the directory the data was found in, so a
+	test can read BIGLUMP.BIN directly beside the game's own path through
+	CdRead and hold the two to each other (issue #61).  */
+extern "C" const char *Port_CdDataRoot(void)
+{
+	return g_dataRoot;
+}
+
 /*****************************************************************************/
 /*	BCD conversion: use the SDK's own itob/btoi macros from LIBCD.H  */
 

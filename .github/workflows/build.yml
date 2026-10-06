@@ -150,6 +150,11 @@ jobs:
         run: bash port/build-pc.sh ${{ matrix.preset }}
 
       - name: Unit tests
+        # a data-dependent test that finds its input missing exits 1 here
+        # instead of 77/skipped: CI staged the data, so a skip is a loss
+        # (tests/test_skip.h, issue #61)
+        env:
+          SBSP_TEST_STRICT: 1
         run: ctest --test-dir port/build/${{ matrix.preset }} --output-on-failure -L unit --no-tests=error
 
       - name: Playthrough tiers (uncapped)
@@ -234,6 +239,11 @@ jobs:
         run: cmake --build --preset ${{ matrix.preset }}
 
       - name: Unit tests
+        # a data-dependent test that finds its input missing exits 1 here
+        # instead of 77/skipped: CI staged the data, so a skip is a loss
+        # (tests/test_skip.h, issue #61)
+        env:
+          SBSP_TEST_STRICT: 1
         run: ctest --test-dir port/build/${{ matrix.preset }} --output-on-failure -L unit --no-tests=error
 
       - name: Playthrough tiers (uncapped)

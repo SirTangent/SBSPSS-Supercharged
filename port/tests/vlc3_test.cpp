@@ -27,12 +27,14 @@
 #include <libpress.h>
 
 #include "mdec/mdec_internal.h"
+#include "test_skip.h"
 
 extern "C" void DecDCTvlcBuild3(unsigned short *table);
 extern "C" int DecDCTvlcSize3(int breaksize);
 extern "C" int DecDCTvlc3(unsigned long *bs, unsigned long *buf);
 
 static int g_failures;
+static int g_skipped;		/* layers whose inputs are absent: never a pass (test_skip.h) */
 
 static void check(bool ok, const char *what)
 {
@@ -292,6 +294,7 @@ static void testRealFrame(void)
 	{
 		printf("vlc3_test: frame fixtures not found (run from the repo root, "
 			   "py port/tests/make_str_fixture.py) - pixel layer SKIPPED\n");
+		g_skipped++;
 		if (fb) fclose(fb);
 		if (fg) fclose(fg);
 		return;
@@ -360,6 +363,7 @@ static void sweepMovie(const char *path, long *framesOut)
 	if (!f)
 	{
 		printf("vlc3_test: %s absent - skipped\n", path);
+		g_skipped++;
 		return;
 	}
 	static uint8_t sec[2336];
@@ -459,12 +463,16 @@ int main(void)
 	sweepMovie("data/CDData/demo.str", &frames);
 	if (frames)
 		printf("vlc3_test: sweep total %ld frames\n", frames);
+	/*	a movie that is present but yields no frame is not a sweep of it  */
+	check(frames > 0 || g_skipped, "sweep: the staged movies decode to at least one frame");
 
 	if (g_failures)
 	{
 		printf("vlc3_test: %d FAILURES\n", g_failures);
 		return 1;
 	}
+	if (g_skipped)
+		return testSkipExit("vlc3_test", g_skipped);	/* tests/test_skip.h: 77, or 1 under SBSP_TEST_STRICT */
 	printf("vlc3_test: all passed\n");
 	return 0;
 }

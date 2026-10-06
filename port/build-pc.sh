@@ -111,7 +111,11 @@ test_one()
 {
     preset="$1"
     echo "=== ctest ($preset): unit ==="
-    ctest --test-dir "build/$preset" --output-on-failure -L unit --no-tests=error
+    # SBSP_TEST_STRICT: this tree owns its data (build-data staged the movies;
+    # the fixtures and the music are committed), so a test that finds an input
+    # missing and would otherwise exit 77 (ctest: skipped) fails instead -
+    # a skip here is a lost input, not a choice (tests/test_skip.h, issue #61)
+    SBSP_TEST_STRICT=1 ctest --test-dir "build/$preset" --output-on-failure -L unit --no-tests=error
     # --no-tests=error turns "the label matched nothing" into a failure, which
     # is the point: a playthrough label that quietly registered zero tests used
     # to read green.  A shim-only tree (-DSBSP_BUILD_GAME=OFF) legitimately has
@@ -133,7 +137,7 @@ test_one()
             return ;;
     esac
     echo "=== ctest ($preset): playthrough ==="
-    ctest --test-dir "build/$preset" --output-on-failure -L playthrough --no-tests=error
+    SBSP_TEST_STRICT=1 ctest --test-dir "build/$preset" --output-on-failure -L playthrough --no-tests=error
 }
 
 soak_one()

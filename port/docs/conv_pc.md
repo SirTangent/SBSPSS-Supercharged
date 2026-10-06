@@ -1695,6 +1695,98 @@ And for a `/code-review` of this change itself:
 - `replay_test` reads recording A once and uses `buildLine` and
   `readText` throughout.
 
+### Test-suite false passes and coverage gaps (issue #61)
+
+Harness and tests only: `tests/run_tier.py`, `tests/test_skip.h` (new),
+`fmv_pipeline_test`, `vlc3_test`, `xm_test`, `headless.cpp` (plus a
+`Port_CdDataRoot` accessor in `cd/cd.cpp`), `check_fmv_ffmpeg.py`,
+`make_xa_fixture.py`, `CMakeLists.txt`, `build-pc.sh`, `build.yml`.  The
+game's pixels and sound are unchanged; what changed is what can go green.
+
+**Audio renders in every playthrough.**  The determinism set carried
+`--no-audio`, and with no consumer `Port_AudioVBlank` returns before
+`Spu_RenderFrames`, so across every tier and self-test the SPU voice
+render, the envelopes, ADPCM over the game's own VABs and the CD-in mix
+never ran - only `spu_test`/`xm_test` on synthetic or title-theme input
+did, and the forbidden `[spu]` tag could not fire.  `run_game` now adds
+`--dump-audio <run dir>/audio.wav` to every run that does not bring its
+own (no device, sample-exact: the M5 contract), sums the WAV up as one
+`[audio] frames=<n> crc=<CRC-32 of the PCM>` line at the end of the log,
+and `report_common` requires the exit hook's `[host] audio dump closed`
+to name those frames and the count to be exactly `[summary] vblanks=`
+vblanks of audio (735 frames each at 60 Hz, 882 at 50).  That exactness
+needed one shim change: the dump used to be armed with the device at the
+first `ResetGraph`, and a paced boot spends ~36 vblanks in `CdReadSync`
+before `VidInit`, so a paced run's WAV was that much shorter than the run;
+`Port_AudioVBlank` now arms a `SBSP_DUMP_AUDIO` dump at the first vblank
+(the dump only - it opens no device, so the unit exes that pump without a
+window stay silent).  `--compare-frames` holds the `[audio]`
+line like a frame whenever the baseline log carries one (a log from
+before this change has none, and is compared as before), across renderer
+revisions too.
+
+**Tier 2 judges the end of the run.**  Its oracle was "at least 2
+distinct unmasked CRCs after `[scene] Game`", which the level fade-in
+alone satisfies (~25 distinct frames), so a level that wedged after
+opening but kept calling VSync passed.  The last `TIER2_LATE_WINDOW`
+(300) vblanks must now show at least `TIER2_LATE_FLOOR` (30) distinct
+pictures.  Measured on the existing short-tier logs: 300 / 232 / 212 /
+300 / 66 for levels 0 / 4 / 12 / 19 / 24 - the quietest is level 24 at
+twice the floor.
+
+**Skips are never passes.**  `fmv_pipeline_test` returned 0 after
+printing SKIPPED when a movie was not staged or a golden was missing;
+`vlc3_test`'s pixel layer and movie sweep and `xm_test` did the same.
+Each now counts its skipped layers and, with no failure, exits 77
+(`tests/test_skip.h`); every `sbsp_shim_test` carries
+`SKIP_RETURN_CODE 77`, so ctest reports "Skipped", never "Passed".
+`build-pc.sh test` and the two CI unit steps set `SBSP_TEST_STRICT=1`,
+under which the same case exits 1: those trees staged the movies and
+carry the fixtures and the music, so a skip there is a lost input.  The
+sweep also fails on a movie that is present but decodes to no frame.
+
+**`[summary]` is required, and so is every key read from it.**
+`summary_int` returned 0 for a missing key, so a renamed `peak_prim=`
+would have held every route's `# max` ceiling against nothing.  It
+returns None now; a route fails on a missing key, and `report_common`
+fails a run without a `[summary]` line at all.
+
+**`--keep-artifacts` no longer deletes whatever it is given.**  It was
+an unconditional `rmtree` of the directory - the build tree, the repo or
+the `--compare-frames` baseline, had a typo named them.  `prepare_keep_dir`
+refuses a directory that is or holds `--logs`, the baseline, the repo,
+the exe or the current directory, refuses one holding anything but
+`<route>.rec.pad` / `<route>.mcd`, and removes only those.
+
+**The oracles behind the goldens.**  `check_fmv_ffmpeg.py` printed the
+worst channel delta against ffmpeg and exited 0 whatever it was; it now
+exits 1 above 16, the bound `vlc3_test` holds THQ frame 1 to against the
+same oracle, so a wrong IDCT or YUV change cannot be committed with
+regenerated `fmv_crc` goldens on the strength of a printed number.
+`make_xa_fixture.py` runs ffmpeg with `check=True` and asserts the golden's
+size, like its stereo twin already did.
+
+**`sbsp_headless` checks the bytes.**  `loadAndReport` checked
+`size > 0` and a non-NULL buffer and only printed the CRC, so a read from
+the wrong sector or with the wrong stride passed.  It now reads the same
+bytes straight from `BIGLUMP.BIN` at the file's FAT offset, in the
+directory the libcd shim resolved (`Port_CdDataRoot`), and requires them
+identical - independent of what a data build puts in the file.
+
+**The LZNP encoder is under ctest.**  `tools/lznp-src/roundtrip_test.cpp`
+(encoder against the game's `source/utils/lznp.cpp` decoder: zeros,
+repeats, noise, a mixed buffer, 200 fuzzed buffers and `str_frame1.bin`)
+was a hand-built proof; it is the `lznp_roundtrip` unit test now.
+`lznp_exe_matches_source` builds the CLI from the same sources and
+requires the committed `port/tools/lznp.exe` - the LFS binary every actor
+pack goes through in `build-data` - to encode three synthetic buffers and
+the fixture byte-identically; an LFS pointer standing in for the exe
+fails it too.  `stretch_keycaps.py --check` was already a CI step.
+
+Two findings of the review were fixed before this change: the ClearImage
+row checks sample column 512 since issue #60, and the maximum-size G3
+compares every pixel against an int64 reference (above).
+
 ## Game-source changes (keyboard prompt icons, issue #43)
 
 **The problem.**  Every "press this to do that" line in the game draws a pad

@@ -215,6 +215,18 @@ extern "C" void Host_AudioPause(int on)
 	--exit-after, the self-test) and would take this vblank's audio with it  */
 extern "C" void Port_AudioVBlank(int vblankHz)
 {
+	/*	A dump is armed at the first vblank, not with the device at the first
+		ResetGraph: a paced boot (cd/cd.cpp) spends tens of vblanks in
+		CdReadSync before VidInit, and the WAV must hold every vblank the run
+		delivered - run_tier holds its length to [summary] vblanks= (issue
+		#61).  The dump only: it opens no device, so the unit exes that pump
+		without a window stay silent as before.  */
+	if (!g_audioUp)
+	{
+		const char *dump = getenv("SBSP_DUMP_AUDIO");
+		if (dump && *dump)
+			Host_EnsureAudio();
+	}
 	if (!g_wavOpen)
 	{
 		/*	no consumer at all (--no-audio, or no device): nothing renders,

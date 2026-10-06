@@ -5,7 +5,11 @@ Compares raster RGB24 frames dumped by fmv_pipeline_test
 (SBSP_FMV_DUMP_RAW=<dir>) against ffmpeg's decode of the same movies -
 the oracle is NOT bit-exact (different IDCT/YUV rounding), so this
 reports per-movie tolerance stats rather than gating CI.  The committed
-CRC goldens are the regression contract; this script justifies them.
+CRC goldens are the regression contract; this script justifies them, and
+exits 1 when the worst channel delta exceeds TOLERANCE - the bound
+vlc3_test holds THQ frame 1 to against the same oracle - so a wrong IDCT
+or YUV change cannot be committed with regenerated goldens on the strength
+of a printed number (issue #61).  Run it before SBSP_WRITE_GOLDEN=1.
 
 Usage (repo root):  py port/tests/check_fmv_ffmpeg.py <rawdir>
 """
@@ -18,6 +22,7 @@ SEC = 2336
 MOVIES = {"thq": "thq.str", "climax": "climax.str",
           "intro": "intro.str", "demo": "demo.str"}
 W, H, N = 320, 240, 30
+TOLERANCE = 16      # vlc3_test layer 2: maxD <= 16 against ffmpeg's RGB24
 
 
 def wrap_cdxa(path):
@@ -82,8 +87,13 @@ def main():
         print("%s: %d frames, maxDelta %d, meanAbs %.4f, >2: %d of %d"
               % (slug, N, maxd, sumd / total, over2, total))
         worst = max(worst, maxd)
-    print("worst maxDelta across movies:", worst)
+    print("worst maxDelta across movies: %d (tolerance %d)" % (worst, TOLERANCE))
+    if worst > TOLERANCE:
+        print("FAIL: further from ffmpeg than vlc3_test allows - do not regenerate "
+              "the CRC goldens from this build")
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

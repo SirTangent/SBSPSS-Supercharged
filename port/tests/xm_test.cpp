@@ -1,6 +1,7 @@
 /*	Unit tests for the XMPlayer data layer (port/psyq/xmplay/).
 	Reads the real shipped assets from data/Music and data/Sfx (run from the
-	repo root; skips with a notice if they are absent): parses the PXMs and
+	repo root; absent, it is a skipped test - exit 77, or 1 under
+	SBSP_TEST_STRICT, tests/test_skip.h): parses the PXMs and
 	cross-checks every pattern slot against the pristine FastTracker .xm
 	files that ship beside them (the PXM repack must lose nothing), and
 	verifies XM_VABInit uploads the VB byte-exactly at the addresses the
@@ -19,6 +20,7 @@
 #include "spu/spu_core.h"
 #include "xmplay/xm_state.h"
 #include "host/pump.h"
+#include "test_skip.h"
 
 static int g_failures;
 
@@ -252,7 +254,7 @@ int main()
 	{
 		std::printf("xm test SKIPPED (data/Music + data/Sfx assets not found"
 					" - run from the repo root)\n");
-		return 0;
+		return testSkipExit("xm_test", 1);	/* tests/test_skip.h: 77, or 1 under SBSP_TEST_STRICT */
 	}
 
 	/* --- tick clock vs vblank clock (M8 EUR) ------------------------------- */
