@@ -14,8 +14,10 @@
 	  SBSP_WRITE_GOLDEN=1     rewrite the golden files from this build
 	  SBSP_FMV_DUMP_RAW=<dir> also dump <movie>_NNN.rgb raster frames
 
-	Needs the staged movies (the .STR files under out/.../CD, or SBSP_DATA_DIR); skips
-	gracefully when they are absent (run port/build-data.cmd first).
+	Needs the staged movies (the .STR files under out/.../CD, or SBSP_DATA_DIR)
+	and the committed goldens.  A movie or golden that is absent is a
+	skipped layer: exit 77 (ctest: skipped), or 1 under SBSP_TEST_STRICT
+	(tests/test_skip.h) - it used to be a pass (issue #61).
 */
 #include <cstdio>
 #include <cstdlib>
@@ -29,6 +31,9 @@
 #include "cd/xa_stream.h"
 #include "cd/str_stream.h"
 #include "spu/spu_core.h"
+#include "test_skip.h"
+
+static int g_skipped;		/* movies or goldens not found: never a pass (test_skip.h) */
 
 extern "C" int DecDCTvlc3(unsigned long *bs, unsigned long *buf);
 extern "C" int DecDCTvlcSize3(int breaksize);
@@ -72,6 +77,7 @@ static int runMovie(const char *diskName, const char *slug)
 	{
 		std::printf("fmv_pipeline_test: %s not staged - SKIPPED "
 					"(run port/build-data.cmd)\n", diskName);
+		g_skipped++;
 		return 0;
 	}
 
@@ -91,6 +97,7 @@ static int runMovie(const char *diskName, const char *slug)
 		{
 			std::printf("fmv_pipeline_test: %s missing - SKIPPED (generate "
 						"with SBSP_WRITE_GOLDEN=1)\n", goldenPath);
+			g_skipped++;
 			return 0;
 		}
 		char line[64];
@@ -202,6 +209,8 @@ int main(void)
 		std::printf("fmv_pipeline_test: %d failure(s)\n", g_failures);
 		return 1;
 	}
+	if (g_skipped)
+		return testSkipExit("fmv_pipeline_test", g_skipped);
 	std::printf("fmv_pipeline_test: all passed\n");
 	return 0;
 }

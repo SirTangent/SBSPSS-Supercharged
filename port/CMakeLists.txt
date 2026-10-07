@@ -402,7 +402,10 @@ function(sbsp_shim_test name)
     sbsp_exe_link(${name})
     target_link_libraries(${name} PRIVATE psyq_shim)
     add_test(NAME ${name} COMMAND ${name} WORKING_DIRECTORY ${SBSP_ROOT})
-    set_tests_properties(${name} PROPERTIES LABELS unit)
+    # 77: a layer whose inputs are absent (tests/test_skip.h) - ctest then
+    # reports the test as skipped, never as passed; build-pc.sh test and CI
+    # set SBSP_TEST_STRICT=1, under which the same case exits 1 (issue #61)
+    set_tests_properties(${name} PROPERTIES LABELS unit SKIP_RETURN_CODE 77)
 endfunction()
 
 sbsp_shim_test(gte_trig_test)   # exact fixed-point trig fixtures (M1)
@@ -430,6 +433,43 @@ sbsp_shim_test(fmv_pipeline_test) # whole movie pipeline, frame CRCs (M7)
 sbsp_shim_test(ini_test)        # sbsp.ini loader/defaults + host paths (M8 shell)
 sbsp_shim_test(viewport_test)   # fit/integer/stretch viewport arithmetic (M8 shell)
 sbsp_shim_test(exit_test)       # Port_Exit owner rule + exit hooks, in child processes (#62)
+sbsp_shim_test(window_test)     # paused= counts a focus pause and a window drag once where they overlap (#63)
+
+# The replacement LZNP encoder (tools/lznp-src) against the game's own decoder
+# (source/utils/lznp.cpp): synthetic, structured and fuzzed buffers plus a
+# committed fixture must round-trip byte for byte.  No shim - the encoder, the
+# decoder and the test alone.  It was a hand-built proof until issue #61.
+# A plain tool without SDL: static on MinGW so it runs from the build tree
+# without the mingw32 DLLs, and none of sbsp_exe_link's runtime-DLL copy,
+# which fails on a target that has no DLLs to copy.
+function(sbsp_plain_exe_link target)
+    if(NOT SBSP_MSVC)
+        target_link_options(${target} PRIVATE -static)
+    endif()
+endfunction()
+add_executable(lznp_roundtrip tools/lznp-src/roundtrip_test.cpp tools/lznp-src/lznp_encode.cpp
+                              ${SBSP_ROOT}/source/utils/lznp.cpp)
+target_include_directories(lznp_roundtrip PRIVATE ${SBSP_ROOT}/source/utils)
+# the game's lznp.cpp includes "lznp.h" for lznp.H, as the game flavour allows
+target_compile_options(lznp_roundtrip PRIVATE ${SBSP_DEBUG_FLAGS} -Wno-nonportable-include-path)
+sbsp_plain_exe_link(lznp_roundtrip)
+add_test(NAME lznp_roundtrip COMMAND lznp_roundtrip ${SBSP_ROOT}/port/tests/str_frame1.bin
+         WORKING_DIRECTORY ${SBSP_ROOT})
+set_tests_properties(lznp_roundtrip PROPERTIES LABELS unit)
+# The committed port/tools/lznp.exe (LFS; every actor pack goes through it in
+# build-data) must be the encoder these sources build: both encode the same
+# inputs identically (tests/lznp_exe_check.py).
+add_executable(lznp_tool tools/lznp-src/lznp_cli.cpp tools/lznp-src/lznp_encode.cpp)
+target_compile_options(lznp_tool PRIVATE ${SBSP_DEBUG_FLAGS})
+sbsp_plain_exe_link(lznp_tool)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME lznp_exe_matches_source
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/lznp_exe_check.py
+                     $<TARGET_FILE:lznp_tool> ${SBSP_ROOT}/port/tools/lznp.exe
+                     ${SBSP_ROOT}/port/tests/str_frame1.bin
+             WORKING_DIRECTORY ${SBSP_ROOT})
+    set_tests_properties(lznp_exe_matches_source PROPERTIES LABELS unit)
+endif()
 
 # M8 playthrough harness (tests/run_tier.py): the exit-code self-test, the
 # fast Tier 1 routes and the short Tier 2 sweep, all --uncapped.  The full

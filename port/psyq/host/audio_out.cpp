@@ -48,6 +48,11 @@ SDL_AudioStream *g_stream;
 WavWriter g_wav;
 int g_wavOpen;
 int g_audioUp;
+/*	vblanks the dump rendered at each rate, said when it closes: run_tier
+	holds the WAV to exactly 735 frames per 60 Hz vblank and 882 per 50 Hz
+	one, and the two counts to [summary] vblanks= - the length alone could
+	not tell one 50 Hz vblank from six 60 Hz ones (review of #78)  */
+unsigned long g_wavVblanks60, g_wavVblanks50;
 
 void SDLCALL audioPull(void *userdata, SDL_AudioStream *stream,
 					   int additional, int total)
@@ -75,8 +80,9 @@ void closeWav(int code)
 	{
 		Wav_Close(&g_wav);
 		g_wavOpen = 0;
-		fprintf(stderr, "[host] audio dump closed: %lu frames\n",
-				(unsigned long)(g_wav.dataBytes / 4));	/* s16 stereo */
+		fprintf(stderr, "[host] audio dump closed: %lu frames, %lu vblanks at 60 Hz, %lu at 50 Hz\n",
+				(unsigned long)(g_wav.dataBytes / 4),	/* s16 stereo */
+				g_wavVblanks60, g_wavVblanks50);
 		fflush(stderr);
 	}
 }
@@ -215,6 +221,18 @@ extern "C" void Host_AudioPause(int on)
 	--exit-after, the self-test) and would take this vblank's audio with it  */
 extern "C" void Port_AudioVBlank(int vblankHz)
 {
+	/*	A dump is armed at the first vblank, not with the device at the first
+		ResetGraph: a paced boot (cd/cd.cpp) spends tens of vblanks in
+		CdReadSync before VidInit, and the WAV must hold every vblank the run
+		delivered - run_tier holds its length to [summary] vblanks= (issue
+		#61).  The dump only: it opens no device, so the unit exes that pump
+		without a window stay silent as before.  */
+	if (!g_audioUp)
+	{
+		const char *dump = getenv("SBSP_DUMP_AUDIO");
+		if (dump && *dump)
+			Host_EnsureAudio();
+	}
 	if (!g_wavOpen)
 	{
 		/*	no consumer at all (--no-audio, or no device): nothing renders,
@@ -231,4 +249,8 @@ extern "C" void Port_AudioVBlank(int vblankHz)
 	Spu_RenderFrames(buf, frames);
 	Wav_Write(&g_wav, buf, frames);
 	Wav_Sync(&g_wav);
+	if (frames == 882)
+		g_wavVblanks50++;
+	else
+		g_wavVblanks60++;
 }

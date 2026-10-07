@@ -54,6 +54,89 @@ static volatile int	g_paused;			/* read unlocked by the watchdog thread */
 static double		g_pauseStart;
 static double		g_pausedSeconds;
 
+/*	A title-bar drag, a border resize or the Alt+Space system menu runs
+	Win32's modal loop inside SDL_PollEvent (crash.cpp notes it too): the
+	pump delivers no vblank for as long as the user holds it, XM_Update and
+	the XA feed stop, and the audio thread drones on the frozen voice state
+	- the very thing the focus-loss pause prevents - while speech drains
+	and cuts out.  SDL sends SDL_EVENT_WINDOW_EXPOSED with data1 == 1 from
+	inside that loop (its live-resize timer), reachable only through an
+	event watch: the watch pauses the audio and keeps the picture up, and
+	the first poll after the loop resumes the audio, books the time as
+	paused and has the pump rebase its clock like a focus pause, so the
+	vblanks the loop ate are not burst afterwards (issue #63).  */
+static int			g_modal;			/* inside a move/size/menu loop */
+static double		g_modalStart;
+static int			g_modalRebase;		/* one "paused" Host_PausePoll answer: rebase the clock */
+
+/*	[summary] paused= is the time game time stood still for either reason,
+	a focus pause or a move/size loop, counted once where the two overlap
+	(a focus-paused window dragged, the focus coming back in the same poll
+	that ends the drag): an interval opens when the first of them starts
+	and is booked when neither holds any more.  Each still logs its own
+	length.  */
+static int			g_holding;
+static double		g_holdStart;
+
+static void holdUpdate(void)
+{
+	const int hold = g_paused || g_modal;
+	if (hold && !g_holding)
+		g_holdStart = Port_NowSeconds();
+	else if (!hold && g_holding)
+		g_pausedSeconds += Port_NowSeconds() - g_holdStart;
+	g_holding = hold;
+}
+
+static bool SDLCALL liveResizeWatch(void *userdata, SDL_Event *ev)
+{
+	(void)userdata;
+	if (ev->type != SDL_EVENT_WINDOW_EXPOSED || ev->window.data1 != 1)
+		return true;
+	double now = Port_NowSeconds();
+	if (!g_modal)
+	{
+		g_modal = 1;
+		g_modalStart = now;
+		holdUpdate();
+		if (!g_paused)
+			Host_AudioPause(1);
+		fprintf(stderr, "[host] paused (window move/size)\n");
+	}
+	if (g_vkUp)
+	{
+		static double lastPresent = -1.0;
+		if (now - lastPresent >= 0.1)
+		{
+			lastPresent = now;
+			VkPresent_Frame();		/* the window keeps its picture while held */
+		}
+	}
+	return true;
+}
+
+/*	after a poll: a move/size loop that ran inside it has ended  */
+static void modalEnd(void)
+{
+	if (!g_modal)
+		return;
+	g_modal = 0;
+	double d = Port_NowSeconds() - g_modalStart;
+	holdUpdate();
+	if (!g_paused)
+		Host_AudioPause(0);
+	/*	The rebase answer costs the pump step it lands on: that step returns
+		before its bare-pump replay check (pump.cpp), so a scripted run - a
+		replay a person may well be watching and dragging - would miss a
+		recorded `# bare` vblank due there and fail on a window move.  A
+		scripted run fires its vblanks where the recording says, not by the
+		wall clock, so it needs no rebase; it is left out exactly as from the
+		focus-loss pause (Port_HarnessRun).  */
+	if (!Port_HarnessRun())
+		g_modalRebase = 1;
+	fprintf(stderr, "[host] resumed after %.1fs (window move/size)\n", d);
+}
+
 static void parseTooling(void)
 {
 	if (g_toolingParsed)
@@ -178,13 +261,28 @@ extern "C" void Host_EnsureVideo(void)
 	}
 	g_window = SDL_CreateWindow("SpongeBob SquarePants: SuperSponge",
 								winW, winH, flags);
+	int vulkanWindow = g_window != NULL;
 	if (!g_window)
 	{
-		fprintf(stderr, "[host] SDL_CreateWindow failed: %s\n", SDL_GetError());
-		return;
+		/*	SDL_WINDOW_VULKAN loads the Vulkan loader as part of creating the
+			window, so on a machine without one (a VM, a basic display
+			adapter) there was no window at all: no focus, no close button,
+			the music playing until the console was killed.  The black
+			window this file promises needs a window - make one without the
+			flag (issue #63).  */
+		fprintf(stderr, "[host] SDL_CreateWindow with Vulkan failed: %s - retrying without\n",
+				SDL_GetError());
+		g_window = SDL_CreateWindow("SpongeBob SquarePants: SuperSponge",
+									winW, winH, flags & ~(SDL_WindowFlags)SDL_WINDOW_VULKAN);
+		if (!g_window)
+		{
+			fprintf(stderr, "[host] SDL_CreateWindow failed: %s\n", SDL_GetError());
+			return;
+		}
 	}
+	SDL_AddEventWatch(liveResizeWatch, NULL);
 
-	g_vkUp = VkPresent_Init(g_window);
+	g_vkUp = vulkanWindow ? VkPresent_Init(g_window) : 0;
 	if (!g_vkUp)
 		fprintf(stderr, "[host] Vulkan presenter unavailable - window will stay "
 						"black (frame dumps still work)\n");
@@ -198,6 +296,7 @@ static void setPaused(int on)
 	if (on == g_paused)
 		return;
 	g_paused = on;
+	holdUpdate();
 	if (on)
 	{
 		g_pauseStart = Port_NowSeconds();
@@ -207,7 +306,6 @@ static void setPaused(int on)
 	else
 	{
 		double d = Port_NowSeconds() - g_pauseStart;
-		g_pausedSeconds += d;
 		Host_AudioPause(0);
 		fprintf(stderr, "[host] resumed after %.1fs\n", d);
 	}
@@ -272,6 +370,14 @@ static void handleHostEvent(const SDL_Event *ev)
 	and none is passing.  */
 extern "C" int Host_PausePoll(void)
 {
+	/*	the pump step after a move/size loop: answer "paused" once, with no
+		vblank, so the pump's resume edge rebases the wall clock onto the
+		counter (pump.cpp) instead of bursting the vblanks the loop ate  */
+	if (g_modalRebase)
+	{
+		g_modalRebase = 0;
+		return 1;
+	}
 	if (!g_paused)
 		return 0;
 	SDL_Event ev;
@@ -280,6 +386,7 @@ extern "C" int Host_PausePoll(void)
 		handleHostEvent(&ev);
 		while (SDL_PollEvent(&ev))
 			handleHostEvent(&ev);
+		modalEnd();
 	}
 	if (g_paused && g_vkUp)
 	{
@@ -309,6 +416,7 @@ extern "C" void Host_VBlank(unsigned long vblankNo)
 		SDL_Event ev;
 		while (SDL_PollEvent(&ev))
 			handleHostEvent(&ev);
+		modalEnd();		/* a move/size loop that ran inside the poll has ended */
 	}
 
 	/*	Outside the video gate on purpose.  SBSP_PAD_SCRIPT needs no SDL at

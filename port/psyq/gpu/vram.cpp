@@ -125,9 +125,14 @@ extern "C" void GPU_ReadDisplayPixelRGB(int x, int y, unsigned char rgb[3])
 		return;
 	}
 	uint16_t px = g_vram[vy][(g_gpu.dispX + x) & 0x3FF];
-	rgb[0] = (unsigned char)((px & 0x1F) << 3);
-	rgb[1] = (unsigned char)(((px >> 5) & 0x1F) << 3);
-	rgb[2] = (unsigned char)(((px >> 10) & 0x1F) << 3);
+	/*	5 -> 8 bits as (c << 3) | (c >> 2), full range (31 -> 255): the same
+		integer the presenter's shader shows, so a --dump-frames BMP and the
+		window agree to the bit.  It was c << 3 here (white 0xF8) against
+		c / 31 on screen (0xFF), up to 7 levels apart per channel (#63).  */
+	const int r = px & 0x1F, g = (px >> 5) & 0x1F, b = (px >> 10) & 0x1F;
+	rgb[0] = (unsigned char)((r << 3) | (r >> 2));
+	rgb[1] = (unsigned char)((g << 3) | (g >> 2));
+	rgb[2] = (unsigned char)((b << 3) | (b >> 2));
 }
 
 extern "C" uint32_t GPU_DisplayCRC32(int *masked)

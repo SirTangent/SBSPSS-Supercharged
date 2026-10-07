@@ -9,9 +9,11 @@
 	  integer  like fit, but the height is a whole multiple k of the
 	           display's line count (the 256-line frame at k=3 is 768 tall
 	           and exactly 1024 wide), so rows are never resampled unevenly;
-	           the width is the 4:3 width for that height, which for the
-	           512-wide mode is exactly 2k pixels per source pixel.  Falls
-	           back to fit when even k=1 does not fit;
+	           the width is the 4:3 width for that height: 2k/3 window
+	           pixels per source column in the 512-wide mode, a whole
+	           number only at k=3 (1024 wide, 2 per column) - only the
+	           vertical factor is integral.  Falls back to fit when even
+	           k=1 does not fit;
 	  stretch  the whole window, aspect ignored.
 
 	SBSP_SCALE (sbsp.ini `scale`, --scale) picks the mode.  */

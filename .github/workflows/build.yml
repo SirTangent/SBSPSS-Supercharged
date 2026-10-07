@@ -110,6 +110,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # the unit test lznp_exe_matches_source compares the committed
+      # port/tools/lznp.exe with the encoder built from its sources; it is an
+      # LFS object (22 KB), a pointer without this, and the test fails on a
+      # pointer.  Only that one file - the 133MB track stays with the data job.
+      - name: Fetch lznp.exe (LFS)
+        shell: bash
+        run: git lfs pull --include port/tools/lznp.exe
+
       - uses: actions/download-artifact@v8
         with:
           name: sbsp-data-${{ env.TERRITORY }}-${{ env.VERSION }}
@@ -150,6 +158,11 @@ jobs:
         run: bash port/build-pc.sh ${{ matrix.preset }}
 
       - name: Unit tests
+        # a data-dependent test that finds its input missing exits 1 here
+        # instead of 77/skipped: CI staged the data, so a skip is a loss
+        # (tests/test_skip.h, issue #61)
+        env:
+          SBSP_TEST_STRICT: 1
         run: ctest --test-dir port/build/${{ matrix.preset }} --output-on-failure -L unit --no-tests=error
 
       - name: Playthrough tiers (uncapped)
@@ -212,6 +225,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # lznp_exe_matches_source needs the real lznp.exe (LFS), as in
+      # pc-build-test
+      - name: Fetch lznp.exe (LFS)
+        shell: bash
+        run: git lfs pull --include port/tools/lznp.exe
+
       - uses: actions/download-artifact@v8
         with:
           name: sbsp-data-${{ env.TERRITORY }}-${{ env.VERSION }}
@@ -234,6 +253,11 @@ jobs:
         run: cmake --build --preset ${{ matrix.preset }}
 
       - name: Unit tests
+        # a data-dependent test that finds its input missing exits 1 here
+        # instead of 77/skipped: CI staged the data, so a skip is a loss
+        # (tests/test_skip.h, issue #61)
+        env:
+          SBSP_TEST_STRICT: 1
         run: ctest --test-dir port/build/${{ matrix.preset }} --output-on-failure -L unit --no-tests=error
 
       - name: Playthrough tiers (uncapped)

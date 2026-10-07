@@ -41,12 +41,18 @@
 	number is refused at boot (thirteen children), and last what the epochs
 	compare: an old-format recording (no rng, no `# render`) replayed across
 	ABIs compares nothing and is refused, one with rng says at boot that it
-	compares rng only, the boot line names the set in four more cases, and
-	a replay whose every epoch is left comparing nothing - its RNG never
-	registered, or the pause menu up across build types - is refused at exit
-	(eight children, their stderr captured), and a replay stopped before
-	its first epoch: refused at the scripted exit, not when closed like a
-	window (two children).  The children step vblanks with VSync(0) under SBSP_UNCAPPED=1,
+	compares rng only, the boot line names the set in four more cases, one
+	whose rng the game cannot compare (no RNG registered) is refused at boot
+	when nothing else is compared and says so when something is, and a
+	replay whose every epoch is left comparing nothing - the pause menu up
+	across build types - is refused at exit (nine children, their stderr
+	captured), and a replay cut short: refused at --exit-after before its
+	first epoch, and when its window is closed judged on what it reached -
+	nothing before the first epoch, a missed bare-pump vblank or a desynced
+	epoch after it - and a window drag just before a recorded bare-pump
+	vblank, which must still fire there (five children, the window ones
+	through host/window.cpp's quit handler and event watch).  The children
+	step vblanks with VSync(0) under SBSP_UNCAPPED=1,
 	so Port_VBlankCount advances and Host_VBlank calls Port_InputFrame exactly
 	as in the game, and open scenes through Port_SceneEvent at chosen counts.
 	Headless: the dummy video driver; the test pumps SDL events itself, as
@@ -75,6 +81,7 @@ extern "C" int	Port_BootSeed(long *seed);			/* host/seed.cpp */
 extern "C" void	Port_SeedExplicit(long seed);
 extern "C" void	Port_PauseMenuDrawn(int drawn);	/* host/input.cpp, from game.cpp */
 extern "C" void	PadInitDirect(unsigned char *pad1, unsigned char *pad2);
+extern "C" void	Host_EnsureVideo(void);			/* host/window.cpp */
 extern "C" int	VSync(int mode);
 extern char		INF_Version[];				/* api/info.cpp: "DEBUG" or "FINAL", per tree */
 
@@ -136,7 +143,8 @@ static void clearEnv(void)
 		"SBSP_FRAME_CRC", "SBSP_EXIT_AFTER", "SBSP_SELFTEST", "SBSP_DUMP_FRAMES",
 		"SBSP_DUMP_DIR", "SBSP_SEED", "SBSP_PROMPT_ICONS", "SBSP_PAD_DEADZONE",
 		"SBSP_MEM_LOG", "SBSP_PACE_LOG", "SBSP_RUMBLE", "SBSP_PAD_SCRIPT",
-		"SBSP_PAD_FILE", "SBSP_RECORD_PAD", "SBSP_CD_PACE",
+		"SBSP_PAD_FILE", "SBSP_RECORD_PAD", "SBSP_CD_PACE", "SBSP_WINDOW",
+		"SBSP_DUMP_AUDIO", "SBSP_NO_AUDIO",
 	};
 	for (const char *v : vars)
 		setEnv(v, "");
@@ -183,10 +191,18 @@ enum { RUN_VBLANKS = 320 };
 static unsigned long g_pauseFirst = 1, g_pauseLast = 0, g_mapAt = 0;
 
 /*	REPLAY_TEST_VBLANKS <n> ends the run after n vblanks instead of
-	RUN_VBLANKS, and REPLAY_TEST_CLOSE=1 ends it the way closing the window
-	does (Port_InputAtExit(0)) rather than as --exit-after does  */
+	RUN_VBLANKS, and REPLAY_TEST_CLOSE=1 ends it by closing the window: the
+	child opens one and sends SDL_EVENT_QUIT before the last vblank, and
+	host/window.cpp's handler judges the run and exits - rather than the
+	child calling Port_InputAtExit(1) as --exit-after does  */
 static unsigned long g_runVblanks = RUN_VBLANKS;
 static int			 g_closeEarly;
+/*	REPLAY_TEST_DRAG_AT <vb> (with REPLAY_TEST_CLOSE=1, for the window):
+	before that vblank's VSync, send what a title-bar drag sends from inside
+	Win32's move loop - SDL_EVENT_WINDOW_EXPOSED with data1 1, which
+	host/window.cpp's event watch takes as the loop starting; the vblank's
+	poll then ends it  */
+static unsigned long g_dragAt;
 
 static void readPauseEnv(void)
 {
@@ -201,6 +217,9 @@ static void readPauseEnv(void)
 		g_runVblanks = std::strtoul(v, NULL, 10);
 	const char *c = std::getenv("REPLAY_TEST_CLOSE");
 	g_closeEarly = c && *c == '1';
+	const char *d = std::getenv("REPLAY_TEST_DRAG_AT");
+	if (d && *d)
+		g_dragAt = std::strtoul(d, NULL, 10);
 }
 
 static void drive(SDL_Joystick *joy, bool replay)
@@ -223,6 +242,23 @@ static void drive(SDL_Joystick *joy, bool replay)
 			SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_LEFTX, (vb >= 30 && vb <= 69) ? 32767 : 0);
 		}
 		pumpEvents();
+		if (g_closeEarly && g_dragAt && vb == g_dragAt)
+		{
+			SDL_Event drag = {};
+			drag.type         = SDL_EVENT_WINDOW_EXPOSED;
+			drag.window.data1 = 1;
+			check(SDL_PushEvent(&drag), "SDL_PushEvent(SDL_EVENT_WINDOW_EXPOSED, live resize)");
+		}
+		if (g_closeEarly && vb == g_runVblanks)
+		{
+			if (g_failures)
+				return;							/* childMain reports it */
+			/*	what the window's close button sends: Host_VBlank polls it
+				during this VSync's vblank and judges the run  */
+			SDL_Event quit = {};
+			quit.type = SDL_EVENT_QUIT;
+			check(SDL_PushEvent(&quit), "SDL_PushEvent(SDL_EVENT_QUIT)");
+		}
 		VSync(0);
 		if (Port_VBlankCount() != vb)
 		{
@@ -281,6 +317,13 @@ static int childMain(Mode mode)
 	SDL_Joystick *joy = attachPad();
 	if (!joy)
 		return 1;
+	/*	main() registers the game's globals first thing, before InitSystem
+		asks for the boot seed and so parses the pad file - the boot check
+		knows whether there is an RNG to compare.  "replay-norng" registers
+		none, as the shim-only unit exes do: its epochs' rng has nothing live
+		to be held against.  */
+	Port_RegisterGameGlobals(&g_fakeRam, NULL, NULL, NULL, NULL, NULL, NULL,
+							 mode == REPLAY_NO_RNG ? NULL : &g_fakeRng);
 	long seed = 0;
 	check(Port_PadFileSeed(&seed) == (replay ? 1 : 0),
 		  replay ? "replay: the recording carries a seed" : "record: no recording, no seed to inherit");
@@ -291,20 +334,29 @@ static int childMain(Mode mode)
 	/*	main.cpp: setRndSeed(Port_BootSeed(&seed) ? seed : VidGetTickCount()),
 		and VidGetTickCount() is 0 at that point on every boot  */
 	g_fakeRng = Port_BootSeed(&seed) ? seed : 0;
-	/*	"replay-norng" registers no RNG, as the shim-only unit exes do: its
-		epochs' rng has nothing live to be held against  */
-	Port_RegisterGameGlobals(&g_fakeRam, NULL, NULL, NULL, NULL, NULL, NULL,
-							 mode == REPLAY_NO_RNG ? NULL : &g_fakeRng);
+	if (g_closeEarly)
+	{
+		/*	a real window (the dummy driver's), so the vblank's event poll
+			runs host/window.cpp's quit handler as the game's does  */
+		setEnv("SBSP_NO_AUDIO", "1");
+		Host_EnsureVideo();
+	}
 	drive(joy, replay);
-	int bad = Port_InputAtExit(g_closeEarly ? 0 : 1);
-	if (mode == REPLAY)
+	if (g_closeEarly)
+	{
+		/*	the quit handler ends the process inside the last VSync; getting
+			here means it did not (or drive failed before closing)  */
+		check(false, "closing the window ends the run");
+		SDL_Quit();
+		return 1;
+	}
+	int bad = Port_InputAtExit(1);
+	if (mode == REPLAY || mode == REPLAY_NO_RNG)
 		check(bad == 0, "replay: no desync, every entry satisfied");
 	if (mode == WRONG_SEED)
 		check(bad > 0, "wrong seed: the epoch's rng catches it though picture and RamUsed match");
 	if (mode == EXPECT_DESYNC)
 		check(bad > 0, "a doctored epoch is reported");
-	if (mode == REPLAY_NO_RNG)
-		check(bad > 0, "epochs that compared nothing refuse the replay at exit");
 	SDL_Quit();
 	return g_failures ? 1 : 0;
 }
@@ -843,9 +895,17 @@ int main(int argc, char **argv)
 			{ "all",     false, false, false, false, false, "", "replay", 0,
 			  "[input] epochs: comparing rng, ram, crc\n",
 			  "this exe's own recording: comparing rng, ram, crc" },
-			{ "norng",   false, false, true,  true,  false, "", "replay-norng", 0,
-			  "[replay] all 1 epochs reached compared nothing on this exe",
-			  "rng recorded but no RNG registered, another revision, across ABIs: refused at exit" },
+			/*	the boot check knows the game registered no RNG (main() does
+				that before the pad file is parsed): refused at boot, not
+				after the whole route has run  */
+			{ "norng",   false, false, true,  true,  false, "", "replay-norng", 13,
+			  "epochs compare nothing on this exe (render revision differs, ram skipped cross-ABI, "
+			  "the game registered no RNG)",
+			  "rng recorded but no RNG registered, another revision, across ABIs: refused at boot" },
+			{ "norngok", false, false, false, false, false, "", "replay-norng", 0,
+			  "[input] the game registered no RNG: epoch rng not compared\n"
+			  "[input] epochs: comparing ram, crc\n",
+			  "rng recorded but no RNG registered, this exe's own recording: the boot line leaves rng out" },
 			{ "crconly", true,  false, false, false, true,  "", "replay", 0,
 			  "[input] epochs: comparing crc only; crc not while the pause menu is up\n",
 			  "old format from the other build: the boot line says crc is not compared under the menu" },
@@ -893,33 +953,82 @@ int main(int argc, char **argv)
 		setEnv("REPLAY_TEST_PAUSE", "");
 	}
 
-	/*	11. a replay that stops before the recording's first epoch (review
-		of #77): at --exit-after it compared nothing and is refused; closed
-		like a window, what was not reached yet is no failure  */
+	/*	11. a replay cut short (reviews of #77 and #78).  At --exit-after
+		before the recording's first epoch it compared nothing and is
+		refused.  Closing the window - a real SDL_EVENT_QUIT through
+		host/window.cpp's handler, not a direct call - judges it on what it
+		reached: before the first epoch that is no failure, but a bare-pump
+		vblank it already passed without firing (`# bare 100 2`: the
+		children's VSync fires every vblank at its first pump, never the
+		second) and an epoch it already failed (the crc at 300 doctored)
+		both exit 13.  */
 	{
-		struct EarlyCase { const char *close, *mode, *wantText, *what; };
+		char missed[MAX_PATH + 48], bare1[MAX_PATH + 48];
+		std::snprintf(missed, sizeof(missed), "%ssbsp_replay_test_%lu_missed.pad", tmp, pid);
+		std::snprintf(bare1, sizeof(bare1), "%ssbsp_replay_test_%lu_bare1.pad", tmp, pid);
+		{
+			const size_t ep = recA.find("# epoch 300 ");
+			check(ep != std::string::npos, "A carries an epoch at 300");
+			std::string s = recA, t = recA;
+			if (ep != std::string::npos)
+			{
+				s.insert(ep, "# bare 100 2\n");
+				/*	fires at VSync's front pump, the first bare pump since
+					the last wait  */
+				t.insert(ep, "# bare 120 1\n");
+			}
+			writeText(missed, s);
+			writeText(bare1, t);
+		}
+		struct EarlyCase
+		{
+			const char *file, *vblanks, *close, *dragAt, *mode;
+			int			wantRc;
+			const char	*wantText, *notText, *what;
+		};
 		const EarlyCase cases[] =
 		{
-			{ "",  "expect-desync",
-			  "[replay] none of the recording's 1 epochs was reached (the first is at vblank 300)",
+			{ a,      "250", "",  "",    "expect-desync", 0,
+			  "[replay] none of the recording's 1 epochs was reached (the first is at vblank 300)", NULL,
 			  "--exit-after before the first epoch: refused" },
-			{ "1", "replay", "",
-			  "closed before the first epoch: not a failure" },
+			{ a,      "250", "1", "",    "replay",        0,
+			  "[host] window closed - exiting\n", "[replay] ",
+			  "closed before the first epoch: not a failure, and nothing refused" },
+			{ missed, "250", "1", "",    "replay",        13,
+			  "'s vblank 100 did not fire at bare pump 2\n", NULL,
+			  "closed after a bare-pump vblank that did not fire: refused" },
+			{ scrc,   "320", "1", "",    "replay",        13,
+			  "[replay] desync at vblank 300 ", NULL,
+			  "closed after a desynced epoch: refused" },
+			/*	review of #78: the move loop's end answered the next pump
+				"paused" to rebase the clock, and that pump - here the bare
+				one where vblank 120 is due - returned before its replay
+				check: a window drag failed the replay  */
+			{ bare1,  "250", "1", "119", "replay",        0,
+			  "[host] resumed after ", "[replay] ",
+			  "a window drag just before a recorded bare-pump vblank: it still fires there" },
 		};
 		char log[MAX_PATH + 48];
 		std::snprintf(log, sizeof(log), "%ssbsp_replay_test_%lu_early.log", tmp, pid);
-		setEnv("SBSP_PAD_FILE", a);
-		setEnv("REPLAY_TEST_VBLANKS", "250");
 		for (const EarlyCase &ec : cases)
 		{
+			setEnv("SBSP_PAD_FILE", ec.file);
+			setEnv("REPLAY_TEST_VBLANKS", ec.vblanks);
 			setEnv("REPLAY_TEST_CLOSE", ec.close);
+			setEnv("REPLAY_TEST_DRAG_AT", ec.dragAt);
 			std::string err;
 			rc = spawnSelf(exe, ec.mode, log, &err);
-			check(rc == 0 && err.find(ec.wantText) != std::string::npos, ec.what);
+			char what[192];
+			std::snprintf(what, sizeof(what), "%s (exit %d, want %d)", ec.what, rc, ec.wantRc);
+			check(rc == ec.wantRc && err.find(ec.wantText) != std::string::npos &&
+				  (!ec.notText || err.find(ec.notText) == std::string::npos), what);
 			std::remove(log);
 		}
 		setEnv("REPLAY_TEST_VBLANKS", "");
 		setEnv("REPLAY_TEST_CLOSE", "");
+		setEnv("REPLAY_TEST_DRAG_AT", "");
+		std::remove(missed);
+		std::remove(bare1);
 	}
 
 	std::remove(a);

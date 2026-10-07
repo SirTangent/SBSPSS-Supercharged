@@ -73,7 +73,7 @@ no [replay] desync, the first exe's streams and a byte-identical card.
     run_tier.py --exe <x64> --tier1 --logs L64 --compare-frames L32 --replay-from A32
 
 When the recording exe drew with another renderer revision (the recording's
-`# render`, issue #60, against the second exe's [summary] render=), the
+`# render`, issue #60, as the second exe reads it and says at boot), the
 second exe draws the same game state differently, so only the [scene]
 lines are held to the first exe's log there; the [frame] lines are not
 compared, and the replay's own epochs still hold rng and ram where they can.
@@ -90,6 +90,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import zlib
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -113,7 +114,26 @@ ALLOWED = [
     re.compile(r"^\[mcrd\] created card image "),   # every run gets a fresh --save-dir
 ]
 
-DETERMINISM = ["--uncapped", "--no-cd-pace", "--no-audio", "--frame-crc"]
+# --no-audio used to be here: with no consumer the SPU mixer never ran, so
+# the voice render, the envelopes, ADPCM over the game's own VABs and the
+# CD-in mix had no playthrough coverage at all (issue #61).  run_game adds a
+# --dump-audio into each run's private directory instead - no device, and
+# sample-exact (the M5 contract).
+DETERMINISM = ["--uncapped", "--no-cd-pace", "--frame-crc"]
+
+# Tier 2's frame oracle: the level's fade-in alone gives ~25 distinct frames,
+# so a count over the whole run cannot tell a level that wedges after opening
+# from one that plays (issue #61).  The TIER2_LATE_WINDOW vblanks starting
+# TIER2_LATE_START after [scene] Game - well past the fade - must show at
+# least TIER2_LATE_FLOOR distinct pictures: the walk-right sweep scrolls,
+# animates and jumps, and over the full tier's 25 levels the quietest (7)
+# gives 132 there, the rest 136-300.  Not the run's tail: on the long budget
+# walk-right reaches the exit of levels 9, 19 and 24 and the game then sits
+# on the map, 8 distinct frames in the last 300.  A level whose Game scene
+# ends before the window closes has played through and passes.
+TIER2_LATE_START = 300
+TIER2_LATE_WINDOW = 300
+TIER2_LATE_FLOOR = 30
 
 FAST_ROUTES = ["campaign", "pause_quit"]
 FAST_ROUTES_EXTRA = {"EUR": ["play_trailer"]}   # territory-only routes worth the ctest budget
@@ -173,6 +193,10 @@ class Route:
                 self.territory = val.upper()
 
 
+# run_game's summary of the audio a run rendered (see audio_line)
+AUDIO_LINE = re.compile(r"^\[audio\] frames=(\d+) crc=([0-9A-F]{8})$")
+
+
 class RunResult:
     def __init__(self, code, lines, wall, card=None):
         self.code = code
@@ -190,6 +214,15 @@ class RunResult:
                         self.summary[k] = v
         self.forbidden = [l for l in lines
                           if any(p.match(l) for p in FORBIDDEN) and not any(p.match(l) for p in ALLOWED)]
+        # the "[audio] frames=<n> crc=<hex>" line run_game appends; None when
+        # the run brought its own --dump-audio (selftest_wav) and so has none
+        self.audio = None
+        for l in lines:
+            m = AUDIO_LINE.match(l)
+            if m:
+                self.audio = (int(m.group(1)), m.group(2))
+            elif l.startswith("[audio] missing"):
+                self.audio = "missing"
 
     def frame_crcs(self, after_scene=None):
         """distinct unmasked [frame] CRCs - over the whole run, or only after
@@ -203,9 +236,43 @@ class RunResult:
                 crcs.add(l.split()[2])
         return crcs
 
+    def frame_crcs_after_open(self, scene, start, end):
+        """(distinct unmasked [frame] CRCs over vblanks open+start < v <= open+end
+        after the first open of `scene`, whether another scene opened by
+        open+end) - (set(), False) when the scene never opened"""
+        opens = [int(l.split("vblank=")[1]) for l in self.lines
+                 if l.startswith("[scene] ") and "vblank=" in l]
+        mine = [int(l.split("vblank=")[1]) for l in self.lines
+                if l.startswith("[scene] ") and l.split()[1] == scene]
+        if not mine:
+            return set(), False
+        open_at = mine[0]
+        ended = any(open_at < v <= open_at + end for v in opens)
+        crcs = {l.split()[2] for l in self.lines
+                if l.startswith("[frame] ") and "masked" not in l
+                and open_at + start < int(l.split()[1]) <= open_at + end}
+        return crcs, ended
+
     def summary_int(self, key):
-        v = self.summary.get(key, "0").split("/")[0]
-        return int(v)
+        """an integer [summary] field, or None when the line or the key is
+        missing - read as 0, a renamed peak_prim= would have held every
+        route's `# max` ceiling against nothing (issue #61)"""
+        v = self.summary.get(key)
+        return int(v.split("/")[0]) if v is not None else None
+
+
+def audio_line(wav):
+    """the run's WAV as one log line, "[audio] frames=<n> crc=<CRC-32 of
+    the PCM>", or "[audio] missing" when no header was ever written"""
+    try:
+        b = wav.read_bytes()
+    except OSError:
+        b = b""
+    if len(b) < 44 or b[0:4] != b"RIFF" or b[36:40] != b"data":
+        return "[audio] missing"
+    data, = struct.unpack_from("<I", b, 40)
+    pcm = b[44:44 + data]
+    return f"[audio] frames={len(pcm) // 4} crc={zlib.crc32(pcm) & 0xFFFFFFFF:08X}"
 
 
 def run_game(exe, args, env, timeout, log_path=None):
@@ -220,6 +287,16 @@ def run_game(exe, args, env, timeout, log_path=None):
     # user's real card0.mcd, and a route must start from empty slots
     save_dir = tempfile.mkdtemp(prefix="sbsp_save_")
     cmd = [str(exe), "--save-dir", save_dir] + args
+    # Every run renders audio (issue #61): a --dump-audio into the private
+    # directory opens no device and is sample-exact, so the SPU voices, the
+    # envelopes, ADPCM over the game's own VABs and the CD-in mix run every
+    # vblank - under --no-audio none of it ever ran here.  The WAV becomes
+    # one "[audio] frames=<n> crc=<hex>" log line (audio_line), which
+    # report_common checks and the baseline compare holds like a frame.
+    wav = None
+    if "--dump-audio" not in args:
+        wav = Path(save_dir) / "audio.wav"
+        cmd += ["--dump-audio", str(wav)]
     t0 = time.time()
     # The harness lines are all stderr; the game's own printf debug text goes
     # to stdout and, block-buffered through a pipe, would splice itself into
@@ -235,6 +312,10 @@ def run_game(exe, args, env, timeout, log_path=None):
         game_out = (e.stdout or b"").decode("utf-8", "replace")
         code = -1
     wall = time.time() - t0
+    if wav is not None:
+        if out and not out.endswith("\n"):
+            out += "\n"
+        out += audio_line(wav) + "\n"
     if log_path:
         Path(log_path).write_text(out, encoding="utf-8")
         Path(str(log_path) + ".stdout").write_text(game_out, encoding="utf-8")
@@ -247,6 +328,9 @@ def run_game(exe, args, env, timeout, log_path=None):
 
 
 BASELINE = None     # --compare-frames: directory of an earlier run's --logs
+TERRITORY = "USA"   # --territory: the exe's build (a USA build renders no 50 Hz vblank)
+AUDIO_CLOSED = re.compile(r"^\[host\] audio dump closed: (\d+) frames, (\d+) vblanks at 60 Hz, "
+                          r"(\d+) at 50 Hz$")
 
 
 def compare_baseline(res, name, log_name, scenes_only=False):
@@ -263,11 +347,19 @@ def compare_baseline(res, name, log_name, scenes_only=False):
     if not path.exists():
         print(f"  FAIL {name}: no baseline log {path}")
         return False
+    base_lines = path.read_text(encoding="utf-8").splitlines()
+    # the "[audio]" line joins the stream when the baseline carries one (a
+    # log from before issue #61 has none); audio does not depend on the
+    # renderer, so it is held across renderer revisions too
+    audio = any(l.startswith("[audio] ") for l in base_lines)
     tags = ("[scene] ",) if scenes_only else ("[frame] ", "[scene] ")
     what = "[scene]" if scenes_only else "[scene]/[frame]"
+    if audio:
+        tags += ("[audio] ",)
+        what += "/[audio]"
     def stream(lines):
         return [l for l in lines if l.startswith(tags)]
-    want = stream(path.read_text(encoding="utf-8").splitlines())
+    want = stream(base_lines)
     got = stream(res.lines)
     # An empty stream on BOTH sides compares equal, so a baseline captured
     # from a build that emitted no [frame] lines at all - the determinism set
@@ -302,24 +394,114 @@ def report_common(res, name):
     # An epoch that compared nothing (no rng, ram and crc both skipped) is no
     # desync, so the game only refuses a replay made entirely of them; the
     # harness accepts none (host/input.cpp, issue #76's review).
+    # The [summary] line is the contract every ceiling and count below reads,
+    # so a run that ends without one cannot pass; nor can one whose line
+    # lacks a field (summary_int is None then, never 0 - issue #61).
+    if not res.summary:
+        print(f"  FAIL {name}: no [summary] line")
+        return False
     blind = res.summary_int("blind_epochs")
-    if blind:
+    if blind is None:
+        print(f"  FAIL {name}: no blind_epochs= in [summary]")
+        ok = False
+    elif blind:
         print(f"  FAIL {name}: {blind} epoch(s) compared nothing ([summary] blind_epochs)")
         ok = False
+    # The audio the run rendered (run_game's --dump-audio): the exit hook
+    # closed the WAV, and it holds exactly one vblank of 44.1 kHz stereo for
+    # every vblank the run delivered (the dump is armed at the first vblank,
+    # audio_out.cpp): 735 frames at 60 Hz, 882 at 50.  A PAL build boots at
+    # 60 Hz until VidInit sets the video mode - a paced boot spends ~34
+    # vblanks loading before that.  The dump counts the vblanks it rendered
+    # at each rate and says so as it closes; those counts must add up to
+    # vblanks= and the length must be exactly theirs.  The length alone
+    # could not pin the mix - one 882-frame vblank is six 147-frame steps,
+    # so a lost or extra vblank of audio still passed as some other mix
+    # (review of #78) - and a USA build has no 50 Hz vblank at all.
+    if res.code == 0 and res.audio is not None:
+        vblanks = res.summary_int("vblanks")
+        if res.audio == "missing":
+            print(f"  FAIL {name}: the run left no audio dump")
+            ok = False
+        else:
+            frames, crc = res.audio
+            closed = [l for l in res.lines if l.startswith("[host] audio dump closed:")]
+            m = AUDIO_CLOSED.match(closed[-1] if closed else "")
+            if not m or int(m.group(1)) != frames:
+                print(f"  FAIL {name}: the exit hook did not close the audio dump at {frames} frames "
+                      f"({closed[-1] if closed else 'no [host] audio dump closed line'})")
+                ok = False
+            else:
+                n60, n50 = int(m.group(2)), int(m.group(3))
+                problems = []
+                if vblanks is None or n60 + n50 != vblanks:
+                    problems.append(f"{n60} + {n50} rate-counted vblanks, [summary] vblanks={vblanks}")
+                if frames != 735 * n60 + 882 * n50:
+                    problems.append(f"{frames} frames, {n60} x 735 + {n50} x 882 = {735 * n60 + 882 * n50}")
+                if TERRITORY != "EUR" and n50:
+                    problems.append(f"{n50} vblanks at 50 Hz on a {TERRITORY} build")
+                if problems:
+                    print(f"  FAIL {name}: the audio dump is not one vblank of audio per vblank: "
+                          + "; ".join(problems))
+                    ok = False
+                else:
+                    print(f"       audio: {vblanks} vblanks rendered ({n60} at 60 Hz, {n50} at 50 Hz), crc {crc}")
     return ok
 
 
-def recording_render(rec):
-    """A recording's `# render N` (issue #60), 0 when it has none."""
-    for l in Path(rec).read_text(encoding="utf-8", errors="replace").splitlines():
-        if l.startswith("# render"):
-            m = re.match(r"# render\s+(\d+)", l)
-            return int(m.group(1)) if m else 0
-    return 0
+RENDER_LINE = re.compile(r"^\[input\] recording's renderer revision is (\d+), this exe's (\d+):")
+
+
+def recording_render(res):
+    """(recording's revision, this exe's) when the game said they differ,
+    else None.  The game's own reading of `# render` (issue #60), not a
+    second parser here: one that read a `# rendered ...` comment or missed
+    an indented line as revision 0 quietly stopped the [frame] comparison.
+    The game says it for every recording - any file with a line only
+    --record-pad writes, so one from before `# render` reads as revision 0
+    with or without epochs - and refuses a malformed `# render` at boot
+    (exit 13)."""
+    for l in res.lines:
+        m = RENDER_LINE.match(l)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    return None
 
 
 KEEP = None         # --keep-artifacts: where passing routes leave <route>.rec.pad / <route>.mcd
 REPLAY_FROM = None  # --replay-from: another exe's --keep-artifacts directory
+
+
+def prepare_keep_dir(keep, exe, logs, baseline):
+    """Make `keep` an empty artifact directory, or say why not.  Emptied, not
+    merged into: a route only writes its artifacts when it passes, so one left
+    by an earlier (or another exe's) run would be replayed and byte-compared
+    by --replay-from as if this run had made it - a stale PASS over a route
+    that just failed.  Only artifacts (<route>.rec.pad, <route>.mcd) are
+    removed, and never from a directory that is or holds --logs, the
+    baseline, the repo, the exe or the current directory: this used to be
+    an unconditional rmtree of whatever it was given (issue #61)."""
+    cwd = Path.cwd().resolve()
+    for what, other in (("--logs", Path(logs).resolve() if logs else None),
+                        ("--compare-frames", baseline),
+                        ("the repo", REPO.resolve()),
+                        ("the current directory", cwd),
+                        ("the exe's directory", exe.parent)):
+        if other is not None and (keep == other or keep in other.parents):
+            return f"--keep-artifacts {keep} is {what} or holds it - give it a directory of its own"
+    if not keep.exists():
+        keep.mkdir(parents=True)
+        return None
+    if not keep.is_dir():
+        return f"--keep-artifacts {keep} is not a directory"
+    entries = list(keep.iterdir())
+    strays = [p.name for p in entries if not (p.name.endswith(".rec.pad") or p.suffix == ".mcd")]
+    if strays:
+        return (f"--keep-artifacts {keep} holds files that are not artifacts "
+                f"({', '.join(strays[:5])}{', ...' if len(strays) > 5 else ''}) - give it an empty directory")
+    for p in entries:
+        p.unlink()
+    return None
 
 
 def first_difference(a, b):
@@ -335,8 +517,8 @@ def run_route_cross(exe, route, seed, logdir):
     host/input.cpp); on top of that the [scene]/[frame] streams must equal
     the recording exe's log (--compare-frames, required with this option)
     and the memory card the run leaves must be byte-identical to the one the
-    recording run left.  A recording from another renderer revision (its
-    `# render` against this exe's [summary] render=) draws every frame
+    recording run left.  A recording from another renderer revision (the
+    game's "[input] recording's renderer revision is" line) draws every frame
     differently on this exe by design, and the game skips the epochs' crc,
     so there only [scene] is held to the log; the card, the epochs'
     rng/ram and the route's checks still are."""
@@ -365,17 +547,18 @@ def run_route_cross(exe, route, seed, logdir):
         if k == "peak_ram":
             continue
         v = res.summary_int(k)
-        if v > ceiling:
+        if v is None:
+            print(f"  FAIL {name}: no {k}= in [summary] to hold to its ceiling {ceiling}")
+            ok = False
+        elif v > ceiling:
             print(f"  FAIL {name}: {k}={v} exceeds {ceiling}")
             ok = False
-    # The recording's `# render` against the exe's own, from [summary] (an
-    # exe too old to report it is taken to share the recording's).
-    rec_rev = recording_render(rec)
-    exe_rev = int(res.summary["render"]) if "render" in res.summary else rec_rev
-    if rec_rev != exe_rev:
-        print(f"       renderer revision {rec_rev} -> {exe_rev}: "
+    # The recording's `# render` against the exe's own, as the game read it.
+    revs = recording_render(res)
+    if revs:
+        print(f"       renderer revision {revs[0]} -> {revs[1]}: "
               "[frame] lines not compared with the recording exe's")
-    ok &= compare_baseline(res, name, f"{route.name}.log", scenes_only=rec_rev != exe_rev)
+    ok &= compare_baseline(res, name, f"{route.name}.log", scenes_only=revs is not None)
     frames = len(res.frame_crcs())
     if frames < route.min_frames:
         print(f"  FAIL {name}: {frames} distinct unmasked frame CRC(s), {route.min_frames} required")
@@ -420,7 +603,10 @@ def run_route(exe, route, seed, logdir, replay):
         ok = False
     for k, ceiling in route.max.items():
         v = res.summary_int(k)
-        if v > ceiling:
+        if v is None:
+            print(f"  FAIL {route.name}: no {k}= in [summary] to hold to its ceiling {ceiling}")
+            ok = False
+        elif v > ceiling:
             print(f"  FAIL {route.name}: {k}={v} exceeds {ceiling}")
             ok = False
     ok &= compare_baseline(res, route.name, f"{route.name}.log")
@@ -517,7 +703,16 @@ def tier2(exe, seed, short, logdir, only):
         if len(crcs) < 2:
             print(f"  FAIL {name}: only {len(crcs)} distinct unmasked frame CRC(s) after [scene] Game")
             good = False
-        print(f"  {'PASS' if good else 'FAIL'} {name}: {res.wall:.1f}s wall, {len(crcs)} distinct frames, "
+        late, ended = res.frame_crcs_after_open("Game", TIER2_LATE_START,
+                                                TIER2_LATE_START + TIER2_LATE_WINDOW)	# see TIER2_LATE_FLOOR
+        if len(late) < TIER2_LATE_FLOOR and not ended:
+            print(f"  FAIL {name}: only {len(late)} distinct unmasked frame CRC(s) in vblanks "
+                  f"{TIER2_LATE_START}-{TIER2_LATE_START + TIER2_LATE_WINDOW} after [scene] Game "
+                  f"({TIER2_LATE_FLOOR} required) - the level stopped moving after its fade-in")
+            good = False
+        print(f"  {'PASS' if good else 'FAIL'} {name}: {res.wall:.1f}s wall, {len(crcs)} distinct frames "
+              f"({len(late)} in vblanks {TIER2_LATE_START}-{TIER2_LATE_START + TIER2_LATE_WINDOW} after open"
+              f"{', level ended inside the window' if ended else ''}), "
               f"peak_ram={res.summary.get('peak_ram', '?')} peak_prim={res.summary.get('peak_prim', '?')} "
               f"peak_memnodes={res.summary.get('peak_memnodes', '?')}")
         ok &= good
@@ -657,7 +852,7 @@ def selftest_wav(exe, seed, logdir, territory):
                     problems.append("PCM is all zero")
             closed = [l for l in res.lines if l.startswith("[host] audio dump closed:")]
             if hooked:
-                m = re.match(r"\[host\] audio dump closed: (\d+) frames$", closed[-1] if closed else "")
+                m = AUDIO_CLOSED.match(closed[-1] if closed else "")
                 if not m:
                     problems.append("no '[host] audio dump closed' line - the exit hook did not run")
                 elif int(m.group(1)) * 4 != data:
@@ -733,6 +928,8 @@ def main():
                          "left in DIR (--keep-artifacts) and require no desync, the same streams "
                          "(needs --compare-frames with that exe's --logs) and the same memory card")
     a = ap.parse_args()
+    global TERRITORY
+    TERRITORY = a.territory.upper()
 
     exe = Path(a.exe).resolve()
     if not exe.exists():
@@ -762,13 +959,10 @@ def main():
         if a.replay_from:
             ap.error("--keep-artifacts and --replay-from: a cross replay records nothing to keep")
         KEEP = Path(a.keep_artifacts).resolve()
-        # Emptied, not merged into: a route only writes its artifacts when it
-        # passes, so one left by an earlier (or another exe's) run would be
-        # replayed and byte-compared by --replay-from as if this run had made
-        # it - a stale PASS over a route that just failed.
-        if KEEP.is_dir():
-            shutil.rmtree(KEEP)
-        KEEP.mkdir(parents=True, exist_ok=True)
+        err = prepare_keep_dir(KEEP, exe, a.logs, BASELINE)
+        if err:
+            print(err)
+            return 2
     if a.replay_from:
         # without the other exe's logs a cross replay would only prove "no
         # desync at the 300-vblank epochs" - the stream compare is the oracle

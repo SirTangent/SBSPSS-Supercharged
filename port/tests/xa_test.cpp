@@ -15,7 +15,9 @@
 	     decode (xa_fixture_golden.pcm).  Regenerate both from the repo
 	     root with `py port/tests/make_xa_fixture.py` (wraps the sectors as
 	     RIFF CDXA, ffmpeg -i fixture.xa -f s16le xa_fixture_golden.pcm).
-	     Layer 3 needs the repo root as cwd; it skips with a note otherwise.
+	     Layer 3 needs the repo root as cwd; without its fixtures it is a
+	     skip - exit 77, or a failure under SBSP_TEST_STRICT
+	     (tests/test_skip.h) - never a pass.
 */
 #include <cstdio>
 #include <cstring>
@@ -28,6 +30,9 @@
 #include "cd/xa_adpcm.h"
 #include "cd/xa_stream.h"
 #include "spu/spu_core.h"
+#include "test_skip.h"
+
+static int g_skipped;		/* real-data layers whose fixtures were absent */
 
 extern "C" void Port_CdRebuildDirForTest(void);
 
@@ -605,6 +610,7 @@ int main(void)
 	{
 		std::printf("xa_test: fixtures not found (run from the repo root) - "
 					"real-data golden SKIPPED\n");
+		g_skipped++;
 		if (fs) fclose(fs);
 		if (fg) fclose(fg);
 	}
@@ -711,6 +717,7 @@ int main(void)
 		{
 			std::printf("xa_test: stereo fixtures not found (run from the repo "
 						"root) - stereo golden SKIPPED\n");
+			g_skipped++;
 			if (ss) fclose(ss);
 			if (sg) fclose(sg);
 		}
@@ -754,6 +761,8 @@ int main(void)
 		std::printf("xa_test: %d failure(s)\n", g_failures);
 		return 1;
 	}
+	if (g_skipped)
+		return testSkipExit("xa_test", g_skipped);	/* 77, or 1 under SBSP_TEST_STRICT */
 	std::printf("xa_test: all passed\n");
 	return 0;
 }

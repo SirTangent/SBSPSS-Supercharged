@@ -174,12 +174,13 @@ static PadEntry		*g_entries;
 static int			g_entryCount, g_entryCap;
 static EpochCheck	*g_epochs;
 static int			g_epochCount, g_epochCap;
+static unsigned long g_epochFirst;			/* the earliest epoch's vblank, kept by addEpoch */
 static int			g_scriptParsed;
 static int			g_desyncs;
 /*	epochs this run reached, and those of them that compared nothing - the
 	boot check (checkEpochsCompare) can only count what holds for the whole
-	run; the cross-build pause-menu crc skip and an unregistered game RNG
-	are only known per epoch (epochCheck, Port_InputAtExit)  */
+	run; the cross-build pause-menu crc skip is only known per epoch
+	(epochCheck, Port_InputAtExit)  */
 static int			g_epochsReached, g_epochsBlind;
 /*	Pointer size of the exe that made the recording (`# abi ptr=N`, written
 	by --record-pad since M9; absent = 4, every older recording is 32-bit).
@@ -240,34 +241,78 @@ extern "C" void Port_PauseMenuDrawn(int drawn)
 	ramSkipped); a replay whose epochs are left with none of the three is
 	refused (checkEpochsCompare at boot, Port_InputAtExit at the end).  */
 static int				g_recordingRender = 0;
+/*	the file carries a line only --record-pad writes (any of the data lines
+	below - `# epoch`, `# abi`, `# build`, `# render`, ...): it is a
+	recording, whose missing `# render` means revision 0, not a hand-written
+	script, which has no revision to speak of  */
+static int				g_recorderLines;
+
+/*	why an epoch's crc is not compared, or NULL when it is.  At boot no
+	frame has been built, so only the renderer revision can skip it.  */
+static const char *crcSkipped(void)
+{
+	if (g_recordingRender != GPU_RENDER_REVISION)
+		return "renderer revision";
+	if (g_recordingBuild >= 0 && g_recordingBuild != thisBuildFinal() &&
+		g_pauseDrawn && g_pauseScene == Port_LastSceneOpenVblank())
+		return "cross-build pause menu";
+	return NULL;
+}
+
+/*	whether an epoch's rng is compared: the recording carries it and the
+	game registered its RNG - without one there is nothing live to hold it
+	against  */
+static int rngCompared(const EpochCheck &ep)
+{
+	return ep.hasRng && Port_GameGlobals()->randomSeed;
+}
+
+/*	The one rule for an epoch that compares nothing - no ram (`ramSkip`
+	set), no crc (`crcSkip` set) and no rng - shared by the boot check and
+	each epoch as it is reached, so the two verdicts cannot drift apart.  */
+static int epochComparesNothing(const EpochCheck &ep, const char *ramSkip, const char *crcSkip)
+{
+	return ramSkip && crcSkip && !rngCompared(ep);
+}
 
 /*	Every skip above can stack: a recording from before issue #58 has no
-	rng, one replayed across ABIs or build types compares no ram, and one
-	from another renderer revision no crc.  An epoch left with none of the
-	three would pass whatever the run did, and a replay made only of such
-	epochs would exit 0 having compared nothing - so it is refused at boot
-	(exit 13).  Otherwise the boot line says exactly what the epochs
-	compare on this exe.  rng is counted on the game registering its RNG,
-	which it does before the first frame (main.cpp).  What only shows per
-	epoch - the cross-build pause-menu crc skip, an RNG never registered -
-	is counted as the epochs are reached: one that compares nothing is
-	named, and a replay all of whose epochs did is refused at exit
+	rng, one replayed across ABIs or build types compares no ram, one
+	from another renderer revision no crc, and an exe that registered no
+	RNG compares no rng.  An epoch left with none of the three would pass
+	whatever the run did, and a replay made only of such epochs would exit
+	0 having compared nothing - so any such epoch is refused at boot (exit
+	13).  Otherwise the boot line says exactly what the epochs compare on
+	this exe.  The game registers its RNG first thing in main(), before
+	InitSystem asks for the boot seed and so parses the pad file
+	(main.cpp, host/seed.cpp), so the registration is known here.  What
+	only shows per epoch - the cross-build pause-menu crc skip - is
+	counted as the epochs are reached: one that compares nothing is named,
+	and a replay all of whose epochs did is refused at exit
 	(Port_InputAtExit).  */
 static void checkEpochsCompare(const char *path)
 {
 	if (!g_epochCount)
 		return;
-	const int	ram = ramSkipped() == NULL;
-	const int	crc = g_recordingRender == GPU_RENDER_REVISION;
-	int			withRng = 0;
+	const char	*ramSkip = ramSkipped();
+	const char	*crcSkip = crcSkipped();
+	const int	ram = ramSkip == NULL;
+	const int	crc = crcSkip == NULL;
+	const int	haveRng = Port_GameGlobals()->randomSeed != NULL;
+	int			withRng = 0, recordedRng = 0, blind = 0;
 	for (int i = 0; i < g_epochCount; i++)
-		withRng += g_epochs[i].hasRng != 0;
-	const int	blind = (ram || crc) ? 0 : g_epochCount - withRng;
+	{
+		withRng     += rngCompared(g_epochs[i]);
+		recordedRng += g_epochs[i].hasRng != 0;
+		blind       += epochComparesNothing(g_epochs[i], ramSkip, crcSkip);
+	}
+	if (recordedRng && !haveRng)
+		fprintf(stderr, "[input] the game registered no RNG: epoch rng not compared\n");
 	if (blind)
 	{
 		fprintf(stderr, "[replay] pad-file %s: %d of %d epochs compare nothing on this exe "
-						"(render revision differs, ram skipped %s, no rng recorded) - aborting\n",
-				path, blind, g_epochCount, ramSkipped());
+						"(render revision differs, ram skipped %s, %s) - aborting\n",
+				path, blind, g_epochCount, ramSkip,
+				recordedRng && !haveRng ? "the game registered no RNG" : "no rng recorded");
 		Port_Exit(PORT_EXIT_ORACLE);
 	}
 	char	what[64] = "";
@@ -285,16 +330,6 @@ static void checkEpochsCompare(const char *path)
 				? "; crc not while the pause menu is up" : "");
 }
 
-/*	why an epoch's crc is not compared, or NULL when it is  */
-static const char *crcSkipped(void)
-{
-	if (g_recordingRender != GPU_RENDER_REVISION)
-		return "renderer revision";
-	if (g_recordingBuild >= 0 && g_recordingBuild != thisBuildFinal() &&
-		g_pauseDrawn && g_pauseScene == Port_LastSceneOpenVblank())
-		return "cross-build pause menu";
-	return NULL;
-}
 /*	The rest of a recording's data lines (issue #58).  Older exes read
 	none of them - every unrecognised `#` line is a comment - and this exe
 	reads a recording without them as before.  */
@@ -353,7 +388,12 @@ static void push(T *&arr, int &count, int &cap, const T &v, int first)
 }
 
 static void addEntry(const PadEntry &e)		{ push(g_entries, g_entryCount, g_entryCap, e, 64); }
-static void addEpoch(const EpochCheck &ep)	{ push(g_epochs, g_epochCount, g_epochCap, ep, 16); }
+static void addEpoch(const EpochCheck &ep)
+{
+	if (!g_epochCount || ep.vblank < g_epochFirst)
+		g_epochFirst = ep.vblank;
+	push(g_epochs, g_epochCount, g_epochCap, ep, 16);
+}
 static void addPrompt(const PromptMark &pm)	{ push(g_prompts, g_promptCount, g_promptCap, pm, 16); }
 static void addBare(const BareMark &bm)		{ push(g_bares, g_bareCount, g_bareCap, bm, 16); }
 
@@ -595,6 +635,9 @@ static void padFileParse(void)
 				bm.line = line;
 				addBare(bm);
 			}
+			else
+				continue;					/* a comment */
+			g_recorderLines = 1;			/* one of the data lines above */
 			continue;
 		}
 		for (char *c = s + 1; *c; c++)		/* first '#' preceded by a blank */
@@ -632,7 +675,13 @@ static void padFileParse(void)
 				g_recordingBuild ? "final" : "debug", thisBuildFinal() ? "final" : "debug");
 	/*	(nor crc while the pause menu is up - the epochs line below says
 		that, with what is compared: checkEpochsCompare)  */
-	if (g_epochCount && g_recordingRender != GPU_RENDER_REVISION)
+	/*	run_tier.py reads this line - the game's own reading of `# render`
+		- to decide whether a cross replay's [frame] lines can match the
+		recording exe's, rather than parsing the file a second way.  Said
+		for every recording, epochs or not: one with no `# render` (made
+		before issue #60) is revision 0.  A hand-written script carries
+		none of the recorder's lines and is not a recording.  */
+	if (g_recorderLines && g_recordingRender != GPU_RENDER_REVISION)
 		fprintf(stderr, "[input] recording's renderer revision is %d, this exe's %d: "
 						"epoch crc not compared\n", g_recordingRender, GPU_RENDER_REVISION);
 	checkEpochsCompare(path);
@@ -771,10 +820,7 @@ static void epochCheck(unsigned long vblank)
 		const PortGameGlobals *g = Port_GameGlobals();
 		unsigned long ram = g->ramUsed ? *g->ramUsed : 0;
 		uint32_t      crc = GPU_DisplayCRC32(NULL);
-		/*	rng is compared only when the recording carries it and the game
-			registered its RNG - without one there is nothing live to hold
-			it against  */
-		const int		withRng = ep.hasRng && g->randomSeed;
+		const int		withRng = rngCompared(ep);
 		uint32_t      rng = withRng ? (uint32_t)*g->randomSeed : ep.rng;
 		const char   *skip   = ramSkipped();		/* see g_recordingPtr, g_recordingBuild */
 		const char   *crcSkip = crcSkipped();	/* see g_pauseDrawn */
@@ -782,7 +828,7 @@ static void epochCheck(unsigned long vblank)
 		const int		badCrc = !crcSkip && crc != ep.crc;
 		const int		badRng = withRng && rng != ep.rng;
 		g_epochsReached++;
-		if (skip && crcSkip && !withRng)
+		if (epochComparesNothing(ep, skip, crcSkip))
 		{
 			/*	not a desync - nothing was compared to find one - but named,
 				and Port_InputAtExit refuses a replay made only of these  */
@@ -822,7 +868,9 @@ extern "C" int Port_InputBlindEpochs(void)
 	nothing turn it into 13 - a route that quietly never pressed half its
 	buttons must not pass, a replay that reached a recorded vblank by
 	another road has diverged, and one that checked nothing has shown
-	nothing.  */
+	nothing.  A run cut short (the window closed) is judged on what it
+	reached: desyncs at epochs and at bare-pump vblanks already passed
+	count; the epochs, vblanks and scene references still ahead do not.  */
 extern "C" int Port_InputAtExit(int complete)
 {
 	int bad = g_desyncs;
@@ -832,18 +880,24 @@ extern "C" int Port_InputAtExit(int complete)
 						"the replay proves nothing\n", g_epochsReached);
 		bad++;
 	}
+	for (int i = 0; i < g_bareCount; i++)
+	{
+		const BareMark &b = g_bares[i];
+		if (!b.fired && b.vblank <= Port_VBlankCount())	/* not the ones still ahead */
+		{
+			fprintf(stderr, "[replay] desync: line %d's vblank %lu did not fire at bare pump %lu\n",
+					b.line, b.vblank, b.pumps);
+			bad++;
+		}
+	}
 	if (!complete)
 		return bad;
 	if (g_epochCount && !g_epochsReached)
 	{
 		/*	--exit-after before the recording's first epoch: nothing was
 			compared, so nothing was shown  */
-		unsigned long first = g_epochs[0].vblank;
-		for (int i = 1; i < g_epochCount; i++)
-			if (g_epochs[i].vblank < first)
-				first = g_epochs[i].vblank;
 		fprintf(stderr, "[replay] none of the recording's %d epochs was reached (the first is at "
-						"vblank %lu) - the replay compared nothing\n", g_epochCount, first);
+						"vblank %lu) - the replay compared nothing\n", g_epochCount, g_epochFirst);
 		bad++;
 	}
 	for (int i = 0; i < g_entryCount; i++)
@@ -853,16 +907,6 @@ extern "C" int Port_InputAtExit(int complete)
 		{
 			fprintf(stderr, "[replay] unsatisfied line %d: %s#%d never opened\n",
 					e.line, e.scene, e.nth);
-			bad++;
-		}
-	}
-	for (int i = 0; i < g_bareCount; i++)
-	{
-		const BareMark &b = g_bares[i];
-		if (!b.fired && b.vblank <= Port_VBlankCount())	/* not the ones past an --exit-after */
-		{
-			fprintf(stderr, "[replay] desync: line %d's vblank %lu did not fire at bare pump %lu\n",
-					b.line, b.vblank, b.pumps);
 			bad++;
 		}
 	}

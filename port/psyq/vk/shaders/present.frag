@@ -36,8 +36,9 @@ void main()
     }
     ivec2 v = (pc.disp.xy + p) & ivec2(1023, 511);
     uint px = texelFetch(vram, v, 0).r;
-    col = vec4(float( px         & 31u) / 31.0,
-               float((px >>  5u) & 31u) / 31.0,
-               float((px >> 10u) & 31u) / 31.0,
-               1.0);
+    // 5 -> 8 bits as (c << 3) | (c >> 2): 31 -> 255, and the same integer
+    // GPU_ReadDisplayPixelRGB writes into --dump-frames BMPs, so a dump and
+    // the window agree to the bit (it was c / 31 here and c << 3 there)
+    uvec3 c = uvec3(px & 31u, (px >> 5u) & 31u, (px >> 10u) & 31u);
+    col = vec4(vec3((c << 3u) | (c >> 2u)) / 255.0, 1.0);
 }

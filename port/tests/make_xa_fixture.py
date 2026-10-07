@@ -63,8 +63,11 @@ xa_path = os.path.join(os.environ["TEMP"], "xa_fixture.xa")
 open(xa_path, "wb").write(riff)
 
 pcm_path = "port/tests/xa_fixture_golden.pcm"
+# check=True and the size assert: a failed or partial decode must not leave a
+# golden behind that xa_test then holds the decoder to (issue #61)
 r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", xa_path,
-                    "-f", "s16le", "-acodec", "pcm_s16le", pcm_path])
+                    "-f", "s16le", "-acodec", "pcm_s16le", pcm_path], check=True)
 print("ffmpeg exit", r.returncode)
 got = os.path.getsize(pcm_path)
 print("golden pcm bytes:", got, "(expect", 4*4032*2, ")")
+assert got == 4*4032*2, "ffmpeg decoded %d bytes; the fixture needs %d" % (got, 4*4032*2)

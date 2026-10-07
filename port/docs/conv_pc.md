@@ -657,7 +657,9 @@ the resume edge the pump assigns `g_vblankBase = g_vblank` and re-stamps
 `g_qpcBase` (not via `wallVblank()`, which is by then far ahead), so the
 game continues from the frame it stopped on with no `MAX_PENDING_VBLANKS`
 catch-up burst; the audio device is paused across the edge
-(`Host_AudioPause`, else the SPU drones on its last voice state), the
+(`Host_AudioPause`, else the SPU drones on its last voice state - a
+title-bar drag, which stalls the pump inside `SDL_PollEvent`, gets the
+same pause and rebase through an event watch since issue #63), the
 watchdog thread resets its stall count while `Port_Paused()`, and
 `[summary]` gains `paused=<seconds>`.  The M3 invariants (one vblank per
 pump, no nesting, backlog rebased not skipped, `Port_NowSeconds` off the
@@ -1587,23 +1589,31 @@ exactly.
   nothing and exit 0 whatever happened, so it is refused at boot, exit
   13: `[replay] pad-file ...: N of M epochs compare nothing on this exe
   (render revision differs, ram skipped cross-ABI, no rng recorded)`.
+  rng also needs the game to have registered its RNG, which `main()`
+  does before `InitSystem` asks for the boot seed and so parses the pad
+  file; an exe without one says `[input] the game registered no RNG:
+  epoch rng not compared`, and the refusal then ends `the game registered
+  no RNG` (review of #77, in PR #78: this used to pass boot saying
+  "comparing rng only" and be refused only after the whole route).
   Every replay with epochs prints what they compare, e.g. `[input]
   epochs: comparing rng only` or `comparing rng, ram, crc` (with `; crc
   not while the pause menu is up` across build types).  #55's sessions
-  carry rng, so they still replay anywhere.
+  carry rng, so they still replay anywhere.  The boot check and each
+  epoch use one rule for "compares nothing" (`epochComparesNothing` in
+  `host/input.cpp`), so the two verdicts cannot drift apart.
 - What only shows per epoch is counted as the epochs are reached (issue
   #76's review fixes): across build types an epoch under the pause menu
-  compares no crc, and rng needs the game to have registered its RNG.  An
-  epoch left with nothing is named (`[input] epoch at vblank N ...
-  compared nothing: ...`) and counted in `[summary]` as `blind_epochs=`,
-  which run_tier requires to be 0; the game itself refuses a replay all
-  of whose epochs were, 13: `[replay] all N epochs reached compared
-  nothing on this exe`.  At the scripted exit (`--exit-after`) a replay
-  that reached none of its recording's epochs is refused too (`[replay]
-  none of the recording's N epochs was reached`).  Closing the window
-  judges a replay on the epochs it reached - their desyncs, and all of
-  them blind - and nothing else: what it had not reached yet is no
-  failure.
+  compares no crc.  An epoch left with nothing is named (`[input] epoch
+  at vblank N ... compared nothing: ...`) and counted in `[summary]` as
+  `blind_epochs=`, which run_tier requires to be 0; the game itself
+  refuses a replay all of whose epochs were, 13: `[replay] all N epochs
+  reached compared nothing on this exe`.  At the scripted exit
+  (`--exit-after`) a replay that reached none of its recording's epochs
+  is refused too (`[replay] none of the recording's N epochs was
+  reached`).  Closing the window judges a replay on what it reached: the
+  desyncs at its epochs, all of them blind, and the `# bare` vblanks it
+  passed without firing at their pump (the last were skipped on a close
+  until PR #78).  What it had not reached yet is no failure.
 - `# render` takes exactly one non-negative number, optionally followed
   by a ` #` comment as after any entry; `# render`, `# render one`,
   `# render -` or other trailing text is refused (exit 13) like a bad
@@ -1617,18 +1627,28 @@ exactly.
   before it), blanks or a ` #` comment around a good one, the refused
   compare-nothing replay (an old-format recording with `# abi ptr=`
   flipped to stand in for the other ABI), the boot line in five more
-  cases, the two refusals at exit (a child that registers no RNG, and
-  an old-format recording from the other build type with the pause menu
-  up at its only epoch), and a replay stopped before its first epoch -
-  refused at the scripted exit, not when closed like a window.
+  cases, a child that registers no RNG (refused at boot when nothing
+  else is compared, rng left out of the boot line when something is),
+  the refusal at exit (an old-format recording from the other build type
+  with the pause menu up at its only epoch), and a replay cut short:
+  refused at the scripted exit before its first epoch, and closed through
+  a real window - the dummy video driver's, an `SDL_EVENT_QUIT` handled
+  by `host/window.cpp` - no failure before the first epoch but exit 13
+  after a missed `# bare` vblank or a desynced epoch.
 - The previous exe's tier 1 recordings (`port/build/lane2-base/art`, made
   before these fixes) replay on the new exe with `run_tier.py --tier1
   --replay-from <art> --compare-frames <the new exe's own logs>`: all 10
   routes pass, with byte-identical cards, on DEBUG and FINAL.  (Since
-  issue #76, run_tier compares the recording's `# render` with the exe's
-  `[summary] render=` and, when they differ, holds only the `[scene]`
-  lines to the recording exe's log, so `--compare-frames` takes that
-  exe's logs as for any cross replay.)
+  issue #76, run_tier holds only the `[scene]` lines to the recording
+  exe's log when the revisions differ, so `--compare-frames` takes that
+  exe's logs as for any cross replay.  Since PR #78 it learns that from
+  the game's own `[input] recording's renderer revision is N, this exe's
+  M` line, said for every recording - any file with a line only
+  `--record-pad` writes, so one from before `# render` reads as revision 0
+  with or without epochs - rather than parsing `# render` a second way:
+  its own parser read a
+  `# rendered ...` comment or an indented line as revision 0 and quietly
+  stopped comparing frames.)
 
 ### Flat lines dither (issue #76)
 
@@ -1694,6 +1714,241 @@ And for a `/code-review` of this change itself:
   epochs line states.
 - `replay_test` reads recording A once and uses `buildLine` and
   `readText` throughout.
+
+### Test-suite false passes and coverage gaps (issue #61)
+
+Harness and tests only: `tests/run_tier.py`, `tests/test_skip.h` (new),
+`fmv_pipeline_test`, `vlc3_test`, `xm_test`, `headless.cpp` (plus a
+`Port_CdDataRoot` accessor in `cd/cd.cpp`), `check_fmv_ffmpeg.py`,
+`make_xa_fixture.py`, `CMakeLists.txt`, `build-pc.sh`, `build.yml`.  The
+game's pixels and sound are unchanged; what changed is what can go green.
+
+**Audio renders in every playthrough.**  The determinism set carried
+`--no-audio`, and with no consumer `Port_AudioVBlank` returns before
+`Spu_RenderFrames`, so across every tier and self-test the SPU voice
+render, the envelopes, ADPCM over the game's own VABs and the CD-in mix
+never ran - only `spu_test`/`xm_test` on synthetic or title-theme input
+did, and the forbidden `[spu]` tag could not fire.  `run_game` now adds
+`--dump-audio <run dir>/audio.wav` to every run that does not bring its
+own (no device, sample-exact: the M5 contract), sums the WAV up as one
+`[audio] frames=<n> crc=<CRC-32 of the PCM>` line at the end of the log,
+and `report_common` requires the exit hook's `[host] audio dump closed:
+<F> frames, <a> vblanks at 60 Hz, <b> at 50 Hz` to name those frames, `a +
+b` to be `[summary] vblanks=`, `F` to be exactly `735 a + 882 b`, and `b`
+to be 0 on a USA build.  The mix is counted by the dump itself because a
+PAL build boots at 60 Hz until `VidInit` sets the video mode (a paced EUR
+boot renders 34 vblanks at 735 before 366 at 882), and the length alone
+cannot pin it: the first version accepted any whole `k = (882 V - F) /
+147` in `0..V`, and since 882 is six 147s a lost 50 Hz vblank, or an
+extra vblank of audio on USA, still passed as some other mix (review of
+PR #78).  That exactness
+needed one shim change: the dump used to be armed with the device at the
+first `ResetGraph`, and a paced boot spends ~36 vblanks in `CdReadSync`
+before `VidInit`, so a paced run's WAV was that much shorter than the run;
+`Port_AudioVBlank` now arms a `SBSP_DUMP_AUDIO` dump at the first vblank
+(the dump only - it opens no device, so the unit exes that pump without a
+window stay silent).  `--compare-frames` holds the `[audio]`
+line like a frame whenever the baseline log carries one (a log from
+before this change has none, and is compared as before), across renderer
+revisions too.
+
+**Tier 2 judges the level after its fade-in.**  Its oracle was "at least
+2 distinct unmasked CRCs after `[scene] Game`", which the level fade-in
+alone satisfies (~25 distinct frames), so a level that wedged after
+opening but kept calling VSync passed.  The `TIER2_LATE_WINDOW` (300)
+vblanks starting `TIER2_LATE_START` (300) after the Game scene opens must
+now show at least `TIER2_LATE_FLOOR` (30) distinct pictures.  Measured
+over all 25 levels of the full tier (`parity64`'s 3,600-vblank runs): the
+quietest, level 7, gives 132 there, the rest 136-300.  The run's tail is
+the wrong window: on that budget walk-right reaches the exit of levels 9,
+19 and 24, a `Map` scene opens and the game sits on it (8 distinct frames
+in the last 300) - so a level whose Game scene ends before the window
+closes has played through and passes.
+
+**Skips are never passes.**  `fmv_pipeline_test` returned 0 after
+printing SKIPPED when a movie was not staged or a golden was missing;
+`vlc3_test`'s pixel layer and movie sweep, `xm_test` and `xa_test`'s two
+real-data layers did the same.  Each now counts its skipped layers and,
+with no failure, exits 77 (`tests/test_skip.h`); every `sbsp_shim_test`
+carries `SKIP_RETURN_CODE 77`, so ctest reports "Skipped", never
+"Passed".  `build-pc.sh test` and the two CI unit steps set
+`SBSP_TEST_STRICT=1`, under which the same case exits 1: those trees
+staged the movies and carry the fixtures and the music, so a skip there
+is a lost input.  The sweep also fails on each movie that is present but
+decodes to no frame, judged per movie, so another layer's skip cannot
+cover for it.
+
+**`[summary]` is required, and so is every key read from it.**
+`summary_int` returned 0 for a missing key, so a renamed `peak_prim=`
+would have held every route's `# max` ceiling against nothing.  It
+returns None now; a route fails on a missing key, and `report_common`
+fails a run without a `[summary]` line at all.
+
+**`--keep-artifacts` no longer deletes whatever it is given.**  It was
+an unconditional `rmtree` of the directory - the build tree, the repo or
+the `--compare-frames` baseline, had a typo named them.  `prepare_keep_dir`
+refuses a directory that is or holds `--logs`, the baseline, the repo,
+the exe or the current directory, refuses one holding anything but
+`<route>.rec.pad` / `<route>.mcd`, and removes only those.
+
+**The oracles behind the goldens.**  `check_fmv_ffmpeg.py` printed the
+worst channel delta against ffmpeg and exited 0 whatever it was; it now
+exits 1 above 16, the bound `vlc3_test` holds THQ frame 1 to against the
+same oracle, so a wrong IDCT or YUV change cannot be committed with
+regenerated `fmv_crc` goldens on the strength of a printed number.
+`make_xa_fixture.py` runs ffmpeg with `check=True` and asserts the golden's
+size, like its stereo twin already did.
+
+**`sbsp_headless` checks the bytes.**  `loadAndReport` checked
+`size > 0` and a non-NULL buffer and only printed the CRC, so a read from
+the wrong sector or with the wrong stride passed.  It now reads the same
+bytes straight from `BIGLUMP.BIN` at the file's FAT offset, in the
+directory the libcd shim resolved (`Port_CdDataRoot`), and requires them
+identical - independent of what a data build puts in the file.
+
+**The LZNP encoder is under ctest.**  `tools/lznp-src/roundtrip_test.cpp`
+(encoder against the game's `source/utils/lznp.cpp` decoder: zeros,
+repeats, noise, a mixed buffer, 200 fuzzed buffers and `str_frame1.bin`)
+was a hand-built proof; it is the `lznp_roundtrip` unit test now, and a
+file named on its command line that cannot be read fails it rather than
+being skipped.  `lznp_exe_matches_source` builds the CLI from the same
+sources and requires the committed `port/tools/lznp.exe` - the LFS binary
+every actor pack goes through in `build-data` - to encode three synthetic
+buffers and the fixture byte-identically; an LFS pointer standing in for
+the exe fails it too.  CI's two test jobs check out without LFS (the
+133 MB track stays with the data job and its cache), so each fetches that
+one 22 KB object with `git lfs pull --include port/tools/lznp.exe`.
+`stretch_keycaps.py --check` was already a CI step.
+
+Two findings of the review were fixed before this change: the ClearImage
+row checks sample column 512 since issue #60, and the maximum-size G3
+compares every pixel against an int64 reference (above).
+
+### Vulkan presenter and window robustness (issue #63)
+
+Shim-only: `vk/vk_present.cpp`, `vk/shaders/present.frag` (and its
+regenerated `.spv.h`), `vk/viewport.cpp`, `gpu/vram.cpp`, `host/window.cpp`,
+`host/diag.cpp`, `tests/gpu_test.cpp`.  Game logic, frame CRCs and the
+renderer revision are untouched; what changed is what the presenter does
+when something goes wrong, and one colour expansion.
+
+**A swapchain that cannot be built yet no longer ends the presenter.**
+`VkPresent_Init` failed when `createSwapchain` did, and `window.cpp` then
+never called the presenter again - so a window minimized at launch (a
+"Run: Minimized" shortcut, `start /min`), whose surface is 0x0 and whose
+build is `buildSwapchain`'s "retry later", stayed black for the whole
+session once restored.  Init now finishes without a swapchain, says
+`[vk] no swapchain yet (the surface has no size: minimized?)`, and
+`VkPresent_Frame` builds it when the window has a size, announcing
+`[vk] swapchain built: WxH` once.  `buildSwapchain` records a 0x0 surface
+in `s_swapZeroExtent`, because SDL still reports the window's logical size
+while it is iconic: such frames are waited for however long, while a
+surface with a size whose swapchain fails to build 300 frames running
+stops the presenter (below).  The flag is cleared before the surface
+query, so a query that fails counts as a failed build, never as the
+minimized wait of an earlier one; a stale flag kept the retry count at
+zero and a lost surface logged one line a vblank for the rest of the
+session.  A surface or device reported lost by that query stops the
+presenter at once.  Verified by launching minimized from PowerShell and
+restoring the SDL window after a second: the two lines appear in that
+order.
+
+**The render pass chains the acquire.**  The attachment starts
+`UNDEFINED` with no subpass dependency, so the implicit one began at
+`TOP_OF_PIPE` and the layout transition and clear were not ordered after
+the acquire semaphore's wait at `COLOR_ATTACHMENT_OUTPUT`.  A
+`VK_SUBPASS_EXTERNAL -> 0` dependency on that stage with
+`COLOR_ATTACHMENT_WRITE` fixes it.  Measured with the Khronos validation
+layer's synchronization validation on the x64 build (the SDK ships no
+32-bit layer, so the MinGW exe cannot load it): 180 vblanks of level 1-1
+raise 10 `SYNC-HAZARD-WRITE-AFTER-READ` reports on the previous exe and
+none on this one.
+
+**Hard errors are said once and stop the presenter.**  `DEVICE_LOST` from
+`vkGetFenceStatus` read as "slot busy", and `DEVICE_LOST` / `SURFACE_LOST`
+from acquire or present fell into a bare `return`, so after a TDR the game
+ran on behind a frozen frame with nothing in the log.  `presenterLost`
+prints one `[vk] <call> failed (<code>), device lost - presenter stopped;
+the game runs on behind the last picture` and sets `s_dead`; every later
+frame returns at once.  `SBSP_SELFTEST=vklost@<vblank>` makes the next
+fence read as `DEVICE_LOST` so the path can be exercised: one line, the
+run reaches its `--exit-after`, exit 0.
+
+**A failed submit is recovered, not papered over.**  When `vkQueueSubmit`
+failed, the acquired image was never presented and `s_semAcquire[slot]`
+kept a pending signal that the next frame then passed to acquire again
+(invalid), while each failure leaked an image until acquire returned
+`NOT_READY` for good.  The path now consumes the pending signal with a
+wait-only submit that signals the slot's fence, waits for that fence, and
+rebuilds the swapchain, which retires the orphaned image with the old
+one; a lost device, or a recovery step that fails itself, stops the
+presenter instead.  The semaphore is not destroyed and recreated: the
+signal is owed by the presentation engine, which `vkDeviceWaitIdle` does
+not wait for, so it could land on a freed handle (review of PR #78).
+`SBSP_SELFTEST=vksubmit@<vblank>` makes one submit fail with nothing
+queued, as an out-of-memory would: on the x64 build under the validation
+layer the run logs the one `vkQueueSubmit failed (-2) - frame dropped,
+swapchain rebuilt` line, keeps presenting, reaches its `--exit-after` and
+raises no validation message.  (The old recovery raises none on this
+NVIDIA driver either - the race depends on when a driver signals the
+acquire - so the change rests on the specification.)
+
+**No Vulkan loader still gives a window.**  `SDL_WINDOW_VULKAN` makes
+`SDL_CreateWindow` load the loader, so without `vulkan-1.dll` there was no
+window at all - no focus, no close button, the music playing until the
+console was killed - and the promised black window was unreachable.  The
+window is created again without the flag, the presenter is not started,
+and the "window will stay black (frame dumps still work)" line is printed.
+Verified with `SDL_VULKAN_LIBRARY=no-such-vulkan-loader.dll`: the previous
+exe logs `SDL_CreateWindow failed` and runs windowless, this one makes the
+window and exits cleanly at its `--exit-after`.
+
+**A title-bar drag pauses the audio like a focus loss.**  Win32's modal
+move/size (and system-menu) loop runs inside `SDL_PollEvent`, so the pump
+delivered no vblank for as long as the user held the title bar while the
+audio thread droned on the frozen voice state and speech drained.  SDL
+sends `SDL_EVENT_WINDOW_EXPOSED` with `data1 == 1` from inside that loop,
+which only an event watch can see: `liveResizeWatch` pauses the audio
+device, prints `[host] paused (window move/size)` and keeps the picture up
+(a throttled `VkPresent_Frame`); the first poll after the loop resumes the
+audio, books the time into `[summary] paused=`, prints `resumed after
+N.Ns (window move/size)`, and answers one `Host_PausePoll` with "paused"
+so the pump rebases its clock on the resume edge instead of bursting the
+vblanks the loop ate.  Verified with a real drag driven from PowerShell
+(mouse down on the caption, move, hold, up): `paused` / `resumed after
+3.0s` and `paused=3.0`, with the run still ending at its scripted vblank.
+Two follow-ups from the review of PR #78:
+- A scripted run (`Port_HarnessRun`: a replay, a harness route) gets no
+  rebase answer.  That answer costs the pump step it lands on, which
+  returns before its bare-pump replay check, so dragging the window of a
+  replay could skip a recorded `# bare` vblank and fail it with exit 13.
+  A scripted run fires its vblanks where the recording says, not by the
+  wall clock, and is left out exactly as from the focus-loss pause.
+  `replay_test` drags (the event watch's `EXPOSED`, data1 1) just before a
+  recorded bare-pump vblank and requires it to fire there.
+- `paused=` counts a focus pause and a drag once where they overlap.
+  Each booked its own length, so a focus-paused window dragged for 10 s,
+  its focus back in the same poll that ended the drag, booked the 10 s
+  twice.  One interval now opens when the first of them starts and is
+  booked when neither holds.  `window_test` (new) drags inside a focus
+  pause and requires the total not to exceed the wall time it covers;
+  the old bookkeeping booked 0.70 s in 0.42 s.
+
+**Dumps and the window agree.**  The shader expanded 5-bit channels as
+`c / 31` (white 0xFF) while `GPU_ReadDisplayPixelRGB`, which feeds
+`--dump-frames`, used `c << 3` (white 0xF8), up to 7 levels apart per
+channel.  Both now use `(c << 3) | (c >> 2)`, the full-range expansion
+DuckStation and Mednafen use for the same conversion; the dump side is
+`gpu_test`'s "15bpp channels expand to full range".  BMPs dumped before
+this change are darker by that amount; the frame CRCs, over VRAM
+halfwords, do not move, so `--compare-frames` and the renderer revision
+are unaffected.
+
+**Comments.**  The presenter header describes the two-slot, fence-gated
+sync model and the scale modes instead of the M2 "one command buffer,
+vkQueueWaitIdle per frame"; `viewport.cpp`'s integer mode says 2k/3 window
+pixels per source column (2 only at k=3), as the Presenter paragraph above
+already did.
 
 ## Game-source changes (keyboard prompt icons, issue #43)
 
