@@ -117,7 +117,7 @@ The PS1 arm keeps the original lines, verbatim, with a `#line` at each end:
 
 Write both even when nothing in the arm uses `__LINE__`.  The next person to
 add an `ASSERT` there then doesn't have to think, and `lines` (below)
-compares text *and* numbers.  (`player/player.cpp`, `map/map.cpp`, #58.)
+compares text *and* numbers.  (`player/player.cpp`, `map/map.cpp`, #59.)
 
 ### Declarations only the PC uses
 
@@ -225,7 +225,7 @@ run takes five to ten.
 | `source/gfx/animtex.cpp` | #29 | ASSERTs |
 | `source/locale/textdbase.cpp` | #32 | ASSERTs (gated on `mips`) |
 | `source/memcard/saveload.cpp` | #57 | ASSERTs |
-| `source/map/map.cpp` | #58 | MemAlloc |
-| `source/player/player.cpp` | #58 | ASSERT |
+| `source/map/map.cpp` | #59 | MemAlloc |
+| `source/player/player.cpp` | #59 | ASSERT |
 
 To list the arms in the tree: `git grep -n "^#line" -- source tools/Data/include`.

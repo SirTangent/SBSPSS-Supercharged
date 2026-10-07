@@ -422,7 +422,7 @@ void CMapScene::renderInstructions()
 	m_font->print(x,y,xText);
 
 #if !defined(PSX_MIPS_ASM)
-	// a key cap is taller than the glyph this pitch was set for (conv_pc.md #58)
+	// a key cap is taller than the glyph this pitch was set for (conv_pc.md #59)
 	y+=CPadIcon::getRowPitch(CPadIcon::getFrame(PAD_CROSS),fh1->H,MAP_INSTRUCTIONS_Y_SPACE_BETWEEN_LINES);
 #else
 #line 424	// keep the PS1 build's __LINE__ (the MemAlloc below) byte-identical

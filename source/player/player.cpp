@@ -3458,7 +3458,7 @@ int			RowPitch=PromptYGap;
 #if !defined(PSX_MIPS_ASM)
 
 		/*	PromptYGap was set for the 11px glyphs; the PC key caps are
-			taller and overlapped the row above (conv_pc.md #58).  Every
+			taller and overlapped the row above (conv_pc.md #59).  Every
 			row, title included, steps by the pitch the tallest icon in
 			this prompt asks for, so the rows stay evenly spaced.  */
 		for (sPromptData *P=Ptr; (CPadConfig::PAD_CFG)P->m_input!=CPadConfig::PAD_CFG_NONE; P++)
