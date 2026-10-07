@@ -6,12 +6,18 @@
 	free directory), the create/write/read/dirent round-trip the game's
 	save/load flow performs, multi-block chains, delete/reuse, the
 	Unformat -> McErrNotFormat -> Format recovery the in-game format UI
-	drives, capacity errors, and that every mutation is persisted to the
-	host file (what a relaunch would load).
+	drives, capacity errors, that every mutation is persisted to the host
+	file, and that a relaunch (Card_Open on that existing file) loads it
+	back and reads the save.
 
 	Runs against SBSP_SAVE_DIR=./mcrd_test_tmp so a developer's real
 	%APPDATA%\SBSPSS card is never touched.
 */
+/*	CreateFileA and ACLs, to make a card unreadable.  WIN32_LEAN_AND_MEAN
+	keeps winsock's s_addr macro away from the PSY-Q headers below.  */
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <aclapi.h>				/* a deny-read ACE, see denyRead */
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -58,6 +64,136 @@ static long syncResult(long expectCmd, const char *what)
 }
 
 static const char *FNAME = "BASLUS-01352";
+
+/*	The later sections each get a directory of their own:
+	SBSP_SAVE_DIR=<dir> and a freshly formatted card opened there.  */
+static void freshCard(const char *dir)
+{
+	static char env[64];
+	char path[64];
+	_mkdir(dir);
+	std::snprintf(path, sizeof(path), "%s\\card0.mcd", dir);
+	remove(path);							/* stale run */
+	std::snprintf(env, sizeof(env), "SBSP_SAVE_DIR=%s", dir);
+	_putenv(env);
+	Card_ResetForTest();
+	check(Card_Open() == CARD_OK, "fresh card opens");
+}
+
+/*	up to CARD_IMAGE_SIZE bytes of a file into buf; -1 if it cannot be
+	opened, CARD_IMAGE_SIZE + 1 if it is longer than a card  */
+static long readAll(const char *path, uint8_t *buf)
+{
+	FILE *f = std::fopen(path, "rb");
+	if (!f)
+		return -1;
+	long got = (long)std::fread(buf, 1, CARD_IMAGE_SIZE, f);
+	if (got == CARD_IMAGE_SIZE && std::fgetc(f) != EOF)
+		got++;
+	std::fclose(f);
+	return got;
+}
+
+static void writeAll(const char *path, const uint8_t *buf, long bytes)
+{
+	FILE *f = std::fopen(path, "wb");
+	check(f != NULL, "test card file written");
+	if (f)
+	{
+		std::fwrite(buf, 1, bytes, f);
+		std::fclose(f);
+	}
+}
+
+/*	What another process holding the card does: open it with no sharing,
+	so fopen fails with EACCES (a sharing violation) and MoveFileEx cannot
+	replace it.  */
+static HANDLE lockNoShare(const char *path)
+{
+	HANDLE h = CreateFileA(path, GENERIC_READ, 0, NULL, OPEN_EXISTING,
+						   FILE_ATTRIBUTE_NORMAL, NULL);
+	check(h != INVALID_HANDLE_VALUE, "card locked with no sharing");
+	return h;
+}
+
+static void unlock(HANDLE h)
+{
+	if (h != INVALID_HANDLE_VALUE)
+		CloseHandle(h);
+}
+
+/*	What an ACL restored from another profile does: add a DENY ACE for
+	FILE_READ_DATA to Everyone.  fopen fails with EACCES while the
+	directory still lets the file be replaced - the case that used to
+	format a blank card over it.  Returns the original security descriptor
+	for allowRead, or NULL.  */
+static PSECURITY_DESCRIPTOR denyRead(const char *path)
+{
+	PACL oldDacl = NULL, newDacl = NULL;
+	PSECURITY_DESCRIPTOR sd = NULL;
+	PSID everyone = NULL;
+	SID_IDENTIFIER_AUTHORITY world = SECURITY_WORLD_SID_AUTHORITY;
+	DWORD r = GetNamedSecurityInfoA((LPSTR)path, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+									NULL, NULL, &oldDacl, NULL, &sd);
+	if (r == ERROR_SUCCESS &&
+		!AllocateAndInitializeSid(&world, 1, SECURITY_WORLD_RID,
+								  0, 0, 0, 0, 0, 0, 0, &everyone))
+		r = GetLastError();
+	if (r == ERROR_SUCCESS)
+	{
+		EXPLICIT_ACCESSA ea;
+		memset(&ea, 0, sizeof(ea));
+		ea.grfAccessPermissions = FILE_READ_DATA;
+		ea.grfAccessMode        = DENY_ACCESS;
+		ea.grfInheritance       = NO_INHERITANCE;
+		ea.Trustee.TrusteeForm  = TRUSTEE_IS_SID;
+		ea.Trustee.TrusteeType  = TRUSTEE_IS_WELL_KNOWN_GROUP;
+		ea.Trustee.ptstrName    = (LPSTR)everyone;
+		r = SetEntriesInAclA(1, &ea, oldDacl, &newDacl);
+	}
+	if (r == ERROR_SUCCESS)
+		r = SetNamedSecurityInfoA((LPSTR)path, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+								  NULL, NULL, newDacl, NULL);
+	if (newDacl)
+		LocalFree(newDacl);
+	if (everyone)
+		FreeSid(everyone);
+	check(r == ERROR_SUCCESS, "card made unreadable by a deny-read ACE");
+	if (r != ERROR_SUCCESS && sd)
+	{
+		LocalFree(sd);
+		sd = NULL;
+	}
+	return sd;
+}
+
+static void allowRead(const char *path, PSECURITY_DESCRIPTOR sd)
+{
+	if (!sd)
+		return;
+	BOOL present = FALSE, defaulted = FALSE;
+	PACL dacl = NULL;
+	GetSecurityDescriptorDacl(sd, &present, &dacl, &defaulted);
+	check(SetNamedSecurityInfoA((LPSTR)path, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+								NULL, NULL, dacl, NULL) == ERROR_SUCCESS,
+		  "card's original ACL restored");
+	LocalFree(sd);
+}
+
+static bool exists(const char *path)
+{
+	return GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES;
+}
+
+static void dropDir(const char *dir)
+{
+	char path[64];
+	std::snprintf(path, sizeof(path), "%s\\card0.mcd", dir);
+	remove(path);
+	std::snprintf(path, sizeof(path), "%s\\card0.mcd.tmp", dir);
+	remove(path);
+	_rmdir(dir);
+}
 
 int main(void)
 {
@@ -151,6 +287,28 @@ int main(void)
 		check(got == CARD_IMAGE_SIZE, "on-disk image is 128KB");
 		check(memcmp(onDisk, img, CARD_IMAGE_SIZE) == 0,
 			  "on-disk image matches memory (relaunch loads this)");
+
+		/*	-------- relaunch: drop the open latch and load that file back
+			through Card_Open's existing-image branch, then walk the game's
+			scan (dirents, then the full read) on the loaded image  */
+		Card_ResetForTest();
+		check(Card_Open() == CARD_OK, "reopen: existing card image opens");
+		check(Card_IsFormatted() != 0, "reopen: loaded image is formatted");
+		check(memcmp(onDisk, img, CARD_IMAGE_SIZE) == 0,
+			  "reopen: loaded image equals the file on disk");
+
+		files = -1;
+		check(MemCardGetDirentry(0, (char *)"*", dir, &files, 0, 15) == McErrNone &&
+			  files == 1, "reopen: one file listed");
+		check(strcmp(dir[0].name, FNAME) == 0, "reopen: dirent name");
+		check(dir[0].size == 8192, "reopen: dirent size");
+
+		memset(back, 0, sizeof(back));
+		check(MemCardReadFile(0, dir[0].name, (unsigned long *)back, 0, 8192) == 1,
+			  "reopen: full read registers");
+		check(syncResult(McFuncReadFile, "reopen read") == McErrNone,
+			  "reopen: full read ok");
+		check(memcmp(save, back, 8192) == 0, "reopen: the save reads back");
 	}
 
 	/*	-------- multi-block chain + delete/reuse  */
@@ -292,6 +450,226 @@ int main(void)
 		check(size == 1024, "the refused file was left untouched");
 		remove("mcrd_test_tmp2\\card0.mcd");
 		_rmdir("mcrd_test_tmp2");
+	}
+
+	/*	-------- 20-char names: a product code + 8 chars, the longest name
+		a card holds (another game's save in an imported image, say).  A
+		DIRENTRY carries 19 of them, and the game opens, rewrites and
+		deletes every file by the name its DIRENTRY gave it.  */
+	{
+		static const char *LONG20 = "BASLUS-00000ABCDEFGH";
+		static const char *TWIN20 = "BASLUS-00000ABCDEFGX";	/* same 19 */
+		static unsigned char data[8192], got[8192];
+		for (int i = 0; i < 8192; i++)
+			data[i] = (unsigned char)(i * 13 + 5);
+
+		freshCard("mcrd_test_tmp3");
+		check(MemCardCreateFile(0, (char *)FNAME, 1) == McErrNone,
+			  "20-char: neighbour file created");
+		check(MemCardCreateFile(0, (char *)LONG20, 1) == McErrNone,
+			  "20-char: file created");
+		MemCardWriteFile(0, (char *)LONG20, (unsigned long *)data, 0, 8192);
+		check(syncResult(McFuncWriteFile, "20-char write") == McErrNone,
+			  "20-char: write by the full name");
+
+		DIRENTRY list[15];
+		long n = -1;
+		check(MemCardGetDirentry(0, (char *)"*", list, &n, 0, 15) == McErrNone &&
+			  n == 2, "20-char: two files listed");
+		const DIRENTRY *e = NULL;
+		for (long i = 0; i < n; i++)
+			if (strncmp(list[i].name, LONG20, 12) == 0 &&
+				strcmp(list[i].name, FNAME) != 0)
+				e = &list[i];
+		check(e != NULL, "20-char: dirent found");
+		if (e)
+		{
+			check(e->name[19] == 0 && strlen(e->name) == 19 &&
+				  strncmp(e->name, LONG20, 19) == 0,
+				  "20-char: dirent carries the first 19 chars, terminated");
+
+			memset(got, 0, sizeof(got));
+			MemCardReadFile(0, (char *)e->name, (unsigned long *)got, 0, 8192);
+			check(syncResult(McFuncReadFile, "20-char read") == McErrNone,
+				  "20-char: read by the dirent name");
+			check(memcmp(got, data, 8192) == 0, "20-char: the right file's data");
+
+			MemCardWriteFile(0, (char *)e->name, (unsigned long *)data, 0, 128);
+			check(syncResult(McFuncWriteFile, "20-char rewrite") == McErrNone,
+				  "20-char: write by the dirent name");
+
+			check(MemCardCreateFile(0, (char *)e->name, 1) == McErrAlreadyExist,
+				  "20-char: a 19-char name that prefixes it cannot be created");
+		}
+		check(MemCardCreateFile(0, (char *)TWIN20, 1) == McErrAlreadyExist,
+			  "20-char: a second 20-char name sharing its 19 cannot be created");
+
+		check(MemCardDeleteFile(0, (char *)LONG20) == McErrNone,
+			  "20-char: delete by the full name");
+		n = -1;
+		MemCardGetDirentry(0, (char *)"*", list, &n, 0, 15);
+		check(n == 1 && strcmp(list[0].name, FNAME) == 0,
+			  "20-char: the delete took that file and left its neighbour");
+		dropDir("mcrd_test_tmp3");
+	}
+
+	/*	-------- Card_Open formats only a card that is not there.  One that
+		exists but cannot be read (held open with no sharing by another
+		process; read denied by its ACL) or is the wrong size (here: empty)
+		is refused and left alone; an unformatted 128KB image loads and
+		waits for the game's format UI.  */
+	{
+		static const char *PATH = "mcrd_test_tmp4\\card0.mcd";
+		static uint8_t before[CARD_IMAGE_SIZE], after[CARD_IMAGE_SIZE];
+
+		freshCard("mcrd_test_tmp4");
+		check(MemCardCreateFile(0, (char *)FNAME, 1) == McErrNone,
+			  "open policy: card holds a save");
+		check(readAll(PATH, before) == CARD_IMAGE_SIZE, "open policy: card on disk");
+
+		HANDLE h = lockNoShare(PATH);
+		Card_ResetForTest();
+		check(Card_Open() == CARD_IO_ERROR, "open policy: a locked card is refused");
+		MemCardExist(0);
+		check(syncResult(McFuncExist, "locked Exist") == McErrCardNotExist,
+			  "open policy: the game is told there is no card");
+		unlock(h);
+		check(Card_Open() == CARD_IO_ERROR,
+			  "open policy: the refusal holds for the rest of the session");
+		check(readAll(PATH, after) == CARD_IMAGE_SIZE &&
+			  memcmp(before, after, CARD_IMAGE_SIZE) == 0,
+			  "open policy: the locked card is byte-identical afterwards");
+		check(!exists("mcrd_test_tmp4\\card0.mcd.tmp"), "open policy: no temp file left");
+
+		/*	read denied, replace still allowed: the old code formatted a
+			blank card and moved it over this one  */
+		PSECURITY_DESCRIPTOR sd = denyRead(PATH);
+		Card_ResetForTest();
+		check(Card_Open() == CARD_IO_ERROR, "open policy: a read-denied card is refused");
+		allowRead(PATH, sd);
+		check(readAll(PATH, after) == CARD_IMAGE_SIZE &&
+			  memcmp(before, after, CARD_IMAGE_SIZE) == 0,
+			  "open policy: the read-denied card is byte-identical afterwards");
+		check(!exists("mcrd_test_tmp4\\card0.mcd.tmp"), "open policy: no temp file left (ACL)");
+
+		/*	128KB, but no "MC" header: loads, reports unformatted  */
+		memset(before, 0xAB, sizeof(before));
+		writeAll(PATH, before, CARD_IMAGE_SIZE);
+		Card_ResetForTest();
+		check(Card_Open() == CARD_OK, "open policy: a corrupt 128KB image loads");
+		MemCardAccept(0);
+		check(syncResult(McFuncAccept, "corrupt Accept") == McErrNotFormat,
+			  "open policy: the corrupt image reports unformatted");
+		check(readAll(PATH, after) == CARD_IMAGE_SIZE &&
+			  memcmp(before, after, CARD_IMAGE_SIZE) == 0,
+			  "open policy: the corrupt image is not rewritten");
+
+		/*	an empty file is a wrong-sized card, not a missing one  */
+		writeAll(PATH, before, 0);
+		Card_ResetForTest();
+		check(Card_Open() == CARD_IO_ERROR, "open policy: a 0-byte card is refused");
+		check(exists(PATH) && readAll(PATH, after) == 0,
+			  "open policy: the 0-byte card is left as it was");
+		dropDir("mcrd_test_tmp4");
+	}
+
+	/*	-------- a save that cannot be persisted leaves the in-memory card
+		exactly as it was, so it keeps matching card0.mcd.  The card is
+		held open with no sharing, which makes cardFlush's MoveFileEx fail
+		the way a shell preview or cloud sync holding it would.  */
+	{
+		static const char *PATH = "mcrd_test_tmp5\\card0.mcd";
+		static const char *OTHER = "BASLUS-01352B";
+		static uint8_t pre[CARD_IMAGE_SIZE], disk[CARD_IMAGE_SIZE];
+		static unsigned char a1[8192], a2[8192], got[8192];
+		for (int i = 0; i < 8192; i++)
+		{
+			a1[i] = (unsigned char)(i * 3 + 1);
+			a2[i] = (unsigned char)(i * 5 + 2);
+		}
+		uint8_t *live = Card_ImageForTest();
+
+		freshCard("mcrd_test_tmp5");
+		check(MemCardCreateFile(0, (char *)FNAME, 1) == McErrNone, "rollback: save A created");
+		MemCardWriteFile(0, (char *)FNAME, (unsigned long *)a1, 0, 8192);
+		check(syncResult(McFuncWriteFile, "rollback write A") == McErrNone,
+			  "rollback: save A written");
+
+		/*	a write that runs off the end of the file's chain fails after
+			changing the first block - no lock needed for this one  */
+		memcpy(pre, live, CARD_IMAGE_SIZE);
+		static unsigned char two[2 * 8192];
+		memset(two, 0x5A, sizeof(two));
+		MemCardWriteFile(0, (char *)FNAME, (unsigned long *)two, 0, sizeof(two));
+		check(syncResult(McFuncWriteFile, "rollback overlong write") == McErrFileNotExist,
+			  "rollback: a write past the chain end fails");
+		check(memcmp(pre, live, CARD_IMAGE_SIZE) == 0,
+			  "rollback: its partial write was undone");
+
+		HANDLE h = lockNoShare(PATH);
+
+		check(MemCardCreateFile(0, (char *)OTHER, 1) == McErrCardNotExist,
+			  "rollback: CreateFile fails when the card cannot be written");
+		check(memcmp(pre, live, CARD_IMAGE_SIZE) == 0,
+			  "rollback: no orphan file left in memory");
+
+		MemCardWriteFile(0, (char *)FNAME, (unsigned long *)a2, 0, 8192);
+		check(syncResult(McFuncWriteFile, "rollback locked write") == McErrCardNotExist,
+			  "rollback: WriteFile completes with no-card");
+		memset(got, 0, sizeof(got));
+		MemCardReadFile(0, (char *)FNAME, (unsigned long *)got, 0, 8192);
+		check(syncResult(McFuncReadFile, "rollback read A") == McErrNone &&
+			  memcmp(got, a1, 8192) == 0, "rollback: A still reads its old bytes");
+
+		check(MemCardDeleteFile(0, (char *)FNAME) == McErrCardNotExist,
+			  "rollback: DeleteFile fails");
+		DIRENTRY list[15];
+		long n = -1;
+		MemCardGetDirentry(0, (char *)"*", list, &n, 0, 15);
+		check(n == 1 && strcmp(list[0].name, FNAME) == 0, "rollback: A still listed");
+
+		check(MemCardUnformat(0) == McErrCardNotExist, "rollback: Unformat fails");
+		check(MemCardFormat(0) == McErrCardNotExist, "rollback: Format fails");
+		check(memcmp(pre, live, CARD_IMAGE_SIZE) == 0,
+			  "rollback: the image is unchanged by every failed mutation");
+
+		unlock(h);
+		check(readAll(PATH, disk) == CARD_IMAGE_SIZE &&
+			  memcmp(pre, disk, CARD_IMAGE_SIZE) == 0,
+			  "rollback: memory still equals card0.mcd");
+		check(!exists("mcrd_test_tmp5\\card0.mcd.tmp"), "rollback: no temp file left");
+
+		check(MemCardCreateFile(0, (char *)OTHER, 1) == McErrNone,
+			  "rollback: once the card is writable the same create succeeds");
+		check(readAll(PATH, disk) == CARD_IMAGE_SIZE &&
+			  memcmp(live, disk, CARD_IMAGE_SIZE) == 0,
+			  "rollback: and is persisted");
+		dropDir("mcrd_test_tmp5");
+	}
+
+	/*	-------- a save directory too long for the path buffers is "no
+		card", never a truncated path: cut short, it would name some other
+		directory and the card would be created (and later looked for)
+		there.  1100 bytes, past the 1024-byte buffers.  */
+	{
+		static char env[1200];
+		int n = std::snprintf(env, sizeof(env), "SBSP_SAVE_DIR=mcrd_test_tmp6");
+		while (n < 1100 + (int)sizeof("SBSP_SAVE_DIR="))
+		{
+			env[n++] = '\\';
+			for (int i = 0; i < 49; i++)
+				env[n++] = 'a';
+		}
+		env[n] = 0;
+		_putenv(env);
+		Card_ResetForTest();
+		check(Card_Open() == CARD_IO_ERROR, "long path: an over-long save directory is refused");
+		MemCardExist(0);
+		check(syncResult(McFuncExist, "long-path Exist") == McErrCardNotExist,
+			  "long path: the game is told there is no card");
+		check(!exists("mcrd_test_tmp6"), "long path: no truncated directory was created");
+		_putenv("SBSP_SAVE_DIR=mcrd_test_tmp");
+		Card_ResetForTest();
 	}
 
 	if (g_failures)

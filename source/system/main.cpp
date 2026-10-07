@@ -171,6 +171,14 @@ static void DoAutoLoadPC()
 	}
 
 	MemCard::Stop();
+	/*	If the wait above gave up with the load still in flight, its read
+		buffer would leak with autoloadDb (the destructor frees only the
+		header).  Stop has just run InvalidateCard (CS_NoCard, command
+		back to CmdNone), so this takes getLoadStatus's own "card removed"
+		branch, which frees the buffer and clears the load state.  With
+		no load in flight it is a no-op returning INACTIVE.  Must come
+		after Stop.  */
+	autoloadDb.getLoadStatus();
 }
 #endif
 

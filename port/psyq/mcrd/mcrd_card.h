@@ -31,12 +31,12 @@ static const int CARD_IMAGE_SIZE  = 16 * CARD_BLOCK_SIZE;	/* system block + 15 *
 
 /*	Resolve the image path (Port_SaveDir: $SBSP_SAVE_DIR, else saves\ beside
 	the exe if that directory exists, else %APPDATA%\SBSPSS; file card0.mcd),
-	then load it - or create a freshly formatted image on first run.
+	then load it - or create a freshly formatted image when it is missing.
 	Idempotent; every other call implies it.  CARD_IO_ERROR means the
-	host location is unusable (the shim reports "no card"), and also that
-	card0.mcd exists but has the wrong size (and, with the #57 changes,
-	that it exists but cannot be opened for reading): that is latched as
-	"no card" for the session and the file is never replaced.  */
+	host location is unusable or its path too long (the shim reports "no
+	card"), and also that card0.mcd exists but has the wrong size or
+	cannot be read: that is latched as "no card" for the session and the
+	file is never replaced (mcrd_card.cpp's header has the policy).  */
 CardResult	Card_Open(void);
 
 int			Card_IsFormatted(void);
