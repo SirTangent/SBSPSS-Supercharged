@@ -90,27 +90,33 @@ extern "C" void Port_MkdirChain(const char *dir)
 	here: it lives beside the exe, args.cpp loadIni).
 	SBSP_SAVE_DIR is taken verbatim (relative paths included - the tests
 	rely on it); otherwise a saves\ directory beside the exe wins (the
-	tester-zip layout, portable), else %APPDATA%\SBSPSS.  */
+	tester-zip layout, portable), else %APPDATA%\SBSPSS.
+	Returns 0, and creates nothing, if the directory does not fit in n
+	bytes: a truncated path names some other directory, and the caller
+	must not put saves there.  */
 extern "C" int Port_SaveDir(char *dst, size_t n)
 {
 	const char *env = getenv("SBSP_SAVE_DIR");
+	int len;
 	if (env)
-		snprintf(dst, n, "%s", env);
+		len = snprintf(dst, n, "%s", env);
 	else
 	{
 		char exe[1024];
 		int portable = 0;
 		if (Port_ExeDir(exe, sizeof(exe)))
 		{
-			snprintf(dst, n, "%s\\saves", exe);
-			portable = Port_DirExists(dst);
+			len = snprintf(dst, n, "%s\\saves", exe);
+			portable = len >= 0 && (size_t)len < n && Port_DirExists(dst);
 		}
 		if (!portable)
 		{
 			const char *appdata = getenv("APPDATA");
-			snprintf(dst, n, "%s\\SBSPSS", appdata ? appdata : ".");
+			len = snprintf(dst, n, "%s\\SBSPSS", appdata ? appdata : ".");
 		}
 	}
+	if (len < 0 || (size_t)len >= n)
+		return 0;
 	Port_MkdirChain(dst);
 	return 1;
 }

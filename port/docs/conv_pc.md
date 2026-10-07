@@ -2117,6 +2117,53 @@ PS1 build's `__LINE__` with `#line`, so `Spongey.cpe` is unchanged; see
     between DEBUG, FINAL and x64.  Zeroed, every exe writes the same card.
     The PlayStation build keeps writing its heap (retail behaviour).
 
+## Game-source changes (memory card, issue #57)
+
+The rest of issue #57 is shim-side, in `port/psyq/mcrd/mcrd_card.cpp`
+(its header comment holds the host-file policy), with `mcrd_test` cases
+for each:
+
+- **20-char names.**  A `DIRENTRY.name` holds 19 chars + NUL, so a
+  20-char card name (product code + 8, e.g. another game's save in an
+  imported card) is listed as its first 19.  `findFile` now matches
+  exactly first and then lets a 19-char name resolve to the 20-char card
+  name it starts with (first match wins if two share those 19).
+  `Card_CreateFile` refuses a name Dirents would list the same as an
+  existing file, so every listed name opens exactly one file.
+- **Never format or replace a card that exists.**  `Card_Open` creates a
+  card only when `fopen` says `ENOENT` and `GetFileAttributesA` agrees
+  (file or path not found), and moves it in without
+  `MOVEFILE_REPLACE_EXISTING`.  A card0.mcd that exists but cannot be
+  read (access denied, a sharing lock, a read error) or is not 128 KB
+  (0 bytes included) is logged to stderr, left alone, and the session
+  runs with no card (latched; no retry, no message box).  A corrupt
+  128 KB image still loads unformatted.  `cardFlush` commits the temp
+  file (`fflush` + `_commit`) before the write-through rename.
+- **Rollback.**  CreateFile, DeleteFile, WriteFile, Format and Unformat
+  snapshot the image first and restore it when the host write fails, or
+  when WriteFile's chain walk fails partway, so a failed save no longer
+  leaves an orphan file in memory that blocks every retry.
+
+None of it changes the bytes written: existing card0.mcd files load as
+before, and the replay/parity card comparisons (issue #67) are
+unaffected.  The one game-source change:
+
+58. **`source/system/main.cpp` (`DoAutoLoadPC`, autoload timeout)** -
+    `autoloadDb.getLoadStatus();` directly after the closing
+    `MemCard::Stop()`.  If the 120-frame load wait gives up with the
+    read still in flight, the stack `CSaveLoadDatabase` went out of
+    scope holding its `MemAlloc`'d `m_tempBuffer` (the destructor frees
+    only the header), leaking it from the arena for the session.  Stop
+    runs `InvalidateCard` (`CS_NoCard`, `s_currentCommand = CmdNone`),
+    so the call takes `getLoadStatus`'s existing "card removed" branch
+    (`saveload.cpp`, unchanged), which frees the buffer and clears
+    `m_loading`/`s_callbackEnded`; with no load in flight it is a no-op
+    returning `INACTIVE`.  It has to follow Stop.  Inside the entry #21
+    `#if !defined(PSX_MIPS_ASM)` block, so the PlayStation build compiles
+    none of it, but the added lines move every PS1 line below the block;
+    the only `__LINE__` user there is the `ASSERT` in `SaveScreen`, which
+    a CD build compiles out, so `Spongey.cpe` is expected unchanged.
+
 ## Game-source changes (key cap row pitch, issue #50)
 
 Inside `#if !defined(PSX_MIPS_ASM)` arms whose `#else` keeps the original
@@ -2125,7 +2172,7 @@ unchanged: USA DEBUG and FINAL hash the same before and after from clean
 builds (`port/tools/psx_identity.py build`, new with this change, as is
 `port/docs/psx_byte_identity.md`).
 
-58. **`source/pad/padicon.h`, `source/player/player.cpp`, `source/map/map.cpp`** -
+59. **`source/pad/padicon.h`, `source/player/player.cpp`, `source/map/map.cpp`** -
     #43 measured the icons horizontally but left two sites stacking rows by
     a pitch set for the 11px glyph: the in-game item prompts (`PromptYGap`
     12) and the map's Start/Save pair (`MAP_INSTRUCTIONS_Y_SPACE_BETWEEN_LINES`
