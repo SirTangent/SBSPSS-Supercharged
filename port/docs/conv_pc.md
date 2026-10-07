@@ -1589,23 +1589,31 @@ exactly.
   nothing and exit 0 whatever happened, so it is refused at boot, exit
   13: `[replay] pad-file ...: N of M epochs compare nothing on this exe
   (render revision differs, ram skipped cross-ABI, no rng recorded)`.
+  rng also needs the game to have registered its RNG, which `main()`
+  does before `InitSystem` asks for the boot seed and so parses the pad
+  file; an exe without one says `[input] the game registered no RNG:
+  epoch rng not compared`, and the refusal then ends `the game registered
+  no RNG` (review of #77, in PR #78: this used to pass boot saying
+  "comparing rng only" and be refused only after the whole route).
   Every replay with epochs prints what they compare, e.g. `[input]
   epochs: comparing rng only` or `comparing rng, ram, crc` (with `; crc
   not while the pause menu is up` across build types).  #55's sessions
-  carry rng, so they still replay anywhere.
+  carry rng, so they still replay anywhere.  The boot check and each
+  epoch use one rule for "compares nothing" (`epochComparesNothing` in
+  `host/input.cpp`), so the two verdicts cannot drift apart.
 - What only shows per epoch is counted as the epochs are reached (issue
   #76's review fixes): across build types an epoch under the pause menu
-  compares no crc, and rng needs the game to have registered its RNG.  An
-  epoch left with nothing is named (`[input] epoch at vblank N ...
-  compared nothing: ...`) and counted in `[summary]` as `blind_epochs=`,
-  which run_tier requires to be 0; the game itself refuses a replay all
-  of whose epochs were, 13: `[replay] all N epochs reached compared
-  nothing on this exe`.  At the scripted exit (`--exit-after`) a replay
-  that reached none of its recording's epochs is refused too (`[replay]
-  none of the recording's N epochs was reached`).  Closing the window
-  judges a replay on the epochs it reached - their desyncs, and all of
-  them blind - and nothing else: what it had not reached yet is no
-  failure.
+  compares no crc.  An epoch left with nothing is named (`[input] epoch
+  at vblank N ... compared nothing: ...`) and counted in `[summary]` as
+  `blind_epochs=`, which run_tier requires to be 0; the game itself
+  refuses a replay all of whose epochs were, 13: `[replay] all N epochs
+  reached compared nothing on this exe`.  At the scripted exit
+  (`--exit-after`) a replay that reached none of its recording's epochs
+  is refused too (`[replay] none of the recording's N epochs was
+  reached`).  Closing the window judges a replay on what it reached: the
+  desyncs at its epochs, all of them blind, and the `# bare` vblanks it
+  passed without firing at their pump (the last were skipped on a close
+  until PR #78).  What it had not reached yet is no failure.
 - `# render` takes exactly one non-negative number, optionally followed
   by a ` #` comment as after any entry; `# render`, `# render one`,
   `# render -` or other trailing text is refused (exit 13) like a bad
@@ -1619,18 +1627,26 @@ exactly.
   before it), blanks or a ` #` comment around a good one, the refused
   compare-nothing replay (an old-format recording with `# abi ptr=`
   flipped to stand in for the other ABI), the boot line in five more
-  cases, the two refusals at exit (a child that registers no RNG, and
-  an old-format recording from the other build type with the pause menu
-  up at its only epoch), and a replay stopped before its first epoch -
-  refused at the scripted exit, not when closed like a window.
+  cases, a child that registers no RNG (refused at boot when nothing
+  else is compared, rng left out of the boot line when something is),
+  the refusal at exit (an old-format recording from the other build type
+  with the pause menu up at its only epoch), and a replay cut short:
+  refused at the scripted exit before its first epoch, and closed through
+  a real window - the dummy video driver's, an `SDL_EVENT_QUIT` handled
+  by `host/window.cpp` - no failure before the first epoch but exit 13
+  after a missed `# bare` vblank or a desynced epoch.
 - The previous exe's tier 1 recordings (`port/build/lane2-base/art`, made
   before these fixes) replay on the new exe with `run_tier.py --tier1
   --replay-from <art> --compare-frames <the new exe's own logs>`: all 10
   routes pass, with byte-identical cards, on DEBUG and FINAL.  (Since
-  issue #76, run_tier compares the recording's `# render` with the exe's
-  `[summary] render=` and, when they differ, holds only the `[scene]`
-  lines to the recording exe's log, so `--compare-frames` takes that
-  exe's logs as for any cross replay.)
+  issue #76, run_tier holds only the `[scene]` lines to the recording
+  exe's log when the revisions differ, so `--compare-frames` takes that
+  exe's logs as for any cross replay.  Since PR #78 it learns that from
+  the game's own `[input] recording's renderer revision is N, this exe's
+  M` line, said whenever the file names a revision or carries epochs,
+  rather than parsing `# render` a second way: its own parser read a
+  `# rendered ...` comment or an indented line as revision 0 and quietly
+  stopped comparing frames.)
 
 ### Flat lines dither (issue #76)
 

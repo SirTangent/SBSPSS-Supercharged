@@ -401,7 +401,7 @@ int main()
 			0xE1000000,							/* dtd = 0 */
 			0x40808080, 0x00640064, 0x00640067,
 		};
-		GPU_ExecWords(off, 4);
+		GPU_ExecWords(off, (int)(sizeof(off) / sizeof(off[0])));
 		for (int i = 0; i < 4; i++)
 			checkPx(100 + i, 100, 16 * 0x421, "flat LINE_F2 with dtd=0: 128 >> 3");
 	}

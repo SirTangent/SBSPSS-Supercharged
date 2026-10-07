@@ -73,7 +73,7 @@ no [replay] desync, the first exe's streams and a byte-identical card.
     run_tier.py --exe <x64> --tier1 --logs L64 --compare-frames L32 --replay-from A32
 
 When the recording exe drew with another renderer revision (the recording's
-`# render`, issue #60, against the second exe's [summary] render=), the
+`# render`, issue #60, as the second exe reads it and says at boot), the
 second exe draws the same game state differently, so only the [scene]
 lines are held to the first exe's log there; the [frame] lines are not
 compared, and the replay's own epochs still hold rng and ram where they can.
@@ -434,13 +434,21 @@ def report_common(res, name):
     return ok
 
 
-def recording_render(rec):
-    """A recording's `# render N` (issue #60), 0 when it has none."""
-    for l in Path(rec).read_text(encoding="utf-8", errors="replace").splitlines():
-        if l.startswith("# render"):
-            m = re.match(r"# render\s+(\d+)", l)
-            return int(m.group(1)) if m else 0
-    return 0
+RENDER_LINE = re.compile(r"^\[input\] recording's renderer revision is (\d+), this exe's (\d+):")
+
+
+def recording_render(res):
+    """(recording's revision, this exe's) when the game said they differ,
+    else None.  The game's own reading of `# render` (issue #60), not a
+    second parser here: one that read a `# rendered ...` comment or missed
+    an indented line as revision 0 quietly stopped the [frame] comparison.
+    The game says it whenever the file names a revision or carries epochs,
+    and refuses a malformed `# render` at boot (exit 13)."""
+    for l in res.lines:
+        m = RENDER_LINE.match(l)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    return None
 
 
 KEEP = None         # --keep-artifacts: where passing routes leave <route>.rec.pad / <route>.mcd
@@ -492,8 +500,8 @@ def run_route_cross(exe, route, seed, logdir):
     host/input.cpp); on top of that the [scene]/[frame] streams must equal
     the recording exe's log (--compare-frames, required with this option)
     and the memory card the run leaves must be byte-identical to the one the
-    recording run left.  A recording from another renderer revision (its
-    `# render` against this exe's [summary] render=) draws every frame
+    recording run left.  A recording from another renderer revision (the
+    game's "[input] recording's renderer revision is" line) draws every frame
     differently on this exe by design, and the game skips the epochs' crc,
     so there only [scene] is held to the log; the card, the epochs'
     rng/ram and the route's checks still are."""
@@ -528,14 +536,12 @@ def run_route_cross(exe, route, seed, logdir):
         elif v > ceiling:
             print(f"  FAIL {name}: {k}={v} exceeds {ceiling}")
             ok = False
-    # The recording's `# render` against the exe's own, from [summary] (an
-    # exe too old to report it is taken to share the recording's).
-    rec_rev = recording_render(rec)
-    exe_rev = int(res.summary["render"]) if "render" in res.summary else rec_rev
-    if rec_rev != exe_rev:
-        print(f"       renderer revision {rec_rev} -> {exe_rev}: "
+    # The recording's `# render` against the exe's own, as the game read it.
+    revs = recording_render(res)
+    if revs:
+        print(f"       renderer revision {revs[0]} -> {revs[1]}: "
               "[frame] lines not compared with the recording exe's")
-    ok &= compare_baseline(res, name, f"{route.name}.log", scenes_only=rec_rev != exe_rev)
+    ok &= compare_baseline(res, name, f"{route.name}.log", scenes_only=revs is not None)
     frames = len(res.frame_crcs())
     if frames < route.min_frames:
         print(f"  FAIL {name}: {frames} distinct unmasked frame CRC(s), {route.min_frames} required")
