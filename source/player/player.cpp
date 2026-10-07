@@ -3410,6 +3410,27 @@ int		NewPrompt=m_currentMode;
 }
 
 /*****************************************************************************/
+/*	The icon(s) beside one prompt row: one per button, two for the coral
+	blower's up+down aim line.  -1 marks an unused slot.  */
+static void	promptIcons(int _input,int _icon[2])
+{
+int		Button=CPadConfig::getButton((CPadConfig::PAD_CFG)_input);
+
+		_icon[0]=_icon[1]=-1;
+		switch(Button)
+		{
+			case PAD_CROSS:
+			case PAD_TRIANGLE:
+			case PAD_CIRCLE:
+			case PAD_SQUARE:	_icon[0]=CPadIcon::getFrame(Button);		break;
+			case PAD_UP:		_icon[0]=CPadIcon::getFrame(PAD_UP);
+								_icon[1]=CPadIcon::getFrame(PAD_DOWN);	break;
+			default:			ASSERT(!"Unknown Pad Button");			break;
+
+		}
+}
+
+/*****************************************************************************/
 
 void	CPlayer::promptRender()
 {
@@ -3422,8 +3443,27 @@ int			Y=PromptY-PromptYGap;
 SpriteBank	*sb=CGameScene::getSpriteBank();
 POLY_FT4	*Ft4;
 int			MaxTLen=0;
+int			RowPitch=PromptYGap;
 
 		if (!Ptr) return;	// no prompt, so go away
+
+		/*	PromptYGap was set for the 11px glyphs; the PC key caps are
+			taller and overlapped the row above (github issue #50).  Every
+			row, title included, steps by the pitch the tallest icon in
+			this prompt asks for, so the rows stay evenly spaced.  */
+		for (sPromptData *P=Ptr; (CPadConfig::PAD_CFG)P->m_input!=CPadConfig::PAD_CFG_NONE; P++)
+		{
+			int	Icon[2];
+			promptIcons(P->m_input,Icon);
+			for (int i=0; i<2; i++)
+			{
+				if (Icon[i]!=-1)
+				{
+					int	Pitch=CPadIcon::getRowPitch(Icon[i],sb->getFrameHeight(Icon[i]),PromptYGap);
+					if (RowPitch<Pitch) RowPitch=Pitch;
+				}
+			}
+		}
 
 		m_fontBank->setOt(0);
 		m_fontBank->setTrans(1);
@@ -3437,19 +3477,8 @@ int			MaxTLen=0;
 				actually pressing on PC (github issue #43), so the icons
 				are no longer a fixed width - the gap between them, and
 				the text that follows, come off the frame header now.  */
-			int	Button=CPadConfig::getButton((CPadConfig::PAD_CFG)Ptr->m_input);
-			int	Icon[2]={-1,-1};
-			switch(Button)
-			{
-				case PAD_CROSS:
-				case PAD_TRIANGLE:
-				case PAD_CIRCLE:
-				case PAD_SQUARE:	Icon[0]=CPadIcon::getFrame(Button);		break;
-				case PAD_UP:		Icon[0]=CPadIcon::getFrame(PAD_UP);
-									Icon[1]=CPadIcon::getFrame(PAD_DOWN);	break;
-				default:			ASSERT(!"Unknown Pad Button");			break;
-
-			}
+			int	Icon[2];
+			promptIcons(Ptr->m_input,Icon);
 			for (int i=0; i<2; i++)
 			{
 				if (Icon[i]!=-1)
@@ -3468,7 +3497,7 @@ int			MaxTLen=0;
 			if (MaxTLen<TLen) MaxTLen=TLen;
 			m_fontBank->print(X,Y+PromptTextYOfs,Ptr->Text);
 
-			Y-=PromptYGap;
+			Y-=RowPitch;
 			Ptr++;
 		}
 // Title

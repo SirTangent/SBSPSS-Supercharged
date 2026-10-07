@@ -77,6 +77,18 @@ public:
 	static int		getFrameYOffset(int _frame,int _glyphYOffset,int _capYOffset)
 					{ return isKeyCap(_frame)?_capYOffset:_glyphYOffset; }
 
+	/*	The same story vertically.  Sites that stack prompt rows step by a
+		pitch chosen for the 11px glyph (12px in-game, 13px on the map),
+		which the 14px caps overrun (github issue #50).  A site passes the
+		height of the icon it drew and its own glyph pitch: a cap row
+		steps by the cap's measured height plus KEYCAP_ROW_GAP, or by the
+		glyph pitch if that is already more, and a glyph row always by the
+		glyph pitch, so the PS1 build and a gamepad player keep the
+		original layout to the pixel.  */
+	enum { KEYCAP_ROW_GAP=1 };	// the air slot select's 15px pitch leaves between its caps
+	static int		getRowPitch(int _frame,int _frameH,int _glyphPitch)
+					{ return isKeyCap(_frame)&&_frameH+KEYCAP_ROW_GAP>_glyphPitch?_frameH+KEYCAP_ROW_GAP:_glyphPitch; }
+
 	/*	Whether a frame getFrame() answered with is one of the key caps
 		rather than a PS1 glyph.  */
 	static int		isKeyCap(int _frame);

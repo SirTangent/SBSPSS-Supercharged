@@ -2114,6 +2114,28 @@ PS1 build's `__LINE__` with `#line`, so `Spongey.cpe` is unchanged; see
     between DEBUG, FINAL and x64.  Zeroed, every exe writes the same card.
     The PlayStation build keeps writing its heap (retail behaviour).
 
+## Game-source changes (key cap row pitch, issue #50)
+
+58. **`source/pad/padicon.h`, `source/player/player.cpp`, `source/map/map.cpp`** -
+    #43 measured the icons horizontally but left two sites stacking rows by
+    a pitch set for the 11px glyph: the in-game item prompts (`PromptYGap`
+    12) and the map's Start/Save pair (`MAP_INSTRUCTIONS_Y_SPACE_BETWEEN_LINES`
+    13).  The 14px caps overran both, each cap's dark underside sitting on
+    the cap below.  `CPadIcon::getRowPitch(frame, height, glyphPitch)` is
+    the vertical twin of `getFrameYOffset`: a cap steps by its measured
+    height plus `KEYCAP_ROW_GAP` (1, the air slot select's 15px pitch
+    already leaves), or by the glyph pitch if that is more; a glyph always
+    steps by the glyph pitch.  `promptRender()` takes the largest pitch any
+    icon in the prompt asks for and steps every row by it, title included,
+    so the rows stay evenly spaced; the bottom row stays where it was and
+    the prompt grows upward (3px a row, 9px for the net).  The map steps
+    from Start to Save by the Start icon's pitch.  The button -> icon
+    switch moved into a static `promptIcons()` so the measuring pass and
+    the drawing pass cannot disagree.  Glyph frames (`prompt_icons = pad`)
+    are byte-identical before and after on both screens; the PS1 build
+    draws the same layout, though its code moved.  Before and after:
+    `docs/assets/issues/50-key-caps-pitch.png`.
+
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 
 - String-literal → `char*` conversions (pervasive; `-Wno-write-strings`).
