@@ -3409,9 +3409,11 @@ int		NewPrompt=m_currentMode;
 	
 }
 
+#if !defined(PSX_MIPS_ASM)
 /*****************************************************************************/
 /*	The icon(s) beside one prompt row: one per button, two for the coral
-	blower's up+down aim line.  -1 marks an unused slot.  */
+	blower's up+down aim line.  -1 marks an unused slot.  One function so
+	promptRender()'s measuring pass and drawing pass cannot disagree.  */
 static void	promptIcons(int _input,int _icon[2])
 {
 int		Button=CPadConfig::getButton((CPadConfig::PAD_CFG)_input);
@@ -3430,6 +3432,9 @@ int		Button=CPadConfig::getButton((CPadConfig::PAD_CFG)_input);
 		}
 }
 
+#else
+#line 3411	// keep the PS1 build's __LINE__ (the ASSERT below) byte-identical
+#endif
 /*****************************************************************************/
 
 void	CPlayer::promptRender()
@@ -3443,12 +3448,17 @@ int			Y=PromptY-PromptYGap;
 SpriteBank	*sb=CGameScene::getSpriteBank();
 POLY_FT4	*Ft4;
 int			MaxTLen=0;
+#if !defined(PSX_MIPS_ASM)
 int			RowPitch=PromptYGap;
+#else
+#line 3424
+#endif
 
 		if (!Ptr) return;	// no prompt, so go away
+#if !defined(PSX_MIPS_ASM)
 
 		/*	PromptYGap was set for the 11px glyphs; the PC key caps are
-			taller and overlapped the row above (github issue #50).  Every
+			taller and overlapped the row above (conv_pc.md #58).  Every
 			row, title included, steps by the pitch the tallest icon in
 			this prompt asks for, so the rows stay evenly spaced.  */
 		for (sPromptData *P=Ptr; (CPadConfig::PAD_CFG)P->m_input!=CPadConfig::PAD_CFG_NONE; P++)
@@ -3464,6 +3474,9 @@ int			RowPitch=PromptYGap;
 				}
 			}
 		}
+#else
+#line 3426
+#endif
 
 		m_fontBank->setOt(0);
 		m_fontBank->setTrans(1);
@@ -3477,8 +3490,26 @@ int			RowPitch=PromptYGap;
 				actually pressing on PC (github issue #43), so the icons
 				are no longer a fixed width - the gap between them, and
 				the text that follows, come off the frame header now.  */
+#if !defined(PSX_MIPS_ASM)
 			int	Icon[2];
 			promptIcons(Ptr->m_input,Icon);
+#else
+#line 3440
+			int	Button=CPadConfig::getButton((CPadConfig::PAD_CFG)Ptr->m_input);
+			int	Icon[2]={-1,-1};
+			switch(Button)
+			{
+				case PAD_CROSS:
+				case PAD_TRIANGLE:
+				case PAD_CIRCLE:
+				case PAD_SQUARE:	Icon[0]=CPadIcon::getFrame(Button);		break;
+				case PAD_UP:		Icon[0]=CPadIcon::getFrame(PAD_UP);
+									Icon[1]=CPadIcon::getFrame(PAD_DOWN);	break;
+				default:			ASSERT(!"Unknown Pad Button");			break;
+
+			}
+#line 3452
+#endif
 			for (int i=0; i<2; i++)
 			{
 				if (Icon[i]!=-1)
@@ -3497,7 +3528,13 @@ int			RowPitch=PromptYGap;
 			if (MaxTLen<TLen) MaxTLen=TLen;
 			m_fontBank->print(X,Y+PromptTextYOfs,Ptr->Text);
 
+#if !defined(PSX_MIPS_ASM)
 			Y-=RowPitch;
+#else
+#line 3471
+			Y-=PromptYGap;
+#line 3471
+#endif
 			Ptr++;
 		}
 // Title
