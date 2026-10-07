@@ -208,7 +208,10 @@ python port\tools\stretch_keycaps.py --check
 ```
 
 and, if the change touches the game sources, the PlayStation link:
-`port\build-psx.cmd`. A workflow run builds the USA data, checks the key-cap
+`port\build-psx.cmd`. The PlayStation executable must also stay
+byte-identical: `python port\tools\psx_identity.py lines` checks that in
+seconds, and `python port\tools\psx_identity.py build` proves it with clean
+builds (see `port/docs/psx_byte_identity.md`). A workflow run builds the USA data, checks the key-cap
 bitmaps against their masters, builds and tests the MinGW `debug` and `final`
 trees and the clang-cl `clangcl-debug`, `clangcl-x64-debug` and
 `clangcl-x64-final` trees, and links the PlayStation executable. EUR is not

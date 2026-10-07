@@ -291,7 +291,10 @@ happens the block carries an `#else` / `#line <n>` arm that restores the
 original numbering for the PlayStation preprocessor only: `<n>` is the
 pristine line number of the block's `#endif` (i.e. one less than the line
 after it).  The guard is `port/build-psx.cmd` + a SHA-256 compare of
-`Spongey.cpe` against a build of the pristine sources.
+`Spongey.cpe` against a build of the pristine sources - since #50 both
+are `port/tools/psx_identity.py` (`lines`, a static check; `build`, the
+clean-build hash compare), and the patterns, traps and the list of `#line`
+arms are in `port/docs/psx_byte_identity.md`.
 
 23. **`source/system/gstate.cpp` (scene epochs)** - `GameState::think()`
     calls `Port_SceneEvent(getSceneName())` right before a new scene's
@@ -2116,6 +2119,12 @@ PS1 build's `__LINE__` with `#line`, so `Spongey.cpe` is unchanged; see
 
 ## Game-source changes (key cap row pitch, issue #50)
 
+Inside `#if !defined(PSX_MIPS_ASM)` arms whose `#else` keeps the original
+code and re-syncs `__LINE__` with `#line`, as #67 did, so `Spongey.cpe` is
+unchanged: USA DEBUG and FINAL hash the same before and after from clean
+builds (`port/tools/psx_identity.py build`, new with this change, as is
+`port/docs/psx_byte_identity.md`).
+
 58. **`source/pad/padicon.h`, `source/player/player.cpp`, `source/map/map.cpp`** -
     #43 measured the icons horizontally but left two sites stacking rows by
     a pitch set for the 11px glyph: the in-game item prompts (`PromptYGap`
@@ -2131,10 +2140,10 @@ PS1 build's `__LINE__` with `#line`, so `Spongey.cpe` is unchanged; see
     the prompt grows upward (3px a row, 9px for the net).  The map steps
     from Start to Save by the Start icon's pitch.  The button -> icon
     switch moved into a static `promptIcons()` so the measuring pass and
-    the drawing pass cannot disagree.  Glyph frames (`prompt_icons = pad`)
-    are byte-identical before and after on both screens; the PS1 build
-    draws the same layout, though its code moved.  Before and after:
-    `docs/assets/issues/50-key-caps-pitch.png`.
+    the drawing pass cannot disagree; the PS1 arm keeps it inline, where
+    its `ASSERT` sits on its original line.  Glyph frames
+    (`prompt_icons = pad`) are byte-identical before and after on both
+    screens.  Before and after: `docs/assets/issues/50-key-caps-pitch.png`.
 
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 
