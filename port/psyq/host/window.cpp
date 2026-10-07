@@ -69,6 +69,25 @@ static int			g_modal;			/* inside a move/size/menu loop */
 static double		g_modalStart;
 static int			g_modalRebase;		/* one "paused" Host_PausePoll answer: rebase the clock */
 
+/*	[summary] paused= is the time game time stood still for either reason,
+	a focus pause or a move/size loop, counted once where the two overlap
+	(a focus-paused window dragged, the focus coming back in the same poll
+	that ends the drag): an interval opens when the first of them starts
+	and is booked when neither holds any more.  Each still logs its own
+	length.  */
+static int			g_holding;
+static double		g_holdStart;
+
+static void holdUpdate(void)
+{
+	const int hold = g_paused || g_modal;
+	if (hold && !g_holding)
+		g_holdStart = Port_NowSeconds();
+	else if (!hold && g_holding)
+		g_pausedSeconds += Port_NowSeconds() - g_holdStart;
+	g_holding = hold;
+}
+
 static bool SDLCALL liveResizeWatch(void *userdata, SDL_Event *ev)
 {
 	(void)userdata;
@@ -79,6 +98,7 @@ static bool SDLCALL liveResizeWatch(void *userdata, SDL_Event *ev)
 	{
 		g_modal = 1;
 		g_modalStart = now;
+		holdUpdate();
 		if (!g_paused)
 			Host_AudioPause(1);
 		fprintf(stderr, "[host] paused (window move/size)\n");
@@ -102,10 +122,18 @@ static void modalEnd(void)
 		return;
 	g_modal = 0;
 	double d = Port_NowSeconds() - g_modalStart;
-	g_pausedSeconds += d;
+	holdUpdate();
 	if (!g_paused)
 		Host_AudioPause(0);
-	g_modalRebase = 1;
+	/*	The rebase answer costs the pump step it lands on: that step returns
+		before its bare-pump replay check (pump.cpp), so a scripted run - a
+		replay a person may well be watching and dragging - would miss a
+		recorded `# bare` vblank due there and fail on a window move.  A
+		scripted run fires its vblanks where the recording says, not by the
+		wall clock, so it needs no rebase; it is left out exactly as from the
+		focus-loss pause (Port_HarnessRun).  */
+	if (!Port_HarnessRun())
+		g_modalRebase = 1;
 	fprintf(stderr, "[host] resumed after %.1fs (window move/size)\n", d);
 }
 
@@ -268,6 +296,7 @@ static void setPaused(int on)
 	if (on == g_paused)
 		return;
 	g_paused = on;
+	holdUpdate();
 	if (on)
 	{
 		g_pauseStart = Port_NowSeconds();
@@ -277,7 +306,6 @@ static void setPaused(int on)
 	else
 	{
 		double d = Port_NowSeconds() - g_pauseStart;
-		g_pausedSeconds += d;
 		Host_AudioPause(0);
 		fprintf(stderr, "[host] resumed after %.1fs\n", d);
 	}

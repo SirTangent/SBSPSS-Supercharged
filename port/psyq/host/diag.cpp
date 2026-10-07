@@ -25,6 +25,7 @@
 
 extern "C" unsigned long GPU_PrimPoolPeak(void);	/* gpu/gp0.cpp */
 void VkPresent_SelfTestLose(void);						/* vk/vk_present.cpp */
+void VkPresent_SelfTestSubmitFail(void);
 
 namespace
 {
@@ -93,7 +94,8 @@ void abortHook(int code)
 	run_tier.py can prove the exit codes (10/11/12) and their log lines
 	without a throwaway build.  Modes: assert, fault, hang, and the CRT
 	terminations host/crash.cpp routes to exit 11 (issue #62): abort,
-	abort-in-hook, terminate, invalid-param, stack-overflow.  */
+	abort-in-hook, terminate, invalid-param, stack-overflow; and two for
+	the Vulkan presenter's error paths (issue #63): vklost, vksubmit.  */
 void selfTest(void)
 {
 	static int			parsed;
@@ -144,6 +146,8 @@ void selfTest(void)
 		g_recurse(NULL);
 	else if (strcmp(mode, "vklost") == 0)
 		VkPresent_SelfTestLose();	/* the presenter reads its next fence as DEVICE_LOST (#63) */
+	else if (strcmp(mode, "vksubmit") == 0)
+		VkPresent_SelfTestSubmitFail();	/* its next submit fails with nothing queued (review of #78) */
 	else
 		fprintf(stderr, "[selftest] unknown mode '%s' - ignored\n", mode);
 	mode[0] = 0;

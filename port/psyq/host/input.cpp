@@ -241,7 +241,11 @@ extern "C" void Port_PauseMenuDrawn(int drawn)
 	ramSkipped); a replay whose epochs are left with none of the three is
 	refused (checkEpochsCompare at boot, Port_InputAtExit at the end).  */
 static int				g_recordingRender = 0;
-static int				g_haveRender;		/* the file had a `# render` line */
+/*	the file carries a line only --record-pad writes (any of the data lines
+	below - `# epoch`, `# abi`, `# build`, `# render`, ...): it is a
+	recording, whose missing `# render` means revision 0, not a hand-written
+	script, which has no revision to speak of  */
+static int				g_recorderLines;
 
 /*	why an epoch's crc is not compared, or NULL when it is.  At boot no
 	frame has been built, so only the renderer revision can skip it.  */
@@ -583,7 +587,6 @@ static void padFileParse(void)
 					padFileFail(path, line, "bad `# render' (expected one revision number)");
 				}
 				g_recordingRender = render;
-				g_haveRender      = 1;
 			}
 			else if (sscanf(s, "# seed %ld", &g_recordingSeed) == 1)
 				g_haveSeed = 1;
@@ -632,6 +635,9 @@ static void padFileParse(void)
 				bm.line = line;
 				addBare(bm);
 			}
+			else
+				continue;					/* a comment */
+			g_recorderLines = 1;			/* one of the data lines above */
 			continue;
 		}
 		for (char *c = s + 1; *c; c++)		/* first '#' preceded by a blank */
@@ -672,8 +678,10 @@ static void padFileParse(void)
 	/*	run_tier.py reads this line - the game's own reading of `# render`
 		- to decide whether a cross replay's [frame] lines can match the
 		recording exe's, rather than parsing the file a second way.  Said
-		whenever the file names a revision, epochs or not.  */
-	if ((g_epochCount || g_haveRender) && g_recordingRender != GPU_RENDER_REVISION)
+		for every recording, epochs or not: one with no `# render` (made
+		before issue #60) is revision 0.  A hand-written script carries
+		none of the recorder's lines and is not a recording.  */
+	if (g_recorderLines && g_recordingRender != GPU_RENDER_REVISION)
 		fprintf(stderr, "[input] recording's renderer revision is %d, this exe's %d: "
 						"epoch crc not compared\n", g_recordingRender, GPU_RENDER_REVISION);
 	checkEpochsCompare(path);

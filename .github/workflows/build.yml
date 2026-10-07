@@ -110,6 +110,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # the unit test lznp_exe_matches_source compares the committed
+      # port/tools/lznp.exe with the encoder built from its sources; it is an
+      # LFS object (22 KB), a pointer without this, and the test fails on a
+      # pointer.  Only that one file - the 133MB track stays with the data job.
+      - name: Fetch lznp.exe (LFS)
+        shell: bash
+        run: git lfs pull --include port/tools/lznp.exe
+
       - uses: actions/download-artifact@v8
         with:
           name: sbsp-data-${{ env.TERRITORY }}-${{ env.VERSION }}
@@ -216,6 +224,12 @@ jobs:
       SDL_AUDIODRIVER: dummy
     steps:
       - uses: actions/checkout@v7
+
+      # lznp_exe_matches_source needs the real lznp.exe (LFS), as in
+      # pc-build-test
+      - name: Fetch lznp.exe (LFS)
+        shell: bash
+        run: git lfs pull --include port/tools/lznp.exe
 
       - uses: actions/download-artifact@v8
         with:

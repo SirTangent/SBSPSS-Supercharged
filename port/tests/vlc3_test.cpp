@@ -447,6 +447,12 @@ static void sweepMovie(const char *path, long *framesOut)
 		   "words %ld (worst buffer need %ld of 77120)\n",
 		   path, frames, versions, maxDecl, (maxDecl + 1) * 4);
 	check(badFrames == 0, path);
+	/*	a movie that is present but yields no frame is not a sweep of it -
+		judged per movie, so neither another layer's skip nor the other
+		movies' frames can cover for it (review of #78)  */
+	char what[160];
+	snprintf(what, sizeof(what), "%s is present but decodes no frame", path);
+	check(frames > 0, what);
 	*framesOut += frames;
 }
 
@@ -463,8 +469,6 @@ int main(void)
 	sweepMovie("data/CDData/demo.str", &frames);
 	if (frames)
 		printf("vlc3_test: sweep total %ld frames\n", frames);
-	/*	a movie that is present but yields no frame is not a sweep of it  */
-	check(frames > 0 || g_skipped, "sweep: the staged movies decode to at least one frame");
 
 	if (g_failures)
 	{

@@ -49,8 +49,10 @@
 	captured), and a replay cut short: refused at --exit-after before its
 	first epoch, and when its window is closed judged on what it reached -
 	nothing before the first epoch, a missed bare-pump vblank or a desynced
-	epoch after it (four children, the window ones through host/window.cpp's
-	quit handler).  The children step vblanks with VSync(0) under SBSP_UNCAPPED=1,
+	epoch after it - and a window drag just before a recorded bare-pump
+	vblank, which must still fire there (five children, the window ones
+	through host/window.cpp's quit handler and event watch).  The children
+	step vblanks with VSync(0) under SBSP_UNCAPPED=1,
 	so Port_VBlankCount advances and Host_VBlank calls Port_InputFrame exactly
 	as in the game, and open scenes through Port_SceneEvent at chosen counts.
 	Headless: the dummy video driver; the test pumps SDL events itself, as
@@ -195,6 +197,12 @@ static unsigned long g_pauseFirst = 1, g_pauseLast = 0, g_mapAt = 0;
 	child calling Port_InputAtExit(1) as --exit-after does  */
 static unsigned long g_runVblanks = RUN_VBLANKS;
 static int			 g_closeEarly;
+/*	REPLAY_TEST_DRAG_AT <vb> (with REPLAY_TEST_CLOSE=1, for the window):
+	before that vblank's VSync, send what a title-bar drag sends from inside
+	Win32's move loop - SDL_EVENT_WINDOW_EXPOSED with data1 1, which
+	host/window.cpp's event watch takes as the loop starting; the vblank's
+	poll then ends it  */
+static unsigned long g_dragAt;
 
 static void readPauseEnv(void)
 {
@@ -209,6 +217,9 @@ static void readPauseEnv(void)
 		g_runVblanks = std::strtoul(v, NULL, 10);
 	const char *c = std::getenv("REPLAY_TEST_CLOSE");
 	g_closeEarly = c && *c == '1';
+	const char *d = std::getenv("REPLAY_TEST_DRAG_AT");
+	if (d && *d)
+		g_dragAt = std::strtoul(d, NULL, 10);
 }
 
 static void drive(SDL_Joystick *joy, bool replay)
@@ -231,6 +242,13 @@ static void drive(SDL_Joystick *joy, bool replay)
 			SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_LEFTX, (vb >= 30 && vb <= 69) ? 32767 : 0);
 		}
 		pumpEvents();
+		if (g_closeEarly && g_dragAt && vb == g_dragAt)
+		{
+			SDL_Event drag = {};
+			drag.type         = SDL_EVENT_WINDOW_EXPOSED;
+			drag.window.data1 = 1;
+			check(SDL_PushEvent(&drag), "SDL_PushEvent(SDL_EVENT_WINDOW_EXPOSED, live resize)");
+		}
 		if (g_closeEarly && vb == g_runVblanks)
 		{
 			if (g_failures)
@@ -945,36 +963,50 @@ int main(int argc, char **argv)
 		second) and an epoch it already failed (the crc at 300 doctored)
 		both exit 13.  */
 	{
-		char missed[MAX_PATH + 48];
+		char missed[MAX_PATH + 48], bare1[MAX_PATH + 48];
 		std::snprintf(missed, sizeof(missed), "%ssbsp_replay_test_%lu_missed.pad", tmp, pid);
+		std::snprintf(bare1, sizeof(bare1), "%ssbsp_replay_test_%lu_bare1.pad", tmp, pid);
 		{
-			std::string s = recA;
-			const size_t ep = s.find("# epoch 300 ");
+			const size_t ep = recA.find("# epoch 300 ");
 			check(ep != std::string::npos, "A carries an epoch at 300");
+			std::string s = recA, t = recA;
 			if (ep != std::string::npos)
+			{
 				s.insert(ep, "# bare 100 2\n");
+				/*	fires at VSync's front pump, the first bare pump since
+					the last wait  */
+				t.insert(ep, "# bare 120 1\n");
+			}
 			writeText(missed, s);
+			writeText(bare1, t);
 		}
 		struct EarlyCase
 		{
-			const char *file, *vblanks, *close, *mode;
+			const char *file, *vblanks, *close, *dragAt, *mode;
 			int			wantRc;
 			const char	*wantText, *notText, *what;
 		};
 		const EarlyCase cases[] =
 		{
-			{ a,      "250", "",  "expect-desync", 0,
+			{ a,      "250", "",  "",    "expect-desync", 0,
 			  "[replay] none of the recording's 1 epochs was reached (the first is at vblank 300)", NULL,
 			  "--exit-after before the first epoch: refused" },
-			{ a,      "250", "1", "replay",        0,
+			{ a,      "250", "1", "",    "replay",        0,
 			  "[host] window closed - exiting\n", "[replay] ",
 			  "closed before the first epoch: not a failure, and nothing refused" },
-			{ missed, "250", "1", "replay",        13,
+			{ missed, "250", "1", "",    "replay",        13,
 			  "'s vblank 100 did not fire at bare pump 2\n", NULL,
 			  "closed after a bare-pump vblank that did not fire: refused" },
-			{ scrc,   "320", "1", "replay",        13,
+			{ scrc,   "320", "1", "",    "replay",        13,
 			  "[replay] desync at vblank 300 ", NULL,
 			  "closed after a desynced epoch: refused" },
+			/*	review of #78: the move loop's end answered the next pump
+				"paused" to rebase the clock, and that pump - here the bare
+				one where vblank 120 is due - returned before its replay
+				check: a window drag failed the replay  */
+			{ bare1,  "250", "1", "119", "replay",        0,
+			  "[host] resumed after ", "[replay] ",
+			  "a window drag just before a recorded bare-pump vblank: it still fires there" },
 		};
 		char log[MAX_PATH + 48];
 		std::snprintf(log, sizeof(log), "%ssbsp_replay_test_%lu_early.log", tmp, pid);
@@ -983,6 +1015,7 @@ int main(int argc, char **argv)
 			setEnv("SBSP_PAD_FILE", ec.file);
 			setEnv("REPLAY_TEST_VBLANKS", ec.vblanks);
 			setEnv("REPLAY_TEST_CLOSE", ec.close);
+			setEnv("REPLAY_TEST_DRAG_AT", ec.dragAt);
 			std::string err;
 			rc = spawnSelf(exe, ec.mode, log, &err);
 			char what[192];
@@ -993,7 +1026,9 @@ int main(int argc, char **argv)
 		}
 		setEnv("REPLAY_TEST_VBLANKS", "");
 		setEnv("REPLAY_TEST_CLOSE", "");
+		setEnv("REPLAY_TEST_DRAG_AT", "");
 		std::remove(missed);
+		std::remove(bare1);
 	}
 
 	std::remove(a);

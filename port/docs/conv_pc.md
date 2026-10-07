@@ -1643,8 +1643,10 @@ exactly.
   exe's log when the revisions differ, so `--compare-frames` takes that
   exe's logs as for any cross replay.  Since PR #78 it learns that from
   the game's own `[input] recording's renderer revision is N, this exe's
-  M` line, said whenever the file names a revision or carries epochs,
-  rather than parsing `# render` a second way: its own parser read a
+  M` line, said for every recording - any file with a line only
+  `--record-pad` writes, so one from before `# render` reads as revision 0
+  with or without epochs - rather than parsing `# render` a second way:
+  its own parser read a
   `# rendered ...` comment or an indented line as revision 0 and quietly
   stopped comparing frames.)
 
@@ -1730,12 +1732,16 @@ did, and the forbidden `[spu]` tag could not fire.  `run_game` now adds
 `--dump-audio <run dir>/audio.wav` to every run that does not bring its
 own (no device, sample-exact: the M5 contract), sums the WAV up as one
 `[audio] frames=<n> crc=<CRC-32 of the PCM>` line at the end of the log,
-and `report_common` requires the exit hook's `[host] audio dump closed`
-to name those frames and the count to be exactly `[summary] vblanks=`
-vblanks of audio: 735 frames each at 60 Hz, 882 at 50, as a whole mix
-`k * 735 + (V - k) * 882` with `k = (882 V - F) / 147` in `0..V`, because a
+and `report_common` requires the exit hook's `[host] audio dump closed:
+<F> frames, <a> vblanks at 60 Hz, <b> at 50 Hz` to name those frames, `a +
+b` to be `[summary] vblanks=`, `F` to be exactly `735 a + 882 b`, and `b`
+to be 0 on a USA build.  The mix is counted by the dump itself because a
 PAL build boots at 60 Hz until `VidInit` sets the video mode (a paced EUR
-boot renders 34 vblanks at 735 before 366 at 882).  That exactness
+boot renders 34 vblanks at 735 before 366 at 882), and the length alone
+cannot pin it: the first version accepted any whole `k = (882 V - F) /
+147` in `0..V`, and since 882 is six 147s a lost 50 Hz vblank, or an
+extra vblank of audio on USA, still passed as some other mix (review of
+PR #78).  That exactness
 needed one shim change: the dump used to be armed with the device at the
 first `ResetGraph`, and a paced boot spends ~36 vblanks in `CdReadSync`
 before `VidInit`, so a paced run's WAV was that much shorter than the run;
@@ -1761,14 +1767,16 @@ closes has played through and passes.
 
 **Skips are never passes.**  `fmv_pipeline_test` returned 0 after
 printing SKIPPED when a movie was not staged or a golden was missing;
-`vlc3_test`'s pixel layer and movie sweep and `xm_test` did the same.
-Each now counts its skipped layers and, with no failure, exits 77
-(`tests/test_skip.h`); every `sbsp_shim_test` carries
-`SKIP_RETURN_CODE 77`, so ctest reports "Skipped", never "Passed".
-`build-pc.sh test` and the two CI unit steps set `SBSP_TEST_STRICT=1`,
-under which the same case exits 1: those trees staged the movies and
-carry the fixtures and the music, so a skip there is a lost input.  The
-sweep also fails on a movie that is present but decodes to no frame.
+`vlc3_test`'s pixel layer and movie sweep, `xm_test` and `xa_test`'s two
+real-data layers did the same.  Each now counts its skipped layers and,
+with no failure, exits 77 (`tests/test_skip.h`); every `sbsp_shim_test`
+carries `SKIP_RETURN_CODE 77`, so ctest reports "Skipped", never
+"Passed".  `build-pc.sh test` and the two CI unit steps set
+`SBSP_TEST_STRICT=1`, under which the same case exits 1: those trees
+staged the movies and carry the fixtures and the music, so a skip there
+is a lost input.  The sweep also fails on each movie that is present but
+decodes to no frame, judged per movie, so another layer's skip cannot
+cover for it.
 
 **`[summary]` is required, and so is every key read from it.**
 `summary_int` returned 0 for a missing key, so a renamed `peak_prim=`
@@ -1801,12 +1809,16 @@ identical - independent of what a data build puts in the file.
 **The LZNP encoder is under ctest.**  `tools/lznp-src/roundtrip_test.cpp`
 (encoder against the game's `source/utils/lznp.cpp` decoder: zeros,
 repeats, noise, a mixed buffer, 200 fuzzed buffers and `str_frame1.bin`)
-was a hand-built proof; it is the `lznp_roundtrip` unit test now.
-`lznp_exe_matches_source` builds the CLI from the same sources and
-requires the committed `port/tools/lznp.exe` - the LFS binary every actor
-pack goes through in `build-data` - to encode three synthetic buffers and
-the fixture byte-identically; an LFS pointer standing in for the exe
-fails it too.  `stretch_keycaps.py --check` was already a CI step.
+was a hand-built proof; it is the `lznp_roundtrip` unit test now, and a
+file named on its command line that cannot be read fails it rather than
+being skipped.  `lznp_exe_matches_source` builds the CLI from the same
+sources and requires the committed `port/tools/lznp.exe` - the LFS binary
+every actor pack goes through in `build-data` - to encode three synthetic
+buffers and the fixture byte-identically; an LFS pointer standing in for
+the exe fails it too.  CI's two test jobs check out without LFS (the
+133 MB track stays with the data job and its cache), so each fetches that
+one 22 KB object with `git lfs pull --include port/tools/lznp.exe`.
+`stretch_keycaps.py --check` was already a CI step.
 
 Two findings of the review were fixed before this change: the ClearImage
 row checks sample column 512 since issue #60, and the maximum-size G3
@@ -1832,9 +1844,14 @@ session once restored.  Init now finishes without a swapchain, says
 in `s_swapZeroExtent`, because SDL still reports the window's logical size
 while it is iconic: such frames are waited for however long, while a
 surface with a size whose swapchain fails to build 300 frames running
-stops the presenter (below).  Verified by launching minimized from
-PowerShell and restoring the SDL window after a second: the two lines
-appear in that order.
+stops the presenter (below).  The flag is cleared before the surface
+query, so a query that fails counts as a failed build, never as the
+minimized wait of an earlier one; a stale flag kept the retry count at
+zero and a lost surface logged one line a vblank for the rest of the
+session.  A surface or device reported lost by that query stops the
+presenter at once.  Verified by launching minimized from PowerShell and
+restoring the SDL window after a second: the two lines appear in that
+order.
 
 **The render pass chains the acquire.**  The attachment starts
 `UNDEFINED` with no subpass dependency, so the implicit one began at
@@ -1861,10 +1878,20 @@ run reaches its `--exit-after`, exit 0.
 failed, the acquired image was never presented and `s_semAcquire[slot]`
 kept a pending signal that the next frame then passed to acquire again
 (invalid), while each failure leaked an image until acquire returned
-`NOT_READY` for good.  The path now drains the device, replaces the
-semaphore, re-signals the fence by hand and rebuilds the swapchain, which
-retires the orphaned image with the old one; a lost device, or a recovery
-step that fails itself, stops the presenter instead.
+`NOT_READY` for good.  The path now consumes the pending signal with a
+wait-only submit that signals the slot's fence, waits for that fence, and
+rebuilds the swapchain, which retires the orphaned image with the old
+one; a lost device, or a recovery step that fails itself, stops the
+presenter instead.  The semaphore is not destroyed and recreated: the
+signal is owed by the presentation engine, which `vkDeviceWaitIdle` does
+not wait for, so it could land on a freed handle (review of PR #78).
+`SBSP_SELFTEST=vksubmit@<vblank>` makes one submit fail with nothing
+queued, as an out-of-memory would: on the x64 build under the validation
+layer the run logs the one `vkQueueSubmit failed (-2) - frame dropped,
+swapchain rebuilt` line, keeps presenting, reaches its `--exit-after` and
+raises no validation message.  (The old recovery raises none on this
+NVIDIA driver either - the race depends on when a driver signals the
+acquire - so the change rests on the specification.)
 
 **No Vulkan loader still gives a window.**  `SDL_WINDOW_VULKAN` makes
 `SDL_CreateWindow` load the loader, so without `vulkan-1.dll` there was no
@@ -1890,6 +1917,22 @@ so the pump rebases its clock on the resume edge instead of bursting the
 vblanks the loop ate.  Verified with a real drag driven from PowerShell
 (mouse down on the caption, move, hold, up): `paused` / `resumed after
 3.0s` and `paused=3.0`, with the run still ending at its scripted vblank.
+Two follow-ups from the review of PR #78:
+- A scripted run (`Port_HarnessRun`: a replay, a harness route) gets no
+  rebase answer.  That answer costs the pump step it lands on, which
+  returns before its bare-pump replay check, so dragging the window of a
+  replay could skip a recorded `# bare` vblank and fail it with exit 13.
+  A scripted run fires its vblanks where the recording says, not by the
+  wall clock, and is left out exactly as from the focus-loss pause.
+  `replay_test` drags (the event watch's `EXPOSED`, data1 1) just before a
+  recorded bare-pump vblank and requires it to fire there.
+- `paused=` counts a focus pause and a drag once where they overlap.
+  Each booked its own length, so a focus-paused window dragged for 10 s,
+  its focus back in the same poll that ended the drag, booked the 10 s
+  twice.  One interval now opens when the first of them starts and is
+  booked when neither holds.  `window_test` (new) drags inside a focus
+  pause and requires the total not to exceed the wall time it covers;
+  the old bookkeeping booked 0.70 s in 0.42 s.
 
 **Dumps and the window agree.**  The shader expanded 5-bit channels as
 `c / 31` (white 0xFF) while `GPU_ReadDisplayPixelRGB`, which feeds

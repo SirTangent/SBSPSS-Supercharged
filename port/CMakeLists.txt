@@ -433,6 +433,7 @@ sbsp_shim_test(fmv_pipeline_test) # whole movie pipeline, frame CRCs (M7)
 sbsp_shim_test(ini_test)        # sbsp.ini loader/defaults + host paths (M8 shell)
 sbsp_shim_test(viewport_test)   # fit/integer/stretch viewport arithmetic (M8 shell)
 sbsp_shim_test(exit_test)       # Port_Exit owner rule + exit hooks, in child processes (#62)
+sbsp_shim_test(window_test)     # paused= counts a focus pause and a window drag once where they overlap (#63)
 
 # The replacement LZNP encoder (tools/lznp-src) against the game's own decoder
 # (source/utils/lznp.cpp): synthetic, structured and fuzzed buffers plus a

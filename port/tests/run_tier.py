@@ -328,6 +328,9 @@ def run_game(exe, args, env, timeout, log_path=None):
 
 
 BASELINE = None     # --compare-frames: directory of an earlier run's --logs
+TERRITORY = "USA"   # --territory: the exe's build (a USA build renders no 50 Hz vblank)
+AUDIO_CLOSED = re.compile(r"^\[host\] audio dump closed: (\d+) frames, (\d+) vblanks at 60 Hz, "
+                          r"(\d+) at 50 Hz$")
 
 
 def compare_baseline(res, name, log_name, scenes_only=False):
@@ -409,8 +412,12 @@ def report_common(res, name):
     # every vblank the run delivered (the dump is armed at the first vblank,
     # audio_out.cpp): 735 frames at 60 Hz, 882 at 50.  A PAL build boots at
     # 60 Hz until VidInit sets the video mode - a paced boot spends ~34
-    # vblanks loading before that - so the count is k * 735 + (V - k) * 882
-    # for some whole k in 0..V, i.e. k = (882 V - F) / 147 (k = V on USA).
+    # vblanks loading before that.  The dump counts the vblanks it rendered
+    # at each rate and says so as it closes; those counts must add up to
+    # vblanks= and the length must be exactly theirs.  The length alone
+    # could not pin the mix - one 882-frame vblank is six 147-frame steps,
+    # so a lost or extra vblank of audio still passed as some other mix
+    # (review of #78) - and a USA build has no 50 Hz vblank at all.
     if res.code == 0 and res.audio is not None:
         vblanks = res.summary_int("vblanks")
         if res.audio == "missing":
@@ -419,18 +426,26 @@ def report_common(res, name):
         else:
             frames, crc = res.audio
             closed = [l for l in res.lines if l.startswith("[host] audio dump closed:")]
-            m = re.match(r"\[host\] audio dump closed: (\d+) frames", closed[-1] if closed else "")
+            m = AUDIO_CLOSED.match(closed[-1] if closed else "")
             if not m or int(m.group(1)) != frames:
                 print(f"  FAIL {name}: the exit hook did not close the audio dump at {frames} frames "
                       f"({closed[-1] if closed else 'no [host] audio dump closed line'})")
                 ok = False
-            k, rem = divmod(882 * vblanks - frames, 147) if vblanks is not None else (-1, 1)
-            if rem or not 0 <= k <= vblanks:
-                print(f"  FAIL {name}: the audio dump holds {frames} frames, not a mix of whole "
-                      f"vblanks at 735 and 882 adding up to vblanks={vblanks}")
-                ok = False
             else:
-                print(f"       audio: {vblanks} vblanks rendered ({k} at 60 Hz, {vblanks - k} at 50 Hz), crc {crc}")
+                n60, n50 = int(m.group(2)), int(m.group(3))
+                problems = []
+                if vblanks is None or n60 + n50 != vblanks:
+                    problems.append(f"{n60} + {n50} rate-counted vblanks, [summary] vblanks={vblanks}")
+                if frames != 735 * n60 + 882 * n50:
+                    problems.append(f"{frames} frames, {n60} x 735 + {n50} x 882 = {735 * n60 + 882 * n50}")
+                if TERRITORY != "EUR" and n50:
+                    problems.append(f"{n50} vblanks at 50 Hz on a {TERRITORY} build")
+                if problems:
+                    print(f"  FAIL {name}: the audio dump is not one vblank of audio per vblank: "
+                          + "; ".join(problems))
+                    ok = False
+                else:
+                    print(f"       audio: {vblanks} vblanks rendered ({n60} at 60 Hz, {n50} at 50 Hz), crc {crc}")
     return ok
 
 
@@ -442,8 +457,10 @@ def recording_render(res):
     else None.  The game's own reading of `# render` (issue #60), not a
     second parser here: one that read a `# rendered ...` comment or missed
     an indented line as revision 0 quietly stopped the [frame] comparison.
-    The game says it whenever the file names a revision or carries epochs,
-    and refuses a malformed `# render` at boot (exit 13)."""
+    The game says it for every recording - any file with a line only
+    --record-pad writes, so one from before `# render` reads as revision 0
+    with or without epochs - and refuses a malformed `# render` at boot
+    (exit 13)."""
     for l in res.lines:
         m = RENDER_LINE.match(l)
         if m:
@@ -835,7 +852,7 @@ def selftest_wav(exe, seed, logdir, territory):
                     problems.append("PCM is all zero")
             closed = [l for l in res.lines if l.startswith("[host] audio dump closed:")]
             if hooked:
-                m = re.match(r"\[host\] audio dump closed: (\d+) frames$", closed[-1] if closed else "")
+                m = AUDIO_CLOSED.match(closed[-1] if closed else "")
                 if not m:
                     problems.append("no '[host] audio dump closed' line - the exit hook did not run")
                 elif int(m.group(1)) * 4 != data:
@@ -911,6 +928,8 @@ def main():
                          "left in DIR (--keep-artifacts) and require no desync, the same streams "
                          "(needs --compare-frames with that exe's --logs) and the same memory card")
     a = ap.parse_args()
+    global TERRITORY
+    TERRITORY = a.territory.upper()
 
     exe = Path(a.exe).resolve()
     if not exe.exists():

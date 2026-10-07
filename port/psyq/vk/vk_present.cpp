@@ -179,12 +179,15 @@ static int				s_vramInShaderLayout;	/* image layout tracking */
 	s_swapRetries counts consecutive failed rebuilds; s_announceSwap asks
 	for one "[vk] swapchain built" line after an init-time deferral;
 	s_selfTestLose (SBSP_SELFTEST=vklost) makes the next fence read as
-	DEVICE_LOST so the path can be exercised without a real TDR.  */
+	DEVICE_LOST so the path can be exercised without a real TDR, and
+	s_selfTestSubmit (SBSP_SELFTEST=vksubmit) the next submit fail with
+	nothing queued.  */
 static int				s_dead;
 static int				s_swapRetries;
 static int				s_swapZeroExtent;	/* the last build found a 0x0 surface (minimized) */
 static int				s_announceSwap;
 static int				s_selfTestLose;
+static int				s_selfTestSubmit;
 
 struct PushConsts { int32_t disp[4]; int32_t mask; int32_t rgb24; };
 
@@ -201,6 +204,11 @@ static void presenterLost(const char *what, VkResult r)
 void VkPresent_SelfTestLose(void)
 {
 	s_selfTestLose = 1;
+}
+
+void VkPresent_SelfTestSubmitFail(void)
+{
+	s_selfTestSubmit = 1;
 }
 
 #define CHECK(expr)															\
@@ -336,8 +344,19 @@ static VkPresentModeKHR choosePresentMode(void)
 
 static bool buildSwapchain(void)
 {
+	/*	cleared before anything can fail: a failed query below is a failed
+		build, never the "minimized, wait" of an earlier one - a stale flag
+		kept VkPresent_Frame resetting the rebuild count, so a lost surface
+		logged one line a vblank for the rest of the session (review of #78)  */
+	s_swapZeroExtent = 0;
 	VkSurfaceCapabilitiesKHR caps;
-	CHECK(p_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(s_phys, s_surface, &caps));
+	VkResult cr = p_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(s_phys, s_surface, &caps);
+	if (cr == VK_ERROR_SURFACE_LOST_KHR || cr == VK_ERROR_DEVICE_LOST)
+	{
+		presenterLost("vkGetPhysicalDeviceSurfaceCapabilitiesKHR", cr);	/* no rebuild can help */
+		return false;
+	}
+	CHECK(cr);
 
 	int pw = 0, ph = 0;
 	SDL_GetWindowSizeInPixels(s_window, &pw, &ph);
@@ -689,7 +708,7 @@ bool VkPresent_Init(SDL_Window *window)
 		never called the presenter again, and the window stayed black for
 		the whole session once restored (issue #63).  Leave s_swapValid at 0
 		and let VkPresent_Frame build it once the window has a size.  */
-	if (!createSwapchain())
+	if (!createSwapchain() && !s_dead)		/* a lost surface has said so already */
 	{
 		fprintf(stderr, "[vk] no swapchain yet (%s) - built when the window shows\n",
 				s_swapZeroExtent ? "the surface has no size: minimized?"
@@ -1112,7 +1131,17 @@ void VkPresent_Frame(void)
 	si.pSignalSemaphores    = &s_semRender[imgIdx];
 
 	p_vkResetFences(s_dev, 1, &s_fence[slot]);
-	VkResult sr = p_vkQueueSubmit(s_queue, 1, &si, s_fence[slot]);
+	/*	SBSP_SELFTEST=vksubmit: this frame's submit "fails" with nothing
+		queued, as a real OUT_OF_DEVICE_MEMORY would, so the recovery below
+		runs on a healthy device (under the validation layer, too)  */
+	VkResult sr;
+	if (s_selfTestSubmit)
+	{
+		s_selfTestSubmit = 0;
+		sr = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+	}
+	else
+		sr = p_vkQueueSubmit(s_queue, 1, &si, s_fence[slot]);
 	if (sr != VK_SUCCESS)
 	{
 		/*	Nothing was queued.  The acquired image will never be presented
@@ -1120,26 +1149,35 @@ void VkPresent_Frame(void)
 			consume - reusing either is invalid, and this used to do both:
 			the next frame acquired with the same semaphore and each failure
 			leaked an image until acquire returned NOT_READY for good (issue
-			#63).  Drain, replace the semaphore, re-signal the fence by hand
-			so the ring stays consistent, and rebuild the swapchain, which
-			retires the orphaned image with the old one.  A lost device, or
-			a recovery step that fails itself, stops the presenter.  */
+			#63).  The semaphore cannot simply be destroyed either: the
+			signal is owed by the presentation engine, which
+			vkDeviceWaitIdle does not wait for, so it could land on a freed
+			handle (review of #78).  Consume it instead with a wait-only
+			submit that also signals the slot's fence, wait for that fence -
+			the signal has then arrived and been used, the semaphore is
+			unsignalled and reusable, and the ring is consistent - and
+			rebuild the swapchain, which retires the orphaned image with the
+			old one.  A lost device, or a recovery step that fails itself,
+			stops the presenter.  */
 		fprintf(stderr, "[vk] vkQueueSubmit failed (%d) - frame dropped, swapchain rebuilt\n", (int)sr);
-		if (sr == VK_ERROR_DEVICE_LOST || p_vkDeviceWaitIdle(s_dev) != VK_SUCCESS)
+		if (sr == VK_ERROR_DEVICE_LOST)
 		{
 			presenterLost("vkQueueSubmit", sr);
 			return;
 		}
-		VkSemaphoreCreateInfo sci;
-		memset(&sci, 0, sizeof(sci));
-		sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-		p_vkDestroySemaphore(s_dev, s_semAcquire[slot], NULL);
-		s_semAcquire[slot] = VK_NULL_HANDLE;
-		if (p_vkCreateSemaphore(s_dev, &sci, NULL, &s_semAcquire[slot]) != VK_SUCCESS ||
-			p_vkResetFences(s_dev, 1, &s_fence[slot]) != VK_SUCCESS ||
-			p_vkQueueSubmit(s_queue, 0, NULL, s_fence[slot]) != VK_SUCCESS)
+		VkPipelineStageFlags drainStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+		VkSubmitInfo drain;
+		memset(&drain, 0, sizeof(drain));
+		drain.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+		drain.waitSemaphoreCount = 1;
+		drain.pWaitSemaphores    = &s_semAcquire[slot];
+		drain.pWaitDstStageMask  = &drainStage;
+		VkResult dr = p_vkQueueSubmit(s_queue, 1, &drain, s_fence[slot]);
+		if (dr == VK_SUCCESS)
+			dr = p_vkWaitForFences(s_dev, 1, &s_fence[slot], VK_TRUE, UINT64_MAX);
+		if (dr != VK_SUCCESS)
 		{
-			presenterLost("recovery after vkQueueSubmit", sr);
+			presenterLost("recovery after vkQueueSubmit", dr);
 			return;
 		}
 		createSwapchain();

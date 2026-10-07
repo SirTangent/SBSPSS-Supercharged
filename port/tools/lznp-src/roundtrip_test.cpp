@@ -61,14 +61,25 @@ int main(int argc, char *argv[])
 		if (!testOne(buf, n, "fuzz")) { pass = 0; break; }
 	}
 
+	/*	A file named here is an input the caller expects to be tested (ctest
+		passes the committed port/tests/str_frame1.bin): one that cannot be
+		read fails the run rather than being skipped, which read as a pass
+		with the fixture gone (review of #78).  */
 	for (int a = 1; a < argc; a++)
 	{
 		FILE *f = fopen(argv[a], "rb");
-		if (!f) { printf("skip %s\n", argv[a]); continue; }
+		if (!f) { printf("FAIL: cannot open %s\n", argv[a]); pass = 0; continue; }
 		fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
 		if (n > 4000000) n = 4000000;
-		unsigned char *d = (unsigned char *)malloc(n);
-		if ((long)fread(d, 1, n, f) != n) { printf("read err %s\n", argv[a]); fclose(f); free(d); continue; }
+		unsigned char *d = (unsigned char *)malloc(n > 0 ? n : 1);
+		if (n <= 0 || (long)fread(d, 1, n, f) != n)
+		{
+			printf("FAIL: cannot read %s\n", argv[a]);
+			pass = 0;
+			fclose(f);
+			free(d);
+			continue;
+		}
 		fclose(f);
 		pass &= testOne(d, (int)n, argv[a] + (strlen(argv[a]) > 30 ? strlen(argv[a]) - 30 : 0));
 		free(d);
