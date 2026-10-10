@@ -26,6 +26,7 @@
 
 #include "gpu/gpu_core.h"
 #include "host/diag.h"
+#include "host/framedump.h"
 #include "host/pump.h"
 
 bool VkPresent_Init(SDL_Window *window);	/* port/psyq/vk/vk_present.cpp */
@@ -169,14 +170,12 @@ static void parseTooling(void)
 }
 
 /*****************************************************************************/
-/*	host/framedump.cpp: the BMP writer (mask-aware, raw or 4:3).  */
-extern "C" int Host_WriteDisplayBMP(const char *path, int aspect);
-
+/*	the BMP writer itself (mask-aware) is host/framedump.cpp  */
 static void dumpDisplayBMP(unsigned long vblank)
 {
 	char path[512];
 	snprintf(path, sizeof(path), "%s/sbsp_frame_%lu.bmp", g_dumpDir, vblank);
-	Host_WriteDisplayBMP(path, 0);
+	Host_WriteDisplayBMP(path);
 }
 
 /*****************************************************************************/

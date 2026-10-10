@@ -1955,7 +1955,7 @@ already did.
 
 ### Frame dumps honour SetDispMask (issue #27)
 
-`port/psyq/host/framedump.cpp` (new), `host/window.cpp`,
+`port/psyq/host/framedump.cpp` + `framedump.h` (new), `host/window.cpp`,
 `tests/framedump_test.cpp` (new).
 
 The presenter shows black while `SetDispMask(0)` is in force
@@ -1965,19 +1965,24 @@ display rect.  A dump taken between `FMV_play`'s `SetDispMask(0)` and
 investigation overstated how long that corruption was visible.
 
 The BMP writer moved out of `window.cpp` into `host/framedump.cpp` as
-`Host_WriteDisplayBMP(path, aspect)`.  With the display masked it writes
-black pixels at the same size under the same name, so file and vblank
-indexing stay stable, and the `[host] wrote` line says `masked` (it no
-longer repeats the vblank number, which is in the file name).  Pixels are
-still read only through `GPU_ReadDisplayPixelRGB`, so unmasked dumps are
-byte-identical to the old writer's.  The `aspect` argument is the window's
-4:3 shape for issue #53; nothing passes 1 yet.  The frame CRCs
-(`GPU_DisplayCRC32`) already reported `masked` separately and do not move.
+`Host_WriteDisplayBMP(path)`, declared in `host/framedump.h` with C++
+linkage so a signature change fails to link.  With the display masked it
+writes black pixels at the same size under the same name, so file and
+vblank indexing stay stable, and the `[host] wrote` line says `masked` (it
+no longer repeats the vblank number, which is in the file name).  Pixels
+are still read only through `GPU_ReadDisplayPixelRGB`, so unmasked dumps
+are byte-identical to the old writer's.  A failed write (full disk, lost
+share) returns 0, logs `cannot write ... (write failed)` and removes the
+short file instead of logging `wrote`.  The frame CRCs (`GPU_DisplayCRC32`)
+hash VRAM, masked or not, and say `masked` on the `[frame]` line; they do
+not move.
 
 `framedump_test` (unit) pins it: mask=1 pixels match
 `GPU_ReadDisplayPixelRGB` for an offset display rect, mask=0 gives an
-all-black file with the same header and size, and the 4:3 size and 2x3
-replication.
+all-black file with the same header and size, and an uncreatable path
+returns 0 and leaves no file.  Its temp files carry the process id, so
+trees running ctest at once do not collide.  The window-shaped 4:3 dump
+is issue #53's, not part of this change.
 
 ## Game-source changes (keyboard prompt icons, issue #43)
 
