@@ -163,6 +163,7 @@ CAnimTex	*ThisTex;
 #if !defined(PSX_MIPS_ASM)
 	if(!ThisTex) return(0);		// PC: level without animated textures (conv_pc.md #29)
 #else
+// TODO(#81): remove this #line - pinning the PS1 line numbering to an old revision is a bad practice that goes stale
 #line 162	// keep the PS1 build's __LINE__ (ASSERTs below) byte-identical
 #endif
 
