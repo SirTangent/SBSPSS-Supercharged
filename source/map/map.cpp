@@ -421,7 +421,14 @@ void CMapScene::renderInstructions()
 	x+=fh1->W+MAP_INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT;
 	m_font->print(x,y,xText);
 
+#if !defined(PSX_MIPS_ASM)
+	// a key cap is taller than the glyph this pitch was set for (conv_pc.md #59)
+	y+=CPadIcon::getRowPitch(sb,PAD_CROSS,MAP_INSTRUCTIONS_Y_SPACE_BETWEEN_LINES);
+#else
+#line 424	// keep the PS1 build's __LINE__ (the MemAlloc below) byte-identical
 	y+=MAP_INSTRUCTIONS_Y_SPACE_BETWEEN_LINES;
+#line 424
+#endif
 	fh1=sb->getFrameHeader(CPadIcon::getFrame(PAD_TRIANGLE));
 	width=fh1->W+MAP_INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT+m_font->getStringWidth(STR__MAP_SCREEN__TRIANGLE_TO_SAVE);
 	x=256-(width/2);

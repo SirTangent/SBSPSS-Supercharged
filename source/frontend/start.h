@@ -26,6 +26,10 @@
 #include "gui\greadout.h"
 #endif
 
+#ifndef _GLOBAL_HEADER_
+#include "system\global.h"		// PC_PS1 (system/asmport.h)
+#endif
+
 
 /*	Std Lib
 	------- */
@@ -73,7 +77,7 @@ private:
 
 		INSTRUCTIONS_YSTART=147,
 		INSTRUCTIONS_BUTTON_Y_OFFSET=3,
-		INSTRUCTIONS_KEYCAP_Y_OFFSET=3,		// PC key caps, tuned by eye like the glyph (github issue #43)
+		INSTRUCTIONS_KEYCAP_Y_OFFSET=PC_PS1(2,3),	// PC key caps, centred on their text by measurement (github issue #50); PS1 keeps the #43 value
 		INSTRUCTIONS_GAP_BETWEEN_BUTTONS=5,
 		INSTRUCTIONS_GAP_BETWEEN_BUTTONS_AND_TEXT=10,
 		INSTRUCTIONS_Y_SPACE_BETWEEN_LINES=15,

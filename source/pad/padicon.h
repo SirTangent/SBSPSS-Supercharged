@@ -76,6 +76,31 @@ public:
 					{ return getFrameYOffset(getFrame(_padButton),_glyphYOffset,_capYOffset); }
 	static int		getFrameYOffset(int _frame,int _glyphYOffset,int _capYOffset)
 					{ return isKeyCap(_frame)?_capYOffset:_glyphYOffset; }
+#ifndef	PSX_MIPS_ASM
+
+	/*	The same story vertically.  Sites that stack prompt rows step by a
+		pitch chosen for the 11px glyph (12px in-game, 13px on the map),
+		which the 14px caps overrun (github issue #50).  A site passes the
+		sprite bank it draws from, the icon - a button, like getYOffset, or
+		the frame it drew, like getFrameYOffset - and its own glyph pitch.
+		The height is read from the bank here, so what is measured is what
+		is drawn: a cap row steps by the cap's height plus KEYCAP_ROW_GAP,
+		or by the glyph pitch if that is already more, and a glyph row
+		always by the glyph pitch, so a gamepad player keeps the original
+		layout to the pixel.  PC only: the PS1 sites keep their constant
+		pitch, so Spongey.cpe does not change.  The bank is a template
+		parameter only so this header needs no gfx/sprbank.h.  */
+	enum { KEYCAP_ROW_GAP=1 };	// the air slot select's 15px pitch leaves between its caps
+	template<class BANK>
+	static int		getRowPitch(BANK *_sb,int _padButton,int _glyphPitch)
+					{ return getFrameRowPitch(_sb,getFrame(_padButton),_glyphPitch); }
+	template<class BANK>
+	static int		getFrameRowPitch(BANK *_sb,int _frame,int _glyphPitch)
+					{ int capPitch=_sb->getFrameHeight(_frame)+KEYCAP_ROW_GAP;
+					  return isKeyCap(_frame)&&capPitch>_glyphPitch?capPitch:_glyphPitch; }
+#else
+#line 78	// keep the PS1 build's line numbering (port/docs/psx_byte_identity.md)
+#endif
 
 	/*	Whether a frame getFrame() answered with is one of the key caps
 		rather than a PS1 glyph.  */

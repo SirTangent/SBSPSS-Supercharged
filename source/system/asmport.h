@@ -18,6 +18,17 @@
 #define	PSX_MIPS_ASM	1
 #endif
 
+/*	One value for the PC port and another for the PlayStation build, on the
+	line that already holds it: PC_PS1(pc, ps1).  The PS1 compiles exactly the
+	old tokens, so tuning a PC-only value moves no line and needs no #if arm
+	(port/docs/psx_byte_identity.md).  Use it as a whole initializer or
+	operand - it expands unparenthesised so those tokens stay identical.  */
+#ifdef	PSX_MIPS_ASM
+#define	PC_PS1(pc,ps1)	ps1
+#else
+#define	PC_PS1(pc,ps1)	pc
+#endif
+
 #ifndef	PSX_MIPS_ASM
 #include "system/types.h"
 /*	Software-GTE register interface.  The portable equivalents of the

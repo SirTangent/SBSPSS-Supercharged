@@ -291,7 +291,10 @@ happens the block carries an `#else` / `#line <n>` arm that restores the
 original numbering for the PlayStation preprocessor only: `<n>` is the
 pristine line number of the block's `#endif` (i.e. one less than the line
 after it).  The guard is `port/build-psx.cmd` + a SHA-256 compare of
-`Spongey.cpe` against a build of the pristine sources.
+`Spongey.cpe` against a build of the pristine sources - since #50 both
+are `port/tools/psx_identity.py` (`lines`, a static check; `build`, the
+clean-build hash compare), and the patterns, traps and the list of `#line`
+arms are in `port/docs/psx_byte_identity.md`.
 
 23. **`source/system/gstate.cpp` (scene epochs)** - `GameState::think()`
     calls `Port_SceneEvent(getSceneName())` right before a new scene's
@@ -2160,6 +2163,65 @@ unaffected.  The one game-source change:
     none of it, but the added lines move every PS1 line below the block;
     the only `__LINE__` user there is the `ASSERT` in `SaveScreen`, which
     a CD build compiles out, so `Spongey.cpe` is expected unchanged.
+
+## Game-source changes (key cap row pitch, issue #50)
+
+Inside `#if !defined(PSX_MIPS_ASM)` arms whose `#else` keeps the original
+code and re-syncs `__LINE__` with `#line`, as #67 did, so `Spongey.cpe` is
+unchanged: USA DEBUG and FINAL hash the same before and after from clean
+builds (`port/tools/psx_identity.py build`, new with this change, as is
+`port/docs/psx_byte_identity.md`).
+
+59. **`source/pad/padicon.h`, `source/player/player.cpp`, `source/map/map.cpp`** -
+    #43 measured the icons horizontally but left two sites stacking rows by
+    a pitch set for the 11px glyph: the in-game item prompts (`PromptYGap`
+    12) and the map's Start/Save pair (`MAP_INSTRUCTIONS_Y_SPACE_BETWEEN_LINES`
+    13).  The 14px caps overran both, each cap's dark underside sitting on
+    the cap below.  `CPadIcon::getRowPitch(bank, button, glyphPitch)` and
+    `getFrameRowPitch(bank, frame, glyphPitch)` are the vertical twins of
+    `getYOffset` / `getFrameYOffset`.  They read the icon's height from the
+    sprite bank themselves, so the measured icon is the drawn one.  A cap
+    steps by its height plus `KEYCAP_ROW_GAP` (1, the air slot select's 15px
+    pitch already leaves), or by the glyph pitch if that is more; a glyph
+    always steps by the glyph pitch.  `promptRender()` takes the largest pitch any
+    icon in the prompt asks for and steps every row by it, title included,
+    so the rows stay evenly spaced; the bottom row stays where it was and
+    the prompt grows upward (3px a row, 9px for the net).  The map steps
+    from Start to Save by the Start icon's pitch.  The button -> icon
+    switch moved into a static `promptIcons()` so the measuring pass and
+    the drawing pass cannot disagree; the PS1 arm keeps it inline, where
+    its `ASSERT` sits on its original line.  Glyph frames
+    (`prompt_icons = pad`) are byte-identical before and after on both
+    screens.  Before and after: `docs/assets/issues/50-key-caps-pitch.png`.
+
+60. **`source/system/asmport.h` (`PC_PS1`), `map/map.h`, `game/convo.h`,
+    `shop/shop.h`, `frontend/start.h`, `frontend/options.cpp`** - key caps
+    centred on their text by measurement.  #43 tuned each site's
+    `*_KEYCAP_*` offset by eye.  A survey of every prompt screen, using the
+    exact sprite rectangles each frame draws, found five sites where the
+    cap's centre sat off its label's (label top to baseline):
+    - the map, shop and slot select caps 1px low;
+    - the dialogue box `Z OK` 2px low;
+    - the Options > Controls readout 0.5-1.5px high.
+
+    Each moves by the measured amount:
+    - map, shop and slot select offsets 3 -> 2;
+    - `TEXTBOX_KEYCAP_YOFF` `TEXTBOX_HEIGHT+6` -> `+4` (the same 2px the
+      in-game prompt's `PromptKeyCapYOfs` already uses for the same
+      geometry);
+    - `CAP_ROW_NUDGE` 2 -> 3.
+
+    All 29 cap rows across the 9 screens now sit within half a pixel of
+    their text's centre.  The PS1 glyph frames are byte-identical.
+
+    These constants reach the PS1 build too, through `CPadIcon::getYOffset`'s
+    run-time select, so each new value is written as
+    `PC_PS1(pc_value, ps1_value)`: a new one-line macro in `asmport.h` that
+    hands the PS1 compiler exactly the old tokens.  That is the same-line
+    pattern `port/docs/psx_byte_identity.md` recommends, with no `#if` arm
+    and no `#line`.  `start.h` now includes `system\global.h`, as `map.h`
+    and `shop.h` already do, so the macro is defined wherever the header is
+    read first.
 
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 
