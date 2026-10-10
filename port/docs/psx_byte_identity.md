@@ -73,6 +73,11 @@ This is the best option when it fits: no line moves, so no `#line` is needed.
 M9 did most of the x64 work this way.  For example, `RELOC_PTR(...)` expands
 to the original tokens everywhere except x64 (`conv_pc.md` #31).
 
+For a value that should differ on PC, use `PC_PS1(pc, ps1)` from
+`system/asmport.h`: `MAP_INSTRUCTIONS_KEYCAP_Y_OFFSET=PC_PS1(2,3),` gives the
+PC 2 and hands the PS1 compiler the original `3` (`conv_pc.md` #60).  It
+expands unparenthesised, so use it as a whole initializer or operand.
+
 ### PC-only insertion
 
 ```cpp

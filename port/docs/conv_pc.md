@@ -2194,6 +2194,35 @@ builds (`port/tools/psx_identity.py build`, new with this change, as is
     (`prompt_icons = pad`) are byte-identical before and after on both
     screens.  Before and after: `docs/assets/issues/50-key-caps-pitch.png`.
 
+60. **`source/system/asmport.h` (`PC_PS1`), `map/map.h`, `game/convo.h`,
+    `shop/shop.h`, `frontend/start.h`, `frontend/options.cpp`** - key caps
+    centred on their text by measurement.  #43 tuned each site's
+    `*_KEYCAP_*` offset by eye.  A survey of every prompt screen, using the
+    exact sprite rectangles each frame draws, found five sites where the
+    cap's centre sat off its label's (label top to baseline):
+    - the map, shop and slot select caps 1px low;
+    - the dialogue box `Z OK` 2px low;
+    - the Options > Controls readout 0.5-1.5px high.
+
+    Each moves by the measured amount:
+    - map, shop and slot select offsets 3 -> 2;
+    - `TEXTBOX_KEYCAP_YOFF` `TEXTBOX_HEIGHT+6` -> `+4` (the same 2px the
+      in-game prompt's `PromptKeyCapYOfs` already uses for the same
+      geometry);
+    - `CAP_ROW_NUDGE` 2 -> 3.
+
+    All 29 cap rows across the 9 screens now sit within half a pixel of
+    their text's centre.  The PS1 glyph frames are byte-identical.
+
+    These constants reach the PS1 build too, through `CPadIcon::getYOffset`'s
+    run-time select, so each new value is written as
+    `PC_PS1(pc_value, ps1_value)`: a new one-line macro in `asmport.h` that
+    hands the PS1 compiler exactly the old tokens.  That is the same-line
+    pattern `port/docs/psx_byte_identity.md` recommends, with no `#if` arm
+    and no `#line`.  `start.h` now includes `system\global.h`, as `map.h`
+    and `shop.h` already do, so the macro is defined wherever the header is
+    read first.
+
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 
 - String-literal → `char*` conversions (pervasive; `-Wno-write-strings`).

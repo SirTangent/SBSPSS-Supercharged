@@ -306,7 +306,7 @@ int CFrontEndOptions::refreshIcons()
   ---------------------------------------------------------------------- */
 void CFrontEndOptions::placeControlReadouts()
 {
-	const int	CAP_ROW_NUDGE=2;
+	const int	CAP_ROW_NUDGE=PC_PS1(3,2);	// 3 centres the caps on their labels by measurement (github issue #50)
 
 	for(int i=0;i<CONTROL_COUNT;i++)
 	{

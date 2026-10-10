@@ -58,7 +58,7 @@ private:
 
 		MAP_INSTRUCTIONS_YSTART=180,
 		MAP_INSTRUCTIONS_BUTTON_Y_OFFSET=3,
-		MAP_INSTRUCTIONS_KEYCAP_Y_OFFSET=3,	// PC key caps, tuned by eye like the glyph (github issue #43)
+		MAP_INSTRUCTIONS_KEYCAP_Y_OFFSET=PC_PS1(2,3),	// PC key caps, centred on their text by measurement (github issue #50); PS1 keeps the #43 value
 		MAP_INSTRUCTIONS_TEXT_R=128,
 		MAP_INSTRUCTIONS_TEXT_G=64,
 		MAP_INSTRUCTIONS_TEXT_B=64,
