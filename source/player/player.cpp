@@ -3469,7 +3469,7 @@ int			RowPitch=PromptYGap;
 			{
 				if (Icon[i]!=-1)
 				{
-					int	Pitch=CPadIcon::getRowPitch(Icon[i],sb->getFrameHeight(Icon[i]),PromptYGap);
+					int	Pitch=CPadIcon::getFrameRowPitch(sb,Icon[i],PromptYGap);
 					if (RowPitch<Pitch) RowPitch=Pitch;
 				}
 			}

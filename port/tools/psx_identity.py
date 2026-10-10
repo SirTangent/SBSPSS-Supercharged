@@ -11,18 +11,21 @@ port/docs/psx_byte_identity.md; this is the tooling that goes with it.
       compiler would - only as far as the PSX_MIPS_ASM / mips gates and
       #line go - and requires the PS1 to see exactly the text it saw in
       the base revision, on exactly the same line numbers.  Default files:
-      every game-source file the working tree changes against the base.
+      every file under source/ and tools/Data/include the working tree
+      changes against the base, untracked ones included.
 
   psx_identity.py build [--base REV] [--territory USA] [--version DEBUG ...]
-      The proof (about five minutes a build).  Clean PS1 rebuilds of HEAD
-      and of the base, SHA-256 of each Spongey.cpe compared.  Needs MSYS2
-      and the territory's data, a committed tree, and no other PS1 build
-      running on the machine.
+      The proof (about five minutes a build).  Clean PS1 builds of HEAD and
+      of the base, SHA-256 of each Spongey.cpe compared.  The base side
+      checks out the base copy of every changed PS1 build input (BUILD_PATHS
+      below), not just the game source.  Needs MSYS2 and the territory's
+      data, a committed tree, and no other PS1 build running on the machine.
 
 --base defaults to the merge-base of HEAD and SBSP-Win11, so a branch is
 compared with where it started, not with whatever has merged since.
 
-Exit status: 0 identical, 1 not, 2 could not check.
+Exit status: 0 identical, 1 not identical, 2 could not check (the reason
+goes to stderr).
 """
 
 import argparse
@@ -32,12 +35,20 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-# Game source the PS1 build compiles.  Everything under port/ is PC-only.
+# Game source the PS1 build compiles, any extension: .cpp/.h, the .mip
+# assembly, utils/gpu.inc, the upper-case .H headers.  Everything under
+# port/ is PC-only.
 GAME_DIRS = ["source", "tools/Data/include"]
-GAME_EXTS = (".c", ".cpp", ".h", ".hpp", ".inl")
+
+# Everything else that decides what the PS1 build produces: makefile.gaz and
+# the build/*.mak it includes (compiler flags, link), the per-user makefile
+# build/getuser.mak pulls from users/, the PSY-Q toolchain and tools under
+# tools/, and the wrapper that drives it all.
+BUILD_PATHS = GAME_DIRS + ["makefile.gaz", "build", "users", "tools", "port/build-psx.sh"]
 
 # What the PS1 compiler (ccpsx / EGCS) has defined, as far as the port's
 # gates care.  mips comes from the compiler; PSX_MIPS_ASM from
@@ -51,22 +62,29 @@ PS1_MACROS = {
 }
 
 
+def fail(msg):
+    """Could not check: exit 2, so nobody reads it as 'not identical'."""
+    print("psx_identity: %s" % msg, file=sys.stderr)
+    sys.exit(2)
+
+
 def git(*args, check=True):
     r = subprocess.run(["git", "-C", REPO] + list(args), capture_output=True)
     if check and r.returncode != 0:
-        sys.exit("git %s: %s" % (" ".join(args), r.stderr.decode(errors="replace").strip()))
+        fail("git %s: %s" % (" ".join(args), r.stderr.decode(errors="replace").strip()))
     return r
+
+
+def git_paths(*args):
+    """A git command's NUL-separated path list (-z), so spaces survive."""
+    return [p for p in git(*args).stdout.decode().split("\0") if p]
 
 
 def default_base():
     r = git("merge-base", "HEAD", "SBSP-Win11", check=False)
     if r.returncode != 0:
-        sys.exit("no merge-base with SBSP-Win11 - pass --base")
+        fail("no merge-base with SBSP-Win11 - pass --base")
     return r.stdout.decode().strip()
-
-
-def is_game_file(path):
-    return path.endswith(GAME_EXTS) and any(path.startswith(d + "/") for d in GAME_DIRS)
 
 
 # ---------------------------------------------------------------- lines
@@ -78,6 +96,8 @@ class Unknown(Exception):
 def evaluate(expr):
     expr = re.sub(r"/\*.*?\*/", " ", expr)
     expr = re.sub(r"//.*", "", expr)
+    if expr.rstrip().endswith("\\"):
+        raise Unknown(expr.strip())     # continued on the next line: not worth parsing
 
     def defined(m):
         name = m.group(1) or m.group(2)
@@ -90,18 +110,23 @@ def evaluate(expr):
         raise Unknown(expr.strip())     # a macro's value, not just whether it is defined
     expr = expr.replace("&&", " and ").replace("||", " or ")
     expr = re.sub(r"!(?!=)", " not ", expr)
-    return bool(eval(expr, {"__builtins__": {}}))
+    try:
+        return bool(eval(expr, {"__builtins__": {}}))
+    except Exception:
+        raise Unknown(expr.strip())     # ?:, casts, anything Python reads differently
 
 
 def ps1_view(text):
     """[(line number the PS1 compiler sees, text)] for every line the PS1
-    compiles, the conditional and #line directives themselves left out.
+    compiles.
 
-    Conditions that depend on anything but the PS1 macros are not
-    evaluated: both arms are kept, which is right for comparing two
-    revisions as long as neither touches that block."""
+    Conditions over the PS1 macros are evaluated and their directive lines
+    left out: what they select is in the output, so a change to one shows
+    as a change to the lines it keeps.  Any other condition is not
+    evaluated: every arm is kept, and so are its #if/#elif/#else/#endif
+    lines, so a flipped condition is a changed line too."""
     out = []
-    stack = []          # [parent active, this arm active, an arm taken, known]
+    stack = []          # one frame per open #if: parent/active/taken/known
     active = True
     in_comment = False
     line = 1
@@ -127,31 +152,41 @@ def ps1_view(text):
                     cond = ("" if name == "ifdef" else "!") + "defined(%s)" % word
                 try:
                     v = evaluate(cond)
-                    stack.append([active, active and v, v, True])
+                    stack.append(dict(parent=active, active=active and v, taken=v, known=True))
                 except Unknown:
-                    stack.append([active, active, True, False])
-                active = stack[-1][1]
+                    stack.append(dict(parent=active, active=active, taken=True, known=False))
+                    if active:
+                        out.append((line, raw))
+                active = stack[-1]["active"]
                 line += 1
                 continue
             if name in ("elif", "else") and stack:
-                parent, _, taken, known = stack[-1]
-                if not known:
-                    stack[-1][1] = parent
-                elif name == "else":
-                    stack[-1][1] = parent and not taken
-                    stack[-1][2] = True
-                else:
-                    try:
-                        v = evaluate(rest)
-                    except Unknown:
-                        v, stack[-1][3] = True, False
-                    stack[-1][1] = parent and not taken and v
-                    stack[-1][2] = taken or v
-                active = stack[-1][1]
+                f = stack[-1]
+                if f["known"]:
+                    if f["taken"]:
+                        f["active"] = False     # an earlier arm won: this one is dead, unevaluated
+                    elif name == "else":
+                        f["active"] = f["parent"]
+                        f["taken"] = True
+                    else:
+                        try:
+                            v = evaluate(rest)
+                            f["active"] = f["parent"] and v
+                            f["taken"] = v
+                        except Unknown:
+                            f["known"] = False  # from here on, every arm is kept
+                if not f["known"]:
+                    f["active"] = f["parent"]
+                    if f["parent"]:
+                        out.append((line, raw))
+                active = f["active"]
                 line += 1
                 continue
             if name == "endif" and stack:
-                active = stack.pop()[0]
+                f = stack.pop()
+                if not f["known"] and f["parent"]:
+                    out.append((line, raw))
+                active = f["parent"]
                 line += 1
                 continue
             if name == "line":
@@ -170,14 +205,13 @@ def cmd_lines(args):
     base = args.base or default_base()
     files = args.files
     if not files:
-        r = git("diff", "--name-only", base, "--", *GAME_DIRS)
-        files = [f for f in r.stdout.decode().split() if is_game_file(f)]
+        files = git_paths("diff", "-z", "--name-only", base, "--", *GAME_DIRS)
+        files += git_paths("ls-files", "-z", "--others", "--exclude-standard", "--", *GAME_DIRS)
     if not files:
         print("no game-source changes against %s" % base[:10])
         return 0
     bad = 0
-    for f in files:
-        f = f.replace("\\", "/")
+    for f in sorted(set(f.replace("\\", "/") for f in files)):
         r = git("show", "%s:%s" % (base, f), check=False)
         if r.returncode != 0:
             print("NEW   %s - not in the base; a new file the PS1 compiles cannot be identical" % f)
@@ -213,7 +247,7 @@ def msys_bash():
     for p in (r"C:\msys64\usr\bin\bash.exe", "/usr/bin/bash"):
         if os.path.exists(p):
             return p
-    sys.exit("MSYS2 bash not found (C:\\msys64) - the PS1 build runs under MSYS2, see psx_byte_identity.md")
+    fail("MSYS2 bash not found (C:\\msys64) - the PS1 build runs under MSYS2, see psx_byte_identity.md")
 
 
 def posix(path):
@@ -231,16 +265,24 @@ def sha256(path):
 
 
 def psx_build(territory, version, log):
+    """A clean PS1 build.  Returns the path of a Spongey.cpe that this build
+    wrote: the old one is deleted first and the new one must be newer than
+    the start, so a build that fails without saying so cannot hand back the
+    other side's executable (build-psx.sh warns its exit status can be
+    swallowed)."""
     tree = os.path.join(REPO, "out", territory, version)
     for d in (os.path.join(tree, "CD", "objs"), os.path.join(tree, "deps")):
         shutil.rmtree(d, ignore_errors=True)        # a clean build: every TU recompiled
+    cpe = os.path.join(tree, "version", "CD", "Spongey.cpe")
+    if os.path.exists(cpe):
+        os.remove(cpe)
+    start = time.time()
     env = dict(os.environ, MSYSTEM="MSYS")
     cmd = "cd '%s' && port/build-psx.sh %s %s" % (posix(REPO), territory, version)
     with open(log, "wb") as f:
         r = subprocess.run([msys_bash(), "-lc", cmd], stdout=f, stderr=subprocess.STDOUT, env=env)
-    cpe = os.path.join(tree, "version", "CD", "Spongey.cpe")
-    if r.returncode != 0 or not os.path.exists(cpe):
-        sys.exit("PS1 build failed (%s %s) - see %s" % (territory, version, log))
+    if r.returncode != 0 or not os.path.exists(cpe) or os.path.getmtime(cpe) < start - 2:
+        fail("PS1 build failed (%s %s) - see %s" % (territory, version, log))
     return cpe
 
 
@@ -249,28 +291,33 @@ def cmd_build(args):
     territory = args.territory.upper()
     versions = [v.upper() for v in (args.version or ["DEBUG", "FINAL"])]
     if ".claude/worktrees" in REPO.replace("\\", "/"):
-        sys.exit("this checkout's path is too deep for asmpsx (see psx_byte_identity.md) - use a short path")
-    if git("diff", "--quiet", "HEAD", "--", *GAME_DIRS, check=False).returncode != 0:
-        sys.exit("commit (or stash) the game-source changes first - the base build swaps files in and out")
-    r = git("diff", "--name-status", base, "HEAD", "--", *GAME_DIRS)
-    changes = [l.split("\t") for l in r.stdout.decode().splitlines() if l]
+        fail("this checkout's path is too deep for asmpsx (see psx_byte_identity.md) - use a short path")
+    if git("diff", "--quiet", "HEAD", "--", *BUILD_PATHS, check=False).returncode != 0:
+        fail("commit (or stash) the changes to PS1 build inputs first - the base build swaps files in and out")
+    untracked = git_paths("ls-files", "-z", "--others", "--exclude-standard", "--", *BUILD_PATHS)
+    if untracked:
+        fail("untracked files would be built on both sides - add or remove them first:\n  "
+             + "\n  ".join(untracked))
+    r = git("diff", "-z", "--no-renames", "--name-status", base, "HEAD", "--", *BUILD_PATHS)
+    fields = [p for p in r.stdout.decode().split("\0") if p]
+    changes = list(zip(fields[0::2], fields[1::2]))
     odd = [c for c in changes if c[0] != "M"]
     if odd:
-        sys.exit("files added or removed against the base - the exe cannot be identical:\n  "
-                 + "\n  ".join("\t".join(c) for c in odd))
+        fail("files added or removed against the base - swapping in the base copies cannot rebuild it:\n  "
+             + "\n  ".join("%s\t%s" % c for c in odd))
     files = [c[1] for c in changes]
     if not files:
-        print("no game-source changes against %s - nothing to compare" % base[:10])
+        print("no PS1 build inputs changed against %s - nothing to compare" % base[:10])
         return 0
     trans = os.path.join(REPO, "out", territory, "include", "trans.h")
     if not os.path.exists(trans):
-        sys.exit("%s missing - run port/build-data.cmd %s first" % (trans, territory.lower()))
+        fail("%s missing - run port/build-data.cmd %s first" % (trans, territory.lower()))
 
     outdir = os.path.join(REPO, "out", "psx_identity")
     os.makedirs(outdir, exist_ok=True)
     trans_before = sha256(trans)
     print("base %s, %d changed file(s), trans.h %s" % (base[:10], len(files), trans_before[:16]))
-    failed = 0
+    results = []
     for v in versions:
         hashes = {}
         for side in ("head", "base"):
@@ -284,12 +331,15 @@ def cmd_build(args):
             finally:
                 if side == "base":
                     git("checkout", "HEAD", "--", *files)
-        same = hashes["head"] == hashes["base"]
+        results.append((v, hashes["head"], hashes["base"]))
+    if sha256(trans) != trans_before:
+        fail("trans.h changed during the run (a data build?) - the comparison is void")
+    failed = 0
+    for v, head, base_hash in results:
+        same = head == base_hash
         failed += not same
         print("%s %s %s: head %s base %s" % ("IDENTICAL" if same else "DIFFERENT", territory, v,
-                                              hashes["head"][:16], hashes["base"][:16]))
-    if sha256(trans) != trans_before:
-        sys.exit("trans.h changed during the run (a data build?) - the comparison is void")
+                                              head[:16], base_hash[:16]))
     if failed:
         print("cpe copies and build logs: %s" % outdir)
     return 1 if failed else 0

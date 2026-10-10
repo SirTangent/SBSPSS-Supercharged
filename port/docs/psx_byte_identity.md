@@ -142,13 +142,23 @@ starts calling the PC path.
 
 ### `psx_identity.py lines`
 
-Takes seconds.  For each changed game file (or the files you name), it
-preprocesses both revisions the way the PS1 compiler would, but only as far
-as gates and `#line` go:
+Takes seconds.  By default it checks every file under `source/` and
+`tools/Data/include/` that the working tree changes against the base:
+committed or not, untracked included, and any extension, so the `.mip`
+assembly, `utils/gpu.inc` and the upper-case `.H` headers are covered.  A
+new file is reported `NEW`, because a new file the PS1 compiles can't be
+identical.  You can also name the files.
+
+For each one it preprocesses both revisions the way the PS1 compiler would,
+but only as far as gates and `#line` go:
 - It evaluates conditions over `PSX_MIPS_ASM`, `mips`, `__mips__`,
-  `PSX_NO_ASM` and `SBSP_PC64`.
-- It keeps both arms of any other condition.
-- It honours `#line`.
+  `PSX_NO_ASM` and `SBSP_PC64`, and leaves those directive lines out: what
+  they select is what gets compared.
+- It keeps every arm of any other condition (including a `?:` expression or
+  a `\` continuation), and keeps those `#if`/`#elif`/`#else`/`#endif` lines
+  as text.  Flipping such a condition is therefore a visible change.
+- An arm after one that already won is dead, as it is for the compiler.
+- It honours `#line`, but only in arms the PS1 compiles.
 
 It then requires the two to be the same lines of text on the same numbers:
 
@@ -173,22 +183,35 @@ arbiter.
 The proof.  For each of `--version DEBUG` and `--version FINAL` (both by
 default) it:
 1. Does a clean PS1 build of `HEAD`.
-2. Checks out the base revision's copies of the changed game files and does
-   a clean build of those.
+2. Checks out the base revision's copy of every changed PS1 build input and
+   does a clean build of that. The inputs are the game source,
+   `makefile.gaz`, the `build/*.mak` it includes (compiler flags, link), the
+   per-user makefile under `users/`, the toolchain under `tools/`, and
+   `port/build-psx.sh`.  So a change to compiler flags is compared too.
 3. Puts `HEAD`'s copies back with `git checkout HEAD`.
 4. Compares the two `Spongey.cpe` SHA-256 hashes.
+
+Before each build it deletes the old `Spongey.cpe`, and it accepts only one
+written by that build.  A build that fails without saying so (a login shell
+can swallow make's exit status) therefore stops the run. It can't hand back
+the other side's executable.
 
 It needs:
 - **MSYS2** at `C:\msys64`.  The tool runs `port/build-psx.sh` under MSYS2
   bash itself.
 - **The territory's data:** `port/build-data.cmd usa` (or `eur` with
   `--territory EUR`).
-- **The game-source changes committed.**  Step 2 overwrites the working
-  copies, so the tool refuses to run with uncommitted changes.
-- **The same set of files as the base.**  An added or removed file can't
-  be identical, and the tool says so.
+- **The changes committed, and no untracked files among the build inputs.**
+  Step 2 overwrites the working copies, and an untracked file would be built
+  into both sides.
+- **The same set of files as the base.**  Swapping in base copies can't
+  undo an added or removed file, so the tool won't compare that change.
 - **A short checkout path** (see the traps below).
 - **No other PS1 build running anywhere on the machine.**
+
+Anything that stops it from comparing exits 2 with the reason on stderr:
+a build failure, a missing prerequisite, or `trans.h` changing during the
+run.  1 always means the two executables really differ.
 
 Copies of each cpe and each build log go to `out/psx_identity/`.  On this
 machine a clean build (289 files) takes one to two minutes, so the default
@@ -225,6 +248,7 @@ run takes five to ten.
 | `source/gfx/animtex.cpp` | #29 | ASSERTs |
 | `source/locale/textdbase.cpp` | #32 | ASSERTs (gated on `mips`) |
 | `source/memcard/saveload.cpp` | #57 | ASSERTs |
+| `source/pad/padicon.h` | #59 | line numbering only (no `__LINE__` user) |
 | `source/map/map.cpp` | #59 | MemAlloc |
 | `source/player/player.cpp` | #59 | ASSERT |
 

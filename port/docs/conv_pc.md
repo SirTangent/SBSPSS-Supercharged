@@ -2177,11 +2177,13 @@ builds (`port/tools/psx_identity.py build`, new with this change, as is
     a pitch set for the 11px glyph: the in-game item prompts (`PromptYGap`
     12) and the map's Start/Save pair (`MAP_INSTRUCTIONS_Y_SPACE_BETWEEN_LINES`
     13).  The 14px caps overran both, each cap's dark underside sitting on
-    the cap below.  `CPadIcon::getRowPitch(frame, height, glyphPitch)` is
-    the vertical twin of `getFrameYOffset`: a cap steps by its measured
-    height plus `KEYCAP_ROW_GAP` (1, the air slot select's 15px pitch
-    already leaves), or by the glyph pitch if that is more; a glyph always
-    steps by the glyph pitch.  `promptRender()` takes the largest pitch any
+    the cap below.  `CPadIcon::getRowPitch(bank, button, glyphPitch)` and
+    `getFrameRowPitch(bank, frame, glyphPitch)` are the vertical twins of
+    `getYOffset` / `getFrameYOffset`.  They read the icon's height from the
+    sprite bank themselves, so the measured icon is the drawn one.  A cap
+    steps by its height plus `KEYCAP_ROW_GAP` (1, the air slot select's 15px
+    pitch already leaves), or by the glyph pitch if that is more; a glyph
+    always steps by the glyph pitch.  `promptRender()` takes the largest pitch any
     icon in the prompt asks for and steps every row by it, title included,
     so the rows stay evenly spaced; the bottom row stays where it was and
     the prompt grows upward (3px a row, 9px for the net).  The map steps
