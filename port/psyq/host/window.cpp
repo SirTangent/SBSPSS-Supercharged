@@ -9,7 +9,9 @@
 	Tooling (all optional, env-driven; they work even if Vulkan fails,
 	because they read emulated VRAM directly):
 	  SBSP_DUMP_FRAMES=n[,n...]  write the displayed VRAM region as BMP at
-	                             those vblank numbers (sbsp_frame_<n>.bmp)
+	                             those vblank numbers (sbsp_frame_<n>.bmp;
+	                             black while SetDispMask(0) is in force, as
+	                             on screen - host/framedump.cpp)
 	  SBSP_DUMP_DIR=<dir>        where to write them (default .)
 	  SBSP_EXIT_AFTER=<n>        clean exit(0) at vblank n (the game's
 	                             MainLoop has no exit path of its own)
@@ -167,53 +169,14 @@ static void parseTooling(void)
 }
 
 /*****************************************************************************/
-/*	24bpp bottom-up BMP of the currently displayed VRAM region.  */
-static void put32(FILE *f, uint32_t v)	{ fwrite(&v, 4, 1, f); }
-static void put16(FILE *f, uint16_t v)	{ fwrite(&v, 2, 1, f); }
+/*	host/framedump.cpp: the BMP writer (mask-aware, raw or 4:3).  */
+extern "C" int Host_WriteDisplayBMP(const char *path, int aspect);
 
 static void dumpDisplayBMP(unsigned long vblank)
 {
-	int w = g_gpu.dispW ? g_gpu.dispW : 512;	/* pixels in BOTH modes:
-												   fmv.cpp pre-divides for
-												   isrgb24 */
-	int h = g_gpu.dispH ? g_gpu.dispH : 256;
-
 	char path[512];
 	snprintf(path, sizeof(path), "%s/sbsp_frame_%lu.bmp", g_dumpDir, vblank);
-	FILE *f = fopen(path, "wb");
-	if (!f)
-	{
-		fprintf(stderr, "[host] cannot write %s\n", path);
-		return;
-	}
-
-	int rowBytes = (w * 3 + 3) & ~3;
-	uint32_t dataSize = (uint32_t)rowBytes * h;
-
-	fwrite("BM", 2, 1, f);
-	put32(f, 54 + dataSize);  put32(f, 0);  put32(f, 54);
-	put32(f, 40);  put32(f, (uint32_t)w);  put32(f, (uint32_t)h);
-	put16(f, 1);  put16(f, 24);
-	put32(f, 0);  put32(f, dataSize);
-	put32(f, 2835);  put32(f, 2835);  put32(f, 0);  put32(f, 0);
-
-	unsigned char *row = (unsigned char *)malloc(rowBytes);
-	memset(row, 0, rowBytes);
-	for (int y = h - 1; y >= 0; y--)
-	{
-		for (int x = 0; x < w; x++)
-		{
-			unsigned char rgb[3];
-			GPU_ReadDisplayPixelRGB(x, y, rgb);		/* 15bpp or isrgb24 */
-			row[x * 3 + 0] = rgb[2];	/* B */
-			row[x * 3 + 1] = rgb[1];	/* G */
-			row[x * 3 + 2] = rgb[0];	/* R */
-		}
-		fwrite(row, 1, rowBytes, f);
-	}
-	free(row);
-	fclose(f);
-	fprintf(stderr, "[host] wrote %s (%dx%d, vblank %lu)\n", path, w, h, vblank);
+	Host_WriteDisplayBMP(path, 0);
 }
 
 /*****************************************************************************/

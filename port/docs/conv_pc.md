@@ -1953,6 +1953,32 @@ vkQueueWaitIdle per frame"; `viewport.cpp`'s integer mode says 2k/3 window
 pixels per source column (2 only at k=3), as the Presenter paragraph above
 already did.
 
+### Frame dumps honour SetDispMask (issue #27)
+
+`port/psyq/host/framedump.cpp` (new), `host/window.cpp`,
+`tests/framedump_test.cpp` (new).
+
+The presenter shows black while `SetDispMask(0)` is in force
+(`pc.mask = g_gpu.dispMask`), but `--dump-frames` wrote whatever sat in the
+display rect.  A dump taken between `FMV_play`'s `SetDispMask(0)` and
+`SetDispMask(1)` showed content the screen was blanking, so the #26
+investigation overstated how long that corruption was visible.
+
+The BMP writer moved out of `window.cpp` into `host/framedump.cpp` as
+`Host_WriteDisplayBMP(path, aspect)`.  With the display masked it writes
+black pixels at the same size under the same name, so file and vblank
+indexing stay stable, and the `[host] wrote` line says `masked` (it no
+longer repeats the vblank number, which is in the file name).  Pixels are
+still read only through `GPU_ReadDisplayPixelRGB`, so unmasked dumps are
+byte-identical to the old writer's.  The `aspect` argument is the window's
+4:3 shape for issue #53; nothing passes 1 yet.  The frame CRCs
+(`GPU_DisplayCRC32`) already reported `masked` separately and do not move.
+
+`framedump_test` (unit) pins it: mask=1 pixels match
+`GPU_ReadDisplayPixelRGB` for an offset display rect, mask=0 gives an
+all-black file with the same header and size, and the 4:3 size and 2x3
+replication.
+
 ## Game-source changes (keyboard prompt icons, issue #43)
 
 **The problem.**  Every "press this to do that" line in the game draws a pad
