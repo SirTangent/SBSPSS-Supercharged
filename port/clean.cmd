@@ -22,13 +22,6 @@ call :rmdir  source\system\FINAL
 call :del    stats.txt
 call :del    statcov.txt
 
-rem a stray file literally named "nul" needs the \\?\ prefix to delete
-if exist "\\?\%CD%\nul" (
-    del /q "\\?\%CD%\nul" 2>nul
-    echo   deleted file: nul
-    set /a CLEANED+=1
-)
-
 if "%CLEANED%"=="0" (
     echo Nothing to clean - the tree is already clean.
 ) else (
