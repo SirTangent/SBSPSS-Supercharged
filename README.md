@@ -275,6 +275,15 @@ The argument is `chapter-level` (chapters 1 to 5, levels 1 to 5, where level 5 i
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Every
 option also has an `SBSP_*` environment-variable form.
 
+**Frame dumps.** `--dump-frames 300,600` writes `sbsp_frame_300.bmp` and
+`sbsp_frame_600.bmp` at those vblanks (`--dump-dir` says where). Each is the
+framebuffer pixel for pixel, which is what frame comparisons want, but the
+PS1 shows its 512x256 frame on a 4:3 screen, so every pixel is 2 wide by 3
+tall and the BMP shows the art 1.5 times too wide. Add `--dump-aspect` to
+also write `sbsp_frame_<n>_4x3.bmp` at the window's shape (1024x768 for the
+game's frame), and **judge sprite art from that file, not from the raw
+dump**: the circle button glyph has to look round.
+
 ## 6. Controls
 
 Player one is a DualShock as far as the game is concerned. The first gamepad

@@ -38,6 +38,10 @@
 	  --pad-script <s>      SBSP_PAD_SCRIPT
 	  --dump-frames <list>  SBSP_DUMP_FRAMES
 	  --dump-dir <path>     SBSP_DUMP_DIR
+	  --dump-aspect         SBSP_DUMP_ASPECT=1 (issue #53: each dump also as
+	                        sbsp_frame_<n>_4x3.bmp at the window's 4:3 shape;
+	                        judge sprite art from that one - the raw BMP is
+	                        square-pixel, so 512-wide art shows 1.5x too wide)
 	  --exit-after <n>      SBSP_EXIT_AFTER
 	  --dump-audio <wav>    SBSP_DUMP_AUDIO (M5: deterministic mixer dump,
 	                        disables the playback device)
@@ -191,6 +195,9 @@ static void usage(void)
 		"  --frame-crc           [frame] <vbl> crc= line  (SBSP_FRAME_CRC=1)\n"
 		"  --dump-frames <list>  BMP dump vblanks         (SBSP_DUMP_FRAMES)\n"
 		"  --dump-dir <path>     where dumps go           (SBSP_DUMP_DIR)\n"
+		"  --dump-aspect         + sbsp_frame_<n>_4x3.bmp per dump (SBSP_DUMP_ASPECT=1)\n"
+		"                        the window's 4:3 shape, 1024x768 for the 512x256 frame;\n"
+		"                        judge sprite art from it, not from the square-pixel BMP\n"
 		"  --exit-after <n>      clean exit at vblank n   (SBSP_EXIT_AFTER)\n"
 		"  --dump-audio <wav>    mixer audio to WAV       (SBSP_DUMP_AUDIO)\n"
 		"  --save-dir <path>     memory-card directory    (SBSP_SAVE_DIR)\n"
@@ -335,6 +342,7 @@ PORT_EARLY_CTOR(parseArgs)
 		{ "--no-audio",        "SBSP_NO_AUDIO=1"        },
 		{ "--invincible",      "SBSP_INVINCIBLE=1"      },
 		{ "--frame-crc",       "SBSP_FRAME_CRC=1"       },
+		{ "--dump-aspect",     "SBSP_DUMP_ASPECT=1"     },	/* issue #53 */
 		{ "--assert-continue", "SBSP_ASSERT_CONTINUE=1" },	/* M8 shell: argv twins of */
 		{ "--mem-log",         "SBSP_MEM_LOG=1"         },	/* the env-only harness knobs */
 	};
