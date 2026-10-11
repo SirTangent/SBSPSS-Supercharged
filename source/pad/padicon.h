@@ -53,12 +53,6 @@ public:
 		than an out-of-range frame.  */
 	static int		getFrame(int _padButton);
 
-	/*	The same thing starting from a logical action, for the sites that
-		hold a CPadConfig::PAD_CFG (the in-game prompt table, the options
-		control readout).  */
-	static int		getFrameForCfg(CPadConfig::PAD_CFG _cfg)
-					{ return getFrame(CPadConfig::getButton(_cfg)); }
-
 	/*	The PS1 glyph for a button, ignoring the keyboard entirely.  For
 		the places that want the hardware icon as such.  */
 	static int		getPsxFrame(int _padButton);
