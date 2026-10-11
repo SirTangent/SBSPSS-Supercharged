@@ -47,6 +47,25 @@ struct GpuState
 
 extern GpuState g_gpu;
 
+/*	The displayed size, for every reader of the display rect (the presenter,
+	the frame CRC, the BMP dumps).  dispW/dispH are 0 only before anything
+	has set a mode - g_gpu is zero-initialised and ResetGraph(0) sets the
+	PS1's 256x240 reset mode - and that window is read as the game's own
+	512x256 frame (source/system/vid.h INGAME_SCREENW/H).  dispW is in
+	pixels in both colour depths (see dispRgb24).  */
+#define GPU_DEFAULT_DISP_W	512
+#define GPU_DEFAULT_DISP_H	256
+
+static inline int GPU_DisplayWidth(void)
+{
+	return g_gpu.dispW ? g_gpu.dispW : GPU_DEFAULT_DISP_W;
+}
+
+static inline int GPU_DisplayHeight(void)
+{
+	return g_gpu.dispH ? g_gpu.dispH : GPU_DEFAULT_DISP_H;
+}
+
 /*	The software renderer's pixel revision.  Bump it whenever a change moves
 	displayed pixels on purpose (a fidelity fix, not a refactor): --record-pad
 	writes it as `# render N`, and a replay whose recording names another

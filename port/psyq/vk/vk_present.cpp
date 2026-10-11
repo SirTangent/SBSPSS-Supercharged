@@ -1087,7 +1087,7 @@ void VkPresent_Frame(void)
 	{
 		int rect[4];
 		Port_ViewportRect(Port_ScaleMode(), (int)s_swapExtent.width, (int)s_swapExtent.height,
-						  g_gpu.dispH ? g_gpu.dispH : 256, rect);
+						  GPU_DisplayHeight(), rect);
 		VkViewport vpp;
 		vpp.x        = (float)rect[0];
 		vpp.y        = (float)rect[1];
@@ -1107,8 +1107,8 @@ void VkPresent_Frame(void)
 	PushConsts pc;
 	pc.disp[0] = g_gpu.dispX;
 	pc.disp[1] = g_gpu.dispY;
-	pc.disp[2] = g_gpu.dispW ? g_gpu.dispW : 512;
-	pc.disp[3] = g_gpu.dispH ? g_gpu.dispH : 256;
+	pc.disp[2] = GPU_DisplayWidth();
+	pc.disp[3] = GPU_DisplayHeight();
 	pc.mask    = g_gpu.dispMask;
 	pc.rgb24   = g_gpu.dispRgb24;
 	p_vkCmdPushConstants(cmd, s_pipeLayout, VK_SHADER_STAGE_FRAGMENT_BIT,

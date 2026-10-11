@@ -1953,6 +1953,43 @@ vkQueueWaitIdle per frame"; `viewport.cpp`'s integer mode says 2k/3 window
 pixels per source column (2 only at k=3), as the Presenter paragraph above
 already did.
 
+### Frame dumps honour SetDispMask (issue #27)
+
+`port/psyq/host/framedump.cpp` + `framedump.h` (new), `host/window.cpp`,
+`tests/framedump_test.cpp` (new).
+
+The presenter shows black while `SetDispMask(0)` is in force
+(`pc.mask = g_gpu.dispMask`), but `--dump-frames` wrote whatever sat in the
+display rect.  A dump taken between `FMV_play`'s `SetDispMask(0)` and
+`SetDispMask(1)` showed content the screen was blanking, so the #26
+investigation overstated how long that corruption was visible.
+
+The BMP writer moved out of `window.cpp` into `host/framedump.cpp` as
+`Host_WriteDisplayBMP(path)`, declared in `host/framedump.h` with C++
+linkage so a signature change fails to link.  With the display masked it
+writes black pixels at the same size under the same name, so file and
+vblank indexing stay stable, and the `[host] wrote` line says `masked` (it
+no longer repeats the vblank number, which is in the file name).  Pixels
+are still read only through `GPU_ReadDisplayPixelRGB`, so unmasked dumps
+are byte-identical to the old writer's.  A failed write (full disk, lost
+share) returns 0, logs `cannot write ... (write failed)` and removes the
+short file instead of logging `wrote`.  The frame CRCs (`GPU_DisplayCRC32`)
+hash VRAM, masked or not, and say `masked` on the `[frame]` line; they do
+not move.
+
+The displayed size has one definition: `GPU_DisplayWidth()` /
+`GPU_DisplayHeight()` in `gpu/gpu_core.h` (`GPU_DEFAULT_DISP_W/H`, 512x256,
+for the moment before anything has set a mode).  The dumper, the frame CRC
+and the presenter each carried their own `dispW ? dispW : 512` copy - six in
+all - and now call it; the numbers are unchanged, so no CRC moves.
+
+`framedump_test` (unit) pins it: mask=1 pixels match
+`GPU_ReadDisplayPixelRGB` for an offset display rect, mask=0 gives an
+all-black file with the same header and size, and an uncreatable path
+returns 0 and leaves no file.  Its temp files carry the process id, so
+trees running ctest at once do not collide.  The window-shaped 4:3 dump
+is issue #53's, not part of this change.
+
 ## Game-source changes (keyboard prompt icons, issue #43)
 
 **The problem.**  Every "press this to do that" line in the game draws a pad
