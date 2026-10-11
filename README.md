@@ -190,6 +190,12 @@ files are read through a 4-byte pointer type (`port/docs/conv_pc.md`,
 "Game-source changes (M9)"), and the 64-bit exe renders the same frames as
 the 32-bit one.
 
+Both clang-cl builds have EUR trees as well: `clangcl-eur-debug`,
+`clangcl-eur-final`, `clangcl-x64-eur-debug` and `clangcl-x64-eur-final`.
+Put the territory after the pair word, as in `port\build-pc.cmd clangcl eur`
+or `port\build-pc.cmd test clangcl64 eur` (`usa` is the default). Like the
+MinGW `eur-*` builds they need the EUR data.
+
 ### Continuous integration
 
 The GitHub Actions workflow (`.github/workflows/build.yml`) runs only when
@@ -258,8 +264,8 @@ it says - real localization is issue #37.)
 **Tester zip.** `port\package.cmd [--territory usa|eur]` (or `python port\package.py`) bundles the
 FINAL and DEBUG executables, the data, a `saves\` folder, a README and
 `run-test-session.cmd` (a recorded, logged play session) into
-`port\build\sbsp-<territory>-<date>.zip`. Add `--x64` (USA, after
-`port\build-pc.cmd clangcl64`) to include the 64-bit executables as
+`port\build\sbsp-<territory>-<date>.zip`. Add `--x64` (after
+`port\build-pc.cmd clangcl64 usa` or `clangcl64 eur`) to include the 64-bit executables as
 `sbsp64.exe` / `sbsp64-debug.exe` with their `SDL3.dll`; they share the data,
 settings and memory card with the 32-bit ones, and
 `run-test-session.cmd x64` records a session on them.

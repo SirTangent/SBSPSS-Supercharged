@@ -1,11 +1,11 @@
 #!/bin/bash
 # Configure + build the PC (Win32) port: every preset by default.
 #
-#   port/build-pc.sh [<preset>|usa|eur|clangcl|clangcl64|all] [extra ninja args...]
-#   port/build-pc.sh test [usa|eur|clangcl|clangcl64]  build, then ctest -L unit and -L playthrough on each tree
+#   port/build-pc.sh [<preset>|usa|eur|clangcl [usa|eur]|clangcl64 [usa|eur]|all] [extra ninja args...]
+#   port/build-pc.sh test [usa|eur|clangcl [usa|eur]|clangcl64 [usa|eur]]  build, then ctest -L unit and -L playthrough on each tree
 #                      (playthrough skipped, with a note, for a tree configured SBSP_PLAYTHROUGH=OFF)
-#   port/build-pc.sh soak [usa|eur|clangcl|clangcl64]  build, then the full Tier 1 + Tier 2 sweep on each tree
-#   port/build-pc.sh parity64 [debug|final]  build clang-cl x86 + x64, then the x64 A/B (streams, cross replay, cards)
+#   port/build-pc.sh soak [usa|eur|clangcl [usa|eur]|clangcl64 [usa|eur]]  build, then the full Tier 1 + Tier 2 sweep on each tree
+#   port/build-pc.sh parity64 [usa|eur] [debug|final]  build clang-cl x86 + x64, then the x64 A/B (streams, cross replay, cards)
 #
 # Presets (port/CMakePresets.json): debug, final (USA; usa-debug / usa-final
 # are accepted aliases) and eur-debug, eur-final (EUR, PAL 50Hz); `usa` /
@@ -24,6 +24,10 @@
 #
 # clangcl-x64-debug / clangcl-x64-final (`clangcl64` = both) are clang-cl
 # again, targeting x86_64 (M9); also kept out of `all`.
+#
+# clangcl-eur-debug / clangcl-eur-final and clangcl-x64-eur-debug /
+# clangcl-x64-eur-final are the EUR trees of both (issue #39): `clangcl eur`
+# and `clangcl64 eur` name those pairs (`clangcl usa` = `clangcl`).
 #
 # SBSP_CODEVIEW=1 in the environment configures the MinGW trees with
 # -DSBSP_CODEVIEW=ON (a .pdb beside every exe, for Visual Studio / WinDbg).
@@ -52,24 +56,46 @@ shift 2>/dev/null || true
 
 usage()
 {
-    echo "usage: port/build-pc.sh [debug|final|usa-debug|usa-final|eur-debug|eur-final|clangcl-debug|clangcl-final|clangcl-x64-debug|clangcl-x64-final|usa|eur|clangcl|clangcl64|all|test [usa|eur|clangcl|clangcl64]|soak [usa|eur|clangcl|clangcl64]|parity64 [debug|final]] [ninja args]" >&2
+    echo "usage: port/build-pc.sh [debug|final|usa-debug|usa-final|eur-debug|eur-final|clangcl-debug|clangcl-final|clangcl-eur-debug|clangcl-eur-final|clangcl-x64-debug|clangcl-x64-final|clangcl-x64-eur-debug|clangcl-x64-eur-final|usa|eur|clangcl [usa|eur]|clangcl64 [usa|eur]|all|test [usa|eur|clangcl [usa|eur]|clangcl64 [usa|eur]]|soak [usa|eur|clangcl [usa|eur]|clangcl64 [usa|eur]]|parity64 [usa|eur] [debug|final]] [ninja args]" >&2
     exit 1
 }
 
-# the preset list a territory word (or `all`) stands for
+lower()
+{
+    echo "$1" | tr '[:upper:]' '[:lower:]'          # any case, like build-data.sh
+}
+
+# the preset list a word (or `all`) stands for; the territory word that may
+# follow `clangcl` / `clangcl64` is the second argument (USA when empty)
 presets_for()
 {
-    w=$(echo "$1" | tr '[:upper:]' '[:lower:]')     # any case, like build-data.sh
+    w=$(lower "$1")
+    t=$(lower "${2:-usa}")
+    case "$t" in
+        usa) e= ;;
+        eur) e=eur- ;;
+        *)   usage ;;
+    esac
     case "$w" in
         usa)  echo "debug final" ;;
         eur)  echo "eur-debug eur-final" ;;
-        clangcl) echo "clangcl-debug clangcl-final" ;;
-        clangcl64) echo "clangcl-x64-debug clangcl-x64-final" ;;
+        clangcl) echo "clangcl-${e}debug clangcl-${e}final" ;;
+        clangcl64) echo "clangcl-x64-${e}debug clangcl-x64-${e}final" ;;
         all|"") echo "debug final eur-debug eur-final" ;;
-        debug|final|eur-debug|eur-final|clangcl-debug|clangcl-final|clangcl-x64-debug|clangcl-x64-final) echo "$w" ;;
+        debug|final|eur-debug|eur-final|clangcl-debug|clangcl-final|clangcl-eur-debug|clangcl-eur-final) echo "$w" ;;
+        clangcl-x64-debug|clangcl-x64-final|clangcl-x64-eur-debug|clangcl-x64-eur-final) echo "$w" ;;
         usa-debug) echo "debug" ;;      # the build-data.sh spelling, same tree
         usa-final) echo "final" ;;
         *) usage ;;
+    esac
+}
+
+# the territory a preset builds, for its data and the tier runner's --territory
+territory_of()
+{
+    case "$1" in
+        eur-*|*-eur-*) echo EUR ;;      # eur-debug, clangcl-eur-final, clangcl-x64-eur-debug, ...
+        *)             echo USA ;;
     esac
 }
 
@@ -79,10 +105,7 @@ presets_for()
 check_data()
 {
     preset="$1"
-    case "$preset" in
-        eur-*) terr=EUR ;;
-        *)     terr=USA ;;
-    esac
+    terr=$(territory_of "$preset")
     for f in "../out/$terr/include/BigLump.h" "../out/$terr/cd/BIGLUMP.BIN"; do
         if [ ! -f "$f" ]; then
             echo "missing $f - run: port/build-data.cmd $(echo "$terr" | tr '[:upper:]' '[:lower:]')" >&2
@@ -143,10 +166,7 @@ test_one()
 soak_one()
 {
     preset="$1"
-    case "$preset" in
-        eur-*) terr=EUR ;;
-        *)     terr=USA ;;
-    esac
+    terr=$(territory_of "$preset")
     echo "=== soak ($preset): tier 1 + tier 2, all routes / all levels ==="
     python3 tests/run_tier.py --exe "build/$preset/sbsp.exe" --territory "$terr" \
         --selftest --tier1 --tier2 --logs "build/$preset/soak-logs"
@@ -162,22 +182,28 @@ soak_one()
 # exit status: leg 3 is the only thing that exercises the cross-exe replay and
 # the card compare, so a known divergence in leg 2 - FINAL has one, see
 # conv_pc.md - must not be what stops it from ever being reached.
+#
+# The territory picks the trees (clangcl-<v> / clangcl-eur-<v> and their x64
+# pair) and the runner's --territory, which adds the EUR-only routes
+# (play_trailer); a USA A/B keeps its old directory, build/parity64-<v>.
 parity64()
 {
-    v="$1"
-    d="build/parity64-$v"
+    e="$1"                      # the preset infix: "" (USA) or "eur-"
+    v="$2"
+    terr=$(territory_of "clangcl-$e$v")
+    d="build/parity64-$e$v"
     rc=0
     rm -rf "$d"
-    echo "=== parity64 ($v): x86 baseline ==="
+    echo "=== parity64 ($terr $v): x86 baseline ==="
     # --no-replay: the baseline's own determinism replay is already a ctest,
     # and the recording leg 3 needs is written by the first pass regardless.
-    python3 tests/run_tier.py --exe "build/clangcl-$v/sbsp.exe" --tier1 --tier2 \
+    python3 tests/run_tier.py --exe "build/clangcl-$e$v/sbsp.exe" --territory "$terr" --tier1 --tier2 \
         --no-replay --logs "$d/L32" --keep-artifacts "$d/A32" || rc=1
-    echo "=== parity64 ($v): x64, same tiers ==="
-    python3 tests/run_tier.py --exe "build/clangcl-x64-$v/sbsp.exe" --tier1 --tier2 \
+    echo "=== parity64 ($terr $v): x64, same tiers ==="
+    python3 tests/run_tier.py --exe "build/clangcl-x64-$e$v/sbsp.exe" --territory "$terr" --tier1 --tier2 \
         --logs "$d/L64" --compare-frames "$d/L32" || rc=1
-    echo "=== parity64 ($v): x64 replays the x86 recordings ==="
-    python3 tests/run_tier.py --exe "build/clangcl-x64-$v/sbsp.exe" --tier1 \
+    echo "=== parity64 ($terr $v): x64 replays the x86 recordings ==="
+    python3 tests/run_tier.py --exe "build/clangcl-x64-$e$v/sbsp.exe" --territory "$terr" --tier1 \
         --logs "$d/L64x" --compare-frames "$d/L32" --replay-from "$d/A32" || rc=1
     return $rc
 }
@@ -186,27 +212,50 @@ parity64()
 # re-checked here or a bad word would silently build nothing.
 case "$what" in
     test)
-        list=$(presets_for "${1:-all}") || exit 1
+        list=$(presets_for "${1:-all}" "${2:-}") || exit 1
         for p in $list; do build_one "$p"; done
         for p in $list; do test_one "$p"; done
         ;;
     soak)
-        list=$(presets_for "${1:-all}") || exit 1
+        list=$(presets_for "${1:-all}" "${2:-}") || exit 1
         for p in $list; do build_one "$p"; done
         for p in $list; do soak_one "$p"; done
         ;;
     parity64)
-        # DEBUG by default: it is the variant the A/B is green on.  FINAL has
-        # a known 39-frame divergence (campaign 6858-6897, a #39 gate-2
-        # matter), so `parity64 final` is expected to report a failure.
-        v=$(echo "${1:-debug}" | tr '[:upper:]' '[:lower:]')
-        case "$v" in debug|final) ;; *) usage ;; esac
-        build_one "clangcl-$v"
-        build_one "clangcl-x64-$v"
-        parity64 "$v"
+        # [usa|eur] [debug|final]: USA and DEBUG by default, the variant the
+        # A/B is green on.  USA FINAL has a known 39-frame divergence
+        # (campaign 6858-6897, an uninitialised read - conv_pc.md, issue
+        # #39), so `parity64 final` is expected to report a failure; EUR
+        # FINAL does not show it.
+        [ $# -le 2 ] || usage
+        t=usa
+        v=debug
+        for w in "$@"; do
+            case "$(lower "$w")" in
+                usa|eur)     t=$(lower "$w") ;;
+                debug|final) v=$(lower "$w") ;;
+                *)           usage ;;
+            esac
+        done
+        case "$t" in
+            eur) e=eur- ;;
+            *)   e= ;;
+        esac
+        build_one "clangcl-$e$v"
+        build_one "clangcl-x64-$e$v"
+        parity64 "$e" "$v"
         ;;
     *)
-        list=$(presets_for "$what") || exit 1
+        # `clangcl` / `clangcl64` may be followed by a territory word; what
+        # comes after that is ninja's
+        terr=
+        case "$(lower "$what")" in
+            clangcl|clangcl64)
+                case "$(lower "${1:-}")" in
+                    usa|eur) terr="$1"; shift ;;
+                esac ;;
+        esac
+        list=$(presets_for "$what" "$terr") || exit 1
         for p in $list; do build_one "$p" "$@"; done
         ;;
 esac
