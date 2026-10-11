@@ -5,7 +5,6 @@ out/
 data/Scripts/defs/trans.scr
 *.stackdump
 .idea/
-nul
 # the copy port/build-psx.sh drops at the root for ccpsx (the tracked
 # originals live under tools/psyq/bin/)
 /sn.ini

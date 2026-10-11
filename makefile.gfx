@@ -497,7 +497,7 @@ cleanbackdrops :
 
 $(BACKDROPS_OUT_DIR)/%.gfx : $(BACKDROPS_IN_DIR)/%.tga
 	@$(TGA2GFX) $< a.tmp
-	@$(LZNP) a.tmp $@ >nul
+	@$(LZNP) a.tmp $@ >/dev/null
 	@$(RM) a.tmp
 
 GRAF_DIRS_TO_MAKE +=	$(BACKDROPS_OUT_DIR)
@@ -526,7 +526,7 @@ cleanmapscreens:
 
 $(MAPSCREENS_OUT_DIR)/%.gfx : $(MAPSCREENS_IN_DIR)/%.tga
 	@$(TGA2GFX) $< a.tmp
-	@$(LZNP) a.tmp $@ >nul
+	@$(LZNP) a.tmp $@ >/dev/null
 	@$(RM) a.tmp
 
 GRAF_DIRS_TO_MAKE +=	$(MAPSCREENS_OUT_DIR)
@@ -550,7 +550,7 @@ cleanloadingscreens :
 
 $(LOADINGSCREENS_OUT_DIR)/%.gfx : $(LOADINGSCREENS_IN_DIR)/%.tga
 	@$(TGA2GFX) $< a.tmp
-	@$(LZNP) a.tmp $@ >nul
+	@$(LZNP) a.tmp $@ >/dev/null
 	@$(RM) a.tmp
 
 
