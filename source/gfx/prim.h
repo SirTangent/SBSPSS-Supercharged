@@ -102,9 +102,10 @@
 
 /*	Portable equivalents of the swl/lwl tricks above.  A prim tag is 8 bits
 	of length over a 24-bit address; set3/get3 touch only the low 3 bytes of
-	the word, exactly like swl/lwl at offset 2 on little-endian MIPS.
-	NOTE: 24 bits reach 16MB, not 4GB - the OT and every prim linked into it
-	must share one 16MB-aligned window (any pointer width; PC: api/arena.cpp). */
+	the word, like swl/lwl at offset 2 on little-endian MIPS.  NOTE: 24 bits
+	reach 16MB at any pointer width: the PC OT walker (gpu/gp0.cpp) rebases
+	each link as (ot & ~0xFFFFFF) | addr24, so the OT and its prims must share
+	one 16MB-aligned window.  They do: api/arena.cpp's heap sits in one.  */
 inline void	set3(void *r0,u32 r1)
 {
 u32	*w=(u32*)r0;
