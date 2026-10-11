@@ -2,9 +2,13 @@
 
 Companion to `Docs/conv_mips.md` (local notes dir, untracked; it covers the GNU/MIPS inline-asm dual-pathing).
 This file logs every change made to game code (`source/`, `tools/`) for the PC
-build, per the "mechanical fixes only, logged" policy.  Every entry compiles
-identically on the PS1 toolchain — `port/build-psx.cmd` is re-run after each
-batch as the regression guard.
+build, per the "mechanical fixes only, logged" policy.  An entry must leave
+the PS1 executable (`Spongey.cpe`) byte-identical to the build before it,
+unless it says it changes the PS1 game on purpose: those entries are listed
+under "Deliberate PS1 changes" in `port/docs/psx_byte_identity.md`.  The
+guard is `port/tools/psx_identity.py build`, which compares clean PS1 builds
+of a change and of its base revision.  The PS1 build has not matched
+`master`'s since entry 13 (issue #56).
 
 The PC build itself lives in `port/` (CMake + MSYS2 MinGW-w64 i686 GCC; see
 `port/CMakeLists.txt`).  Shim/runtime code and the shadow SDK headers are
@@ -291,7 +295,8 @@ happens the block carries an `#else` / `#line <n>` arm that restores the
 original numbering for the PlayStation preprocessor only: `<n>` is the
 pristine line number of the block's `#endif` (i.e. one less than the line
 after it).  The guard is `port/build-psx.cmd` + a SHA-256 compare of
-`Spongey.cpe` against a build of the pristine sources - since #50 both
+`Spongey.cpe` against a build of the base revision (the commit before the
+change, not `master`; issue #56) - since #50 both
 are `port/tools/psx_identity.py` (`lines`, a static check; `build`, the
 clean-build hash compare), and the patterns, traps and the list of `#line`
 arms are in `port/docs/psx_byte_identity.md`.
@@ -2052,6 +2057,8 @@ run time through `sbsp.ini`.
     - `shop.cpp` stepped the cross and triangle icons back by `fh2->W`, the
       *right arrow* header left over from the line above.  Invisible while
       every icon was 18px wide; wrong as soon as they are not.  Now `fh1->W`.
+      (That moved the PS1 glyphs 3px too: entry 61 keeps `fh1->W` for key
+      caps only.)
 
 52. **`port/psyq/host/ini.cpp`, `port/psyq/host/args.cpp`** — `prompt_icons`
     (`SBSP_PROMPT_ICONS`) `auto|keys|pad`.  `auto` follows the device in use.
@@ -2259,6 +2266,50 @@ builds (`port/tools/psx_identity.py build`, new with this change, as is
     and no `#line`.  `start.h` now includes `system\global.h`, as `map.h`
     and `shop.h` already do, so the macro is defined wherever the header is
     read first.
+
+## Game-source changes (PS1 identity, issue #56)
+
+Issue #56 found that the PS1 build no longer matched `master`, while this
+file's header still said every entry compiled identically.  The deliberate
+PS1 changes stay.  The header now says what is held (each change against
+its base), and `port/docs/psx_byte_identity.md` lists the entries that
+change the PS1 game on purpose.  Three fixes came from the same review:
+
+61. **`source/shop/shop.cpp` (cross and triangle step)** - changes the PS1
+    build on purpose.  Entry 51 stepped the cross and triangle icons back by
+    their own width (`fh1->W`) instead of the right arrow's (`fh2->W`).  In
+    the sprite bank the trimmed right arrow is 15px wide and the cross and
+    triangle are 18px, so the original step lined the three glyphs' right
+    edges up, and `fh1->W` drew the cross and triangle 3px to the left: on
+    the PS1, and for a PC player on a gamepad.  A glyph steps by `fh2->W`
+    again; a key cap keeps `fh1->W`.  It is written
+    `PC_PS1((isKeyCap(...)?fh1->W:fh2->W),fh2->W)`, so the PS1 compiler gets
+    the original expression and the PS1 layout is `master`'s again.  The
+    comment above it keeps its four lines, so no `__LINE__` below moves.
+    Before and after, glyphs (`prompt_icons = pad`) in the `bonus1` route's
+    shop at vblank 450: `docs/assets/issues/56-shop-step.png`.  The same
+    frame with key caps is byte-identical before and after.
+
+62. **`source/game/bosstext.cpp` (page 0 icon offset)** - page 0 draws the
+    Down icon but took its y offset from `getYOffset(PAD_UP, ...)`.  A glyph
+    and a key cap use different offsets, and each button resolves on its
+    own (a key with no cap art keeps the glyph), so with Up and Down on
+    different kinds of key the Down icon sat 2px off its text.  The offset
+    now asks about the button drawn,
+    `PC_PS1(m_currentPage==0?PAD_DOWN:PAD_UP,PAD_UP)`: the PS1 compiler
+    gets the original `PAD_UP`.
+
+63. **`source/pad/padicon.h` (`getFrameForCfg`)** - removed.  Nothing
+    called it, though its comment said the in-game prompt table and the
+    Options readout did.  An uncalled inline member emits no code and the
+    header has no `__LINE__` user, so `Spongey.cpe` does not change; the
+    existing `#line 78` still re-syncs the numbering after the PC-only
+    block.
+
+Checked with `port/tools/psx_identity.py build` (USA, clean DEBUG and
+FINAL builds, one data build).  Entries 62 and 63 alone hash identical to
+their base.  Entry 61 changes `Spongey.cpe`, 12 bytes larger in both
+versions: the deliberate change, listed in `psx_byte_identity.md`.
 
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 

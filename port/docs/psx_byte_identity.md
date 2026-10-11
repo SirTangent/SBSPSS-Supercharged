@@ -7,8 +7,8 @@ the PlayStation executable, `Spongey.cpe`.  **Byte-identical means
 hash-identical, not just the same size.**
 
 A change that is *meant* to change the PS1 game too says so in its
-`conv_pc.md` entry, like #24's `(u8)` casts in `font.cpp`.  Everything else is
-held to the hash.
+`conv_pc.md` entry, like #24's `(u8)` casts in `font.cpp`, and adds a row to
+"Deliberate PS1 changes" below.  Everything else is held to the hash.
 
 CI's `psx-build` job only proves that the PS1 build still compiles and links.
 The hash is checked locally:
@@ -50,6 +50,33 @@ check.
 4. **Adding or removing a file the PS1 builds.**  A new translation unit
    changes the link, so it cannot be identical.  #43's `pad/padicon.cpp` was
    one, and was accepted as a deliberate change.
+
+## Deliberate PS1 changes
+
+The PS1 build has not been identical to `master`'s since entry 13.  What is
+held is each change against its base: `psx_identity.py build` compares a
+branch with the commit it started from, never with `master` (issue #56).
+These `conv_pc.md` entries change the PS1 game on purpose, and together they
+are the whole difference from `master`:
+
+| entry | files | what the PS1 build gets |
+|---|---|---|
+| 13 | `hazard/hrckshrd.cpp`, `platform/pfishhk.cpp`, `game/gameslot.h`, `gfx/animtex.cpp` | three latent bugs fixed: a stack bbox made `static`, out-params defaulted, a safe `PixPerWord` |
+| 14 | `gui/gui.h`, `fileio/fileio.cpp`, `backend/credits.cpp`, `system/clickcount.cpp` | a virtual destructor, a guard on dead code, an enum that also declared a global, and a dual-pathed cast whose extra lines move DEBUG `__LINE__`s |
+| 17 | `platform/platform.cpp` | a null-player guard |
+| 19 | `gfx/actor.cpp` and six render sites | blank-frame null guards |
+| 22 | `memcard/saveload.cpp` | an out-of-date save fails the load instead of being restored |
+| 49 | `pad/padicon.cpp` (new), `pad/padicon.h`, `makefile.gaz` | the prompt-icon resolver, a plain glyph lookup on the PS1 |
+| 50 | `Graphics/UI/+key*.bmp`, `makefile.gfx` | 14 key caps in `Sprites.Spr`, which renumbers every `FRM__` after them and the `.lvl` data that stores those numbers |
+| 51 | the ten prompt draw sites | resolver calls and measured icon widths |
+| 53 | `gfx/font.cpp` | `(u8)` font-table indexes (issue #24) |
+| 61 | `shop/shop.cpp` | the cross and triangle glyphs back on `master`'s step (issue #56) |
+
+A change that alters the PS1 build on purpose adds its row here and gives
+the before and after `Spongey.cpe` hashes from `psx_identity.py build` in its
+pull request.  A hash is only comparable with one from the same data build
+(`trans.h`, above), so hashes are recorded per run, not kept here as a fixed
+reference.
 
 ## Where the gate comes from
 
