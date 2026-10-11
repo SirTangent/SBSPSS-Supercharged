@@ -3,7 +3,8 @@
 Companion to `Docs/conv_mips.md` (local notes dir, untracked; it covers the GNU/MIPS inline-asm dual-pathing).
 This file logs every change made to game code (`source/`, `tools/`) for the PC
 build, per the "mechanical fixes only, logged" policy.  An entry must leave
-the PS1 executable (`Spongey.cpe`) byte-identical to the build before it,
+the PS1 executable (`Spongey.cpe`) byte-identical to the build before it
+(DEBUG apart from its line numbers, since entry 64),
 unless it says it changes the PS1 game on purpose: those entries are listed
 under "Deliberate PS1 changes" in `port/docs/psx_byte_identity.md`.  The
 guard is `port/tools/psx_identity.py build`, which compares clean PS1 builds
@@ -299,7 +300,9 @@ after it).  The guard is `port/build-psx.cmd` + a SHA-256 compare of
 change, not `master`; issue #56) - since #50 both
 are `port/tools/psx_identity.py` (`lines`, a static check; `build`, the
 clean-build hash compare), and the patterns, traps and the list of `#line`
-arms are in `port/docs/psx_byte_identity.md`.
+arms are in `port/docs/psx_byte_identity.md`.  Since entries 64-65 (issue
+#81) DEBUG is compared without its line numbers and the `#line` arms below
+are gone.
 
 23. **`source/system/gstate.cpp` (scene epochs)** - `GameState::think()`
     calls `Port_SceneEvent(getSceneName())` right before a new scene's
@@ -2318,6 +2321,77 @@ Checked with `port/tools/psx_identity.py build` (USA, clean DEBUG and
 FINAL builds, one data build).  Entries 62 and 63 alone hash identical to
 their base.  Entry 61 changes `Spongey.cpe`, 12 bytes larger in both
 versions: the deliberate change, listed in `psx_byte_identity.md`.
+
+## Game-source changes (line-insensitive PS1 DEBUG, issues #81 and #14)
+
+Issue #81 decided that the PS1 DEBUG build need not keep its `__LINE__`
+immediates.  FINAL is still held hash-identical, and DEBUG identical apart
+from those numbers, so the `#line` arms that pinned them go.
+`port/docs/psx_byte_identity.md` has the new rules and both compare modes.
+
+64. **`source/system/dbg.h`, `source/mem/memory.h` (`PORT_LINE`),
+    `makefile.gaz`, `port/build-psx.sh`** - `ASSERT`, `__DBGMSG` (every
+    `*_DBGMSG`) and the `__DEBUG_MEM__` `MemAlloc` take their line number
+    from one macro, `PORT_LINE` in `dbg.h`: `__LINE__`, or 0 when
+    `SBSP_IDENTITY_NOLINE` is defined.  That define is for
+    `port/tools/psx_identity.py build` only.  It sets
+    `SBSP_IDENTITY_NOLINE=1` for `build-psx.sh`, which passes it on the
+    `make` command line, and `makefile.gaz` adds the `-D` only when the
+    variable comes from the command line, printing a marker the tool
+    checks in every build log.  DEBUG is then compared with the define on
+    both sides, FINAL strictly, and the tool prints which mode it used.  A
+    base whose `dbg.h`, `makefile.gaz` and `build-psx.sh` don't all name the
+    define gets the strict compare it had before, as does `--strict`.  No
+    shipped, CI or PC build sets it.  The only `__LINE__` uses under
+    `source/` and `tools/Data/include` were these three macros; PsyQ's own
+    `_assert` (`tools/psyq/include/ASSERT.H`) also bakes one, but no game
+    file includes it.  With `PORT_LINE` as `__LINE__`, USA and EUR DEBUG and
+    FINAL hash identical to the base.  `psx_identity.py lines` now compares
+    the PS1-visible text without line numbers, and reports any `#line` the
+    PS1 compiles.
+
+65. **The `#line` arms, retired** - changes the PS1 DEBUG build on purpose,
+    its line immediates only.  The 20 directives in 9 files go:
+    `fma/fma.cpp` (#24), `game/game.cpp` (4, #28 and #56),
+    `gfx/animtex.cpp` (2, #29), `locale/textdbase.cpp` (#32, the
+    `mips`-gated `#line 48`), `map/map.cpp` (2, #59),
+    `memcard/saveload.cpp` (#57), `pad/padicon.h` (#59),
+    `player/player.cpp` (7, #59), `system/gstate.cpp` (#23).  An `#else` arm
+    that held only a `#line` goes with it.  Two arms kept a frozen PS1 copy
+    of code the PC had replaced:
+    - `map.cpp`'s Start to Save step is one line again,
+      `y+=PC_PS1(CPadIcon::getRowPitch(...),MAP_INSTRUCTIONS_Y_SPACE_BETWEEN_LINES);`.
+    - `player.cpp`'s button-to-icon switch lived twice, as the PC's
+      `promptIcons()` and the PS1 arm's inline copy.  It is one macro,
+      `PROMPT_ICONS(_input,Icon)`, which declares `Button` and `Icon` and
+      expands to the original statements.  The PC measuring pass and the
+      shared drawing pass both use it.  A `static inline` function was tried
+      first: EGCS kept `Icon`'s address in a register and stored through
+      it, and FINAL came out 4 bytes smaller.  The row step is
+      `Y-=PC_PS1(RowPitch,PromptYGap);`.
+
+    `textdbase.cpp`'s `ABI_CHECK` comment and `memory.h`'s helper comment
+    lose the line-number reasons they gave.  PS1 FINAL is unchanged, and
+    the line-insensitive DEBUG compare finds DEBUG unchanged, USA and EUR.
+    The normal DEBUG build changes (same size), and its new hashes are in
+    `port/docs/psx_build_log.csv`.  The PC game behaves as before: every
+    retired arm was in code the PC compiler skips, `map.cpp` computes the
+    same step, and `PROMPT_ICONS` gives the measuring and drawing passes
+    the icons `promptIcons()` gave.
+
+66. **`source/gfx/prim.h` (issue #14)** - comment only, in the portable
+    arm the PS1 build skips.  The NOTE above `set3` / `addPrimF` said the
+    OT and its prims must share one 16MB-aligned window, but not why that
+    is enough.  It now says what the port does.  A tag holds 24 address
+    bits at any pointer width.  `DrawOTag` (`port/psyq/gpu/gp0.cpp`)
+    rebuilds each link as `(ot & ~0xFFFFFF) | addr24`, in the OT's own
+    window, and aborts if the result falls outside the heap.  The heap,
+    where `PrimInit` allocates the OT and the prim pool, sits in one
+    window: `api/arena.cpp` reserves it at a 16MB-aligned base below 1GB.
+    The 32-bit build can fall back to any base, and then `DrawOTag`
+    aborts if the arena straddles two windows.  The x64 build has no
+    fallback.  M9's entry 35 had already corrected the old "32-bit address
+    space" wording.
 
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 
