@@ -52,6 +52,11 @@ esac
 case "$VERSION" in DEBUG|FINAL) ;; *) usage ;; esac
 echo "Data build: TERRITORY=$TERRITORY (vintage make VERSION=$VERSION) -> out/$TERRITORY"
 
+# Until issue #15 three makefile.gfx recipes redirected to `nul`, which
+# MSYS2's sh creates as a real file that Explorer and del cannot remove.
+# Trees built before the fix still have one at the root; MSYS2's rm can.
+rm -f nul
+
 # MkActor.exe compresses every pack through system("lznp ..."), and the MSVC
 # CRT's system() locates cmd.exe via COMSPEC.  An MSYS2 shell started without
 # a console (CI, an agent's subprocess) can lack it, and the only symptom is a
