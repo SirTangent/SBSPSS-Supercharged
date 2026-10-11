@@ -1995,6 +1995,75 @@ returns 0 and leaves no file.  Its temp files carry the process id, so
 trees running ctest at once do not collide.  The window-shaped 4:3 dump
 is issue #53's, not part of this change.
 
+### Build scripts: one tool setup, MSYS2 only (issues #15, #16, #42, #51)
+
+`build/globals.mak`, `makefile.gfx`, `port/build-data.sh` + `.cmd`,
+`port/build-psx.sh` + `.cmd`, `port/clean.cmd`, `.gitignore`.  No game
+source changes, and `Spongey.cpe` does not move (`psx_identity.py build`,
+USA DEBUG `5AB3A8E3` and FINAL `367F237E`, head and base).
+
+**One tool setup (#16).**  `globals.mak` pins every utility to the 1999
+cygwin binaries in `tools/cygwin` and exports a `;`-separated `PATH` and
+`Path` for them.  Those binaries crash on Windows 10/11, and both wrappers
+used to override all of it on the make command line.  One guarded block
+in `globals.mak` now does it instead, keyed on `MAKE_HOST`:
+- **MSYS2's make** (4.x, built for cygwin: `x86_64-pc-cygwin`) gets
+  MSYS2's own utilities and a POSIX `PATH`: `/usr/bin`, `port/tools`
+  (its `lznp.exe` shadows the 16-bit one), `tools`, `tools/data/bin`,
+  `tools/psyq/bin`, `egcs`.  That is the two wrappers' lists merged; no
+  file name is in more than one of those directories.  `Path` is not
+  exported, since MSYS2 already folds Windows' `Path` into `PATH`.
+- **`tools/make.exe`** (GNU make 3.79, which has no `MAKE_HOST`) keeps
+  the original pins, so `MakeUSA.bat` and friends read as before.
+- **A native Windows make 4.x** (`MAKE_HOST` `Windows32`, e.g. Git Bash's
+  WinGet make) stops with an error naming MSYS2's make.  It can run
+  neither set of tools.
+
+A bare `make -r -f makefile.gfx VERSION=DEBUG TERRITORY=USA
+USER_NAME=CDBUILD` from an MSYS2 shell is now exactly what
+`build-data.sh` runs.  `build-psx.sh` still adds the PS1-only staging:
+`sn.ini`, the temp directory, `MSYS2_ARG_CONV_EXCL` and `PSYQ_PATH`.
+
+**MSYS2's bash only (#51).**  Both scripts stop unless `MSYSTEM` is set
+and `/usr/bin/make` exists.  Git Bash sets `MSYSTEM=MINGW64` but has no
+`/usr/bin/make`.  A non-login MSYS2 bash has no `MSYSTEM`.  The message
+gives the `.cmd` and the MSYS2 command line.  make (and flock) run from
+`/usr/bin` by absolute path.  `build-psx.sh` also upper-cases `TERRITORY`
+and `VERSION` and accepts only `USA`/`EUR` and `DEBUG`/`FINAL`, and it runs
+make under `flock /tmp/sbsp-psx.lock`, MSYS2's `/tmp`, where ccpsx's fixed
+`PQ3` file lives.  It says so when it has to wait.  The `.cmd` wrappers set
+`MSYSTEM=MSYS`, so they work from Git Bash too (it exports `MINGW64`).
+`build-pc.sh` was left alone: it puts `$MSYS2_ROOT/mingw32/bin` first on
+`PATH` before calling cmake, so its tools never come from a PATH lookup
+that could find something else.
+
+**Why EUR data failed (#42).**  It was not EUR, and not a flake.  From Git
+Bash, the old `build-data.sh` ran the WinGet make.  Git Bash converts the
+`PATH=/usr/bin:...` argument into a Windows list, so that make found Git's
+coreutils and perl and got as far as the sprite sheet.  A native make runs
+a recipe with glob characters as `sh.exe -c "..."` through CreateProcess,
+and an msys `sh` (Git's or MSYS2's) started by a native program keeps only
+about the first 8K of its command line.  The parkgrab line is about 9K, so
+the last sprites and `-t`/`-l`/`-o` never reached it.  parkgrab added the
+files it got, never saw `-o`, wrote nothing and exited 0, and the next
+line's `mv` failed.  The old script from Git Bash fails that way on an
+empty `out/EUR` and on an empty `out/USA`.  An 8191-character cut of the
+2026-09-19 sprite list (before the key caps) ends exactly at
+`graphics/sfx/+explosion0006.bmp`, the issue's last line.  Under MSYS2's
+make the whole line arrives (a probe exe in parkgrab's place got all
+9,434 characters).  The sprite rule now checks for `sprites.h` before the
+`mv`, names parkgrab, and deletes `Sprites.Spr` so the next run retries.
+
+**No `nul` file (#15).**  Three `makefile.gfx` recipes redirected `lznp` to
+`nul`, which MSYS2's `sh` creates as a real file at the root.  Explorer and
+`del` can't remove it.  They now use `/dev/null`, which the 1999 route's
+`tools/cygwin/sh.exe` takes too.  The `.gitignore` entry and `clean.cmd`'s
+`\\?\` deletion are gone.  Trees built before the fix still have the file,
+and git now lists it, so `build-data.sh` deletes a stray root `nul` before
+it builds.  MSYS2's `rm` can do that, and every old tree gets a data build
+sooner or later.  `makefile.gaz`'s `cddata` rule still has a `>nul`, but
+`build-psx.sh` never runs that target.
+
 ## Game-source changes (keyboard prompt icons, issue #43)
 
 **The problem.**  Every "press this to do that" line in the game draws a pad

@@ -9,7 +9,7 @@
 # repo-root-relative), so stage a copy if missing.
 #
 # Usage: port/build-psx.sh [USA|EUR] [DEBUG|FINAL]    # defaults: USA DEBUG
-#        port\build-psx.cmd [...]                     # from cmd or PowerShell
+#        port\build-psx.cmd [...]                     # from cmd, PowerShell, Git Bash
 #
 # Constraints (issue #51), all enforced below:
 # - MSYS2's bash only.  Git Bash finds a native Windows make, which cannot
@@ -29,7 +29,7 @@ cd "$(dirname "$0")/.."
 if [ -z "$MSYSTEM" ] || [ ! -x /usr/bin/make ] || [ ! -x /usr/bin/flock ]; then
     echo "port/build-psx.sh runs only in MSYS2's bash, as a login shell, with make installed" >&2
     echo "(this shell: MSYSTEM=${MSYSTEM:-unset}, /usr/bin/make $([ -x /usr/bin/make ] && echo found || echo missing)).  Run:" >&2
-    echo "  port\\build-psx.cmd $*        (from cmd or PowerShell)" >&2
+    echo "  port\\build-psx.cmd $*        (cmd, PowerShell; port/build-psx.cmd from Git Bash)" >&2
     echo "  MSYSTEM=MSYS C:/msys64/usr/bin/bash -lc 'cd \"$PWD\" && port/build-psx.sh $*'" >&2
     exit 1
 fi
