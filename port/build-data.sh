@@ -2,11 +2,13 @@
 # Build the SBSPSS game data (BigLump.Bin + generated headers) on modern Windows.
 #
 # Runs the original makefile.gfx with the MSYS2 runtime (make/sh/coreutils/perl)
-# driving the repo's original Win32 converter EXEs. The PATH assignment on the
-# make command line overrides the vintage-cygwin PATH that build/globals.mak:141
-# force-exports (those 1999 cygwin binaries crash on Windows 10/11).
+# driving the repo's original Win32 converter EXEs.  build/globals.mak gives
+# MSYS2's make the MSYS2 utilities and PATH in place of the 1999 cygwin ones,
+# which crash on Windows 10/11 (issue #16), so the make line below is the
+# same one a bare make from an MSYS2 shell would take.  MSYS2's bash only, as
+# for build-psx.sh (issue #51): Git Bash finds a native Windows make.
 #
-# Usage (from an MSYS2 shell, or: C:\msys64\usr\bin\bash.exe -l <this script>):
+# Usage (from an MSYS2 shell, or port\build-data.cmd from cmd / PowerShell):
 #   port/build-data.sh [usa|eur]                  # default usa
 #   port/build-data.sh <preset>                   # debug|final|usa-*|eur-*: the build-pc.sh
 #                                                 # words; the variant half is ignored (note below)
@@ -21,6 +23,14 @@
 set -e
 
 cd "$(dirname "$0")/.."
+
+if [ -z "$MSYSTEM" ] || [ ! -x /usr/bin/make ]; then
+    echo "port/build-data.sh runs only in MSYS2's bash, as a login shell, with make installed" >&2
+    echo "(this shell: MSYSTEM=${MSYSTEM:-unset}, /usr/bin/make $([ -x /usr/bin/make ] && echo found || echo missing)).  Run:" >&2
+    echo "  port\\build-data.cmd $*        (from cmd or PowerShell)" >&2
+    echo "  MSYSTEM=MSYS C:/msys64/usr/bin/bash -lc 'cd \"$PWD\" && port/build-data.sh $*'" >&2
+    exit 1
+fi
 
 usage()
 {
@@ -42,21 +52,12 @@ esac
 case "$VERSION" in DEBUG|FINAL) ;; *) usage ;; esac
 echo "Data build: TERRITORY=$TERRITORY (vintage make VERSION=$VERSION) -> out/$TERRITORY"
 
-# port/tools first: its modern lznp.exe must shadow the 16-bit tools/lznp.exe.
-# PATH and Path both overridden (globals.mak exports both spellings), and every
-# tool variable globals.mak pins to the vintage tools/cygwin binaries is
-# redirected to the MSYS2 equivalents - the 1999 cygwin ones crash on Win11.
-BUILD_PATH="/usr/bin:$PWD/port/tools:$PWD/tools:$PWD/tools/Data/bin:$PWD/tools/psyq/bin"
 # MkActor.exe compresses every pack through system("lznp ..."), and the MSVC
 # CRT's system() locates cmd.exe via COMSPEC.  An MSYS2 shell started without
 # a console (CI, an agent's subprocess) can lack it, and the only symptom is a
 # bare "Could not open temp Pak file Actor.Pak" from every actor.
 export COMSPEC="${COMSPEC:-$(cygpath -w "${SYSTEMROOT:-C:/WINDOWS}/system32/cmd.exe")}"
-make -r -f makefile.gfx \
-    VERSION="$VERSION" TERRITORY="$TERRITORY" USER_NAME=CDBUILD \
-    "PATH=$BUILD_PATH" "Path=$BUILD_PATH" \
-    MKDIR=mkdir ECHO=echo MV=mv DATE=date SED=sed \
-    RMDIR=rmdir LS=ls "ATTRIB=chmod +w"
+/usr/bin/make -r -f makefile.gfx VERSION="$VERSION" TERRITORY="$TERRITORY" USER_NAME=CDBUILD
 
 # Stage the CD files the PC exe reads into the per-territory directory (M6
 # IXA, M7 movies, M8 #35 BIGLUMP).  BIGLUMP comes from the vintage make's

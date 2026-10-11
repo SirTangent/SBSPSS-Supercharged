@@ -3,17 +3,47 @@
 #
 # Same harness as build-data.sh: the MSYS2 runtime (make/sh/coreutils) drives
 # the vintage PSY-Q compilers, which still run on Win11 even though the 1999
-# cygwin utilities do not. PSYQ_PATH goes on the make command line because
-# globals.mak exports it empty; ccpsx looks for sn.ini in the cwd (its paths
-# are repo-root-relative), so stage a copy if missing.
+# cygwin utilities do not (build/globals.mak gives MSYS2's make its tools and
+# PATH). PSYQ_PATH goes on the make command line because globals.mak exports
+# it empty; ccpsx looks for sn.ini in the cwd (its paths are
+# repo-root-relative), so stage a copy if missing.
 #
-# Usage: port/build-psx.sh [TERRITORY] [VERSION]      # defaults: USA DEBUG
+# Usage: port/build-psx.sh [USA|EUR] [DEBUG|FINAL]    # defaults: USA DEBUG
+#        port\build-psx.cmd [...]                     # from cmd or PowerShell
+#
+# Constraints (issue #51), all enforced below:
+# - MSYS2's bash only.  Git Bash finds a native Windows make, which cannot
+#   read the POSIX PATH (it dies on glecho), and its /tmp is not MSYS2's.
+#   make and flock are run from MSYS2's /usr/bin by absolute path.
+# - USA|EUR and DEBUG|FINAL, upper-cased here: `debug` would compile with
+#   -D__VERSION_debug__ and NTFS would file the result under out/USA/DEBUG.
+# - One PS1 build on the machine at a time: ccpsx writes its intermediate to
+#   the fixed C:/msys64/tmp/PQ3.  make runs under flock /tmp/sbsp-psx.lock,
+#   so a second build waits for the first.
+# - Every build overwrites Spongey.cpe; copy it aside before comparing two
+#   (port/tools/psx_identity.py build does).
 set -e
 
 cd "$(dirname "$0")/.."
 
-TERRITORY="${1:-USA}"
-VERSION="${2:-DEBUG}"
+if [ -z "$MSYSTEM" ] || [ ! -x /usr/bin/make ] || [ ! -x /usr/bin/flock ]; then
+    echo "port/build-psx.sh runs only in MSYS2's bash, as a login shell, with make installed" >&2
+    echo "(this shell: MSYSTEM=${MSYSTEM:-unset}, /usr/bin/make $([ -x /usr/bin/make ] && echo found || echo missing)).  Run:" >&2
+    echo "  port\\build-psx.cmd $*        (from cmd or PowerShell)" >&2
+    echo "  MSYSTEM=MSYS C:/msys64/usr/bin/bash -lc 'cd \"$PWD\" && port/build-psx.sh $*'" >&2
+    exit 1
+fi
+
+usage()
+{
+    echo "usage: port/build-psx.sh [USA|EUR] [DEBUG|FINAL]" >&2
+    exit 1
+}
+[ $# -le 2 ] || usage
+TERRITORY=$(echo "${1:-USA}" | tr '[:lower:]' '[:upper:]')
+VERSION=$(echo "${2:-DEBUG}" | tr '[:lower:]' '[:upper:]')
+case "$TERRITORY" in USA|EUR) ;; *) usage ;; esac
+case "$VERSION" in DEBUG|FINAL) ;; *) usage ;; esac
 
 # Always refresh: the toolchain copy is authoritative.
 cp -f tools/psyq/bin/egcs/sn.ini sn.ini
@@ -30,17 +60,15 @@ export MSYS2_ARG_CONV_EXCL='*'
 # checkout has this directory already, which is why it's gone unnoticed.
 mkdir -p "out/$TERRITORY/$VERSION/CD/temp"
 
-BUILD_PATH="/usr/bin:$PWD/port/tools:$PWD/tools:$PWD/tools/psyq/bin:$PWD/tools/psyq/bin/egcs"
+LOCK=/tmp/sbsp-psx.lock
+/usr/bin/flock -n "$LOCK" true || echo "Another PS1 build holds $LOCK - waiting for it to finish..." >&2
 
 # Targets 'dirs link' only: the full 'all' also runs 'cddata' (CPE->BIN,
 # buildcd, ISO), which needs 16-bit tools (cpe2bin) and only matters for
 # pressing a physical disc - the port consumes the linked output directly.
-if ! make -r -f makefile.gaz \
+if ! /usr/bin/flock "$LOCK" /usr/bin/make -r -f makefile.gaz \
     VERSION="$VERSION" TERRITORY="$TERRITORY" USER_NAME=CDBUILD \
-    "PATH=$BUILD_PATH" "Path=$BUILD_PATH" \
     "PSYQ_PATH=$PWD/tools/psyq/bin/egcs" \
-    MKDIR=mkdir ECHO=echo MV=mv DATE=date SED=sed \
-    RMDIR=rmdir LS=ls "ATTRIB=chmod +w" \
     dirs link
 then
     echo "PSX BUILD FAILED" >&2

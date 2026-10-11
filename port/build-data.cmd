@@ -6,8 +6,11 @@ rem Usage: port\build-data.cmd [usa^|eur]                 (default usa; PC data 
 rem                                                      serves both DEBUG and FINAL exes, issue #35)
 rem        port\build-data.cmd <preset>                  (debug^|final^|usa-*^|eur-*, as build-pc.cmd; variant word ignored)
 rem        port\build-data.cmd USA^|EUR DEBUG^|FINAL       (also picks the PSX tree the vintage make writes to)
+rem Like build-psx.cmd, starts MSYS2's bash as an MSYS login shell whatever the
+rem caller's MSYSTEM (build-data.sh only runs there, issue #51).
 setlocal
 if not defined MSYS2_WIN set "MSYS2_WIN=C:\msys64"
+set "MSYSTEM=MSYS"
 set "SCRIPT=%~dp0build-data.sh"
 set "SCRIPT=%SCRIPT:\=/%"
 "%MSYS2_WIN%\usr\bin\bash.exe" -l "%SCRIPT%" %*
