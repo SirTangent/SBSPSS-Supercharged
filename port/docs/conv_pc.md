@@ -2281,14 +2281,22 @@ change the PS1 game on purpose.  Three fixes came from the same review:
     the sprite bank the trimmed right arrow is 15px wide and the cross and
     triangle are 18px, so the original step lined the three glyphs' right
     edges up, and `fh1->W` drew the cross and triangle 3px to the left: on
-    the PS1, and for a PC player on a gamepad.  A glyph steps by `fh2->W`
-    again; a key cap keeps `fh1->W`.  It is written
-    `PC_PS1((isKeyCap(...)?fh1->W:fh2->W),fh2->W)`, so the PS1 compiler gets
-    the original expression and the PS1 layout is `master`'s again.  The
-    comment above it keeps its four lines, so no `__LINE__` below moves.
-    Before and after, glyphs (`prompt_icons = pad`) in the `bonus1` route's
-    shop at vblank 450: `docs/assets/issues/56-shop-step.png`.  The same
-    frame with key caps is byte-identical before and after.
+    the PS1, and for a PC player on a gamepad.  A glyph steps by the
+    right-arrow *glyph's* width again, read as
+    `getFrameWidth(getPsxFrame(PAD_RIGHT))` and not as `fh2->W`.  On PC `fh2`
+    is whatever Right resolved to, and a keyboard player whose Right key has
+    cap art but whose Cross or Triangle key has none got the glyph stepped
+    by the 19px cap: 4px too far left (found reviewing #83).  A key cap
+    keeps `fh1->W`.  It is written
+    `PC_PS1((isKeyCap(...)?fh1->W:getFrameWidth(getPsxFrame(PAD_RIGHT))),fh2->W)`,
+    so the PS1 compiler gets the original expression and the PS1 layout is
+    `master`'s again.  The comment above it keeps its four lines, so no
+    `__LINE__` below moves.  Before and after, glyphs (`prompt_icons = pad`)
+    in the `bonus1` route's shop at vblank 450:
+    `docs/assets/issues/56-shop-step.png`.  The same frame with key caps is
+    byte-identical before and after.  With Cross and Triangle on uncapped
+    keys (`--set key_cross=K --set key_triangle=L`) their rows match the
+    all-glyph frame pixel for pixel.
 
 62. **`source/game/bosstext.cpp` (page 0 icon offset)** - page 0 draws the
     Down icon but took its y offset from `getYOffset(PAD_UP, ...)`.  A glyph
