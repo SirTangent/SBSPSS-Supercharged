@@ -2,24 +2,31 @@
 """Check that game-source changes leave the PlayStation build byte-identical.
 
 The port holds the PS1 executable (Spongey.cpe) to byte-identity: a change
-made for the PC must not change a single byte the PS1 compiler emits.  The
-rules, the patterns that meet them and the traps are in
-port/docs/psx_byte_identity.md; this is the tooling that goes with it.
+made for the PC must not change a single byte the PS1 compiler emits, apart
+from the line numbers a DEBUG build bakes in (issue #81).  The rules, the
+patterns that meet them and the traps are in port/docs/psx_byte_identity.md;
+this is the tooling that goes with it.
 
   psx_identity.py lines [--base REV] [FILE...]
       Static and fast (seconds).  Preprocesses each file the way the PS1
-      compiler would - only as far as the PSX_MIPS_ASM / mips gates and
-      #line go - and requires the PS1 to see exactly the text it saw in
-      the base revision, on exactly the same line numbers.  Default files:
+      compiler would - only as far as the PSX_MIPS_ASM / mips gates go -
+      and requires the PS1 to see the text it saw in the base revision, in
+      the same order.  Line numbers don't count.  A #line directive the PS1
+      compiles is reported too: none is needed any more.  Default files:
       every file under source/ and tools/Data/include the working tree
       changes against the base, untracked ones included.
 
-  psx_identity.py build [--base REV] [--territory USA] [--version DEBUG ...]
-      The proof (about five minutes a build).  Clean PS1 builds of HEAD and
+  psx_identity.py build [--base REV] [--territory USA] [--version DEBUG ...] [--strict]
+      The proof (one to two minutes a build).  Clean PS1 builds of HEAD and
       of the base, SHA-256 of each Spongey.cpe compared.  The base side
       checks out the base copy of every changed PS1 build input (BUILD_PATHS
-      below), not just the game source.  Needs MSYS2 and the territory's
-      data, a committed tree, and no other PS1 build running on the machine.
+      below), not just the game source.  FINAL is compared strictly.  DEBUG
+      is compared line-insensitively: both sides are built with
+      SBSP_IDENTITY_NOLINE, which compiles every baked-in __LINE__
+      (PORT_LINE, source/system/dbg.h) as 0.  Strictly instead with
+      --strict, or when the base predates PORT_LINE.  Needs MSYS2 and the
+      territory's data, a committed tree, and no other PS1 build running on
+      the machine.
 
 --base defaults to the merge-base of HEAD and SBSP-Win11, so a branch is
 compared with where it started, not with whatever has merged since.
@@ -29,6 +36,7 @@ goes to stderr).
 """
 
 import argparse
+import difflib
 import hashlib
 import os
 import re
@@ -36,6 +44,7 @@ import shutil
 import subprocess
 import sys
 import time
+import zlib
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -60,6 +69,16 @@ PS1_MACROS = {
     "PSX_NO_ASM": False,
     "SBSP_PC64": False,
 }
+
+# The line-insensitive DEBUG compare (issue #81) takes three files: the header
+# that defines PORT_LINE, the makefile that turns SBSP_IDENTITY_NOLINE into a
+# -D, and the wrapper that hands it to make.  A revision has the compare only
+# if all three name it; against an older base, DEBUG is compared strictly.
+NOLINE_DEFINE = "SBSP_IDENTITY_NOLINE"
+NOLINE_FILES = ["source/system/dbg.h", "makefile.gaz", "port/build-psx.sh"]
+# What makefile.gaz prints when it takes the define.  Every line-insensitive
+# build's log must hold it, and no strict build's may.
+NOLINE_MARKER = "SBSP_IDENTITY_NOLINE: PORT_LINE is 0"
 
 
 def fail(msg):
@@ -117,8 +136,8 @@ def evaluate(expr):
 
 
 def ps1_view(text):
-    """[(line number the PS1 compiler sees, text)] for every line the PS1
-    compiles.
+    """([(line number the PS1 compiler sees, text)] for every line the PS1
+    compiles, [(line in the file, text)] for every #line among them).
 
     Conditions over the PS1 macros are evaluated and their directive lines
     left out: what they select is in the output, so a change to one shows
@@ -126,11 +145,12 @@ def ps1_view(text):
     evaluated: every arm is kept, and so are its #if/#elif/#else/#endif
     lines, so a flipped condition is a changed line too."""
     out = []
+    pinned = []
     stack = []          # one frame per open #if: parent/active/taken/known
     active = True
     in_comment = False
     line = 1
-    for raw in text.split("\n"):
+    for phys, raw in enumerate(text.split("\n"), 1):
         raw = raw.rstrip("\r")
         s = raw.strip()
         directive = None
@@ -192,13 +212,14 @@ def ps1_view(text):
             if name == "line":
                 if active:
                     line = int(re.match(r"\d+", rest).group(0))
+                    pinned.append((phys, raw))
                 else:
                     line += 1
                 continue
         if active:
             out.append((line, raw))
         line += 1
-    return out
+    return out, pinned
 
 
 def cmd_lines(args):
@@ -217,25 +238,38 @@ def cmd_lines(args):
             print("NEW   %s - not in the base; a new file the PS1 compiles cannot be identical" % f)
             bad += 1
             continue
-        old = ps1_view(r.stdout.decode("latin-1"))
+        old, _ = ps1_view(r.stdout.decode("latin-1"))
         path = os.path.join(REPO, f)
         if not os.path.exists(path):
             print("GONE  %s - deleted" % f)
             bad += 1
             continue
-        new = ps1_view(open(path, "rb").read().decode("latin-1"))
-        if old == new:
-            print("ok    %s" % f)
+        new, pinned = ps1_view(open(path, "rb").read().decode("latin-1"))
+        for n, t in pinned:
+            # The DEBUG compare ignores line numbers, so nothing needs one,
+            # and a pinned number goes stale when code above it changes.
+            print("LINE  %s:%d - a #line the PS1 compiles; none is needed since #81: %s"
+                  % (f, n, t.strip()[:60]))
+            bad += 1
+        old_text, new_text = [t for _, t in old], [t for _, t in new]
+        if old_text == new_text:
+            if not pinned:
+                print("ok    %s" % f)
             continue
         bad += 1
-        print("DIFF  %s - the PS1 sees different text or line numbers:" % f)
-        olds, news = set(old), set(new)
+        print("DIFF  %s - the PS1 sees different text:" % f)
         shown = 0
-        for n, t in sorted((olds ^ news), key=lambda x: x[0]):
-            side = "base" if (n, t) in olds else "now "
-            print("        %s %5d: %s" % (side, n, t.strip()[:100]))
-            shown += 1
-            if shown >= 12:
+        matcher = difflib.SequenceMatcher(None, old_text, new_text, autojunk=False)
+        for op, i1, i2, j1, j2 in matcher.get_opcodes():
+            if op == "equal":
+                continue
+            for side, rows in (("base", old[i1:i2]), ("now ", new[j1:j2])):
+                for n, t in rows:
+                    if shown == 12:
+                        break
+                    print("        %s %5d: %s" % (side, n, t.strip()[:100]))
+                    shown += 1
+            if shown == 12:
                 print("        ...")
                 break
     return 1 if bad else 0
@@ -264,12 +298,28 @@ def sha256(path):
     return h.hexdigest()
 
 
-def psx_build(territory, version, log):
-    """A clean PS1 build.  Returns the path of a Spongey.cpe that this build
-    wrote: the old one is deleted first and the new one must be newer than
-    the start, so a build that fails without saying so cannot hand back the
-    other side's executable (build-psx.sh warns its exit status can be
-    swallowed)."""
+def describe(path):
+    """Size, CRC32 and SHA-256: the columns of port/docs/psx_build_log.csv."""
+    data = open(path, "rb").read()
+    return dict(size=len(data), crc32="%08X" % (zlib.crc32(data) & 0xFFFFFFFF),
+                sha256=hashlib.sha256(data).hexdigest())
+
+
+def knows_noline(rev):
+    """Whether rev's tree has the line-insensitive DEBUG compare end to end."""
+    for f in NOLINE_FILES:
+        r = git("show", "%s:%s" % (rev, f), check=False)
+        if r.returncode != 0 or NOLINE_DEFINE.encode() not in r.stdout:
+            return False
+    return True
+
+
+def psx_build(territory, version, log, noline):
+    """A clean PS1 build, with PORT_LINE as 0 if noline.  Returns the path of
+    a Spongey.cpe that this build wrote: the old one is deleted first and the
+    new one must be newer than the start, so a build that fails without
+    saying so cannot hand back the other side's executable (build-psx.sh
+    warns its exit status can be swallowed)."""
     tree = os.path.join(REPO, "out", territory, version)
     for d in (os.path.join(tree, "CD", "objs"), os.path.join(tree, "deps")):
         shutil.rmtree(d, ignore_errors=True)        # a clean build: every TU recompiled
@@ -278,11 +328,17 @@ def psx_build(territory, version, log):
         os.remove(cpe)
     start = time.time()
     env = dict(os.environ, MSYSTEM="MSYS")
-    cmd = "cd '%s' && port/build-psx.sh %s %s" % (posix(REPO), territory, version)
+    env.pop(NOLINE_DEFINE, None)        # only this run's choice reaches the build
+    cmd = "cd '%s' && %sport/build-psx.sh %s %s" % (
+        posix(REPO), NOLINE_DEFINE + "=1 " if noline else "", territory, version)
     with open(log, "wb") as f:
         r = subprocess.run([msys_bash(), "-lc", cmd], stdout=f, stderr=subprocess.STDOUT, env=env)
     if r.returncode != 0 or not os.path.exists(cpe) or os.path.getmtime(cpe) < start - 2:
         fail("PS1 build failed (%s %s) - see %s" % (territory, version, log))
+    marked = NOLINE_MARKER in open(log, "rb").read().decode(errors="replace")
+    if marked != noline:
+        fail("the %s %s build %s %s - see %s" % (
+            territory, version, "did not take" if noline else "took", NOLINE_DEFINE, log))
     return cpe
 
 
@@ -313,33 +369,58 @@ def cmd_build(args):
     if not os.path.exists(trans):
         fail("%s missing - run port/build-data.cmd %s first" % (trans, territory.lower()))
 
+    # FINAL bakes in no line numbers, so it is always compared strictly.
+    # DEBUG is compared with PORT_LINE as 0 on both sides, which needs both
+    # trees to have the switch: a base from before it is compared strictly.
+    if args.strict:
+        debug_noline, why = False, "--strict"
+    elif not knows_noline(base):
+        debug_noline, why = False, "the base predates PORT_LINE (no %s in %s)" % (
+            NOLINE_DEFINE, ", ".join(NOLINE_FILES))
+    elif not knows_noline("HEAD"):
+        debug_noline, why = False, "HEAD has no %s in %s" % (NOLINE_DEFINE, ", ".join(NOLINE_FILES))
+    else:
+        debug_noline, why = True, "both sides built with %s, PORT_LINE 0" % NOLINE_DEFINE
+
     outdir = os.path.join(REPO, "out", "psx_identity")
     os.makedirs(outdir, exist_ok=True)
     trans_before = sha256(trans)
     print("base %s, %d changed file(s), trans.h %s" % (base[:10], len(files), trans_before[:16]))
+    modes = {}
+    for v in versions:
+        noline = v == "DEBUG" and debug_noline
+        modes[v] = noline
+        print("%s: %s" % (v, ("line-insensitive - " + why) if noline else
+                          ("strict - " + why) if v == "DEBUG" else "strict - it bakes in no line numbers"))
     results = []
     for v in versions:
-        hashes = {}
+        noline = modes[v]
+        name = v + ("-noline" if noline else "")
+        found = {}
         for side in ("head", "base"):
             if side == "base":
                 git("checkout", base, "--", *files)
             try:
-                cpe = psx_build(territory, v, os.path.join(outdir, "%s-%s.log" % (side, v)))
-                keep = os.path.join(outdir, "%s-%s.cpe" % (side, v))
+                cpe = psx_build(territory, v, os.path.join(outdir, "%s-%s.log" % (side, name)), noline)
+                keep = os.path.join(outdir, "%s-%s.cpe" % (side, name))
                 shutil.copyfile(cpe, keep)
-                hashes[side] = sha256(keep)
+                found[side] = describe(keep)
             finally:
                 if side == "base":
                     git("checkout", "HEAD", "--", *files)
-        results.append((v, hashes["head"], hashes["base"]))
+        results.append((v, noline, found))
     if sha256(trans) != trans_before:
         fail("trans.h changed during the run (a data build?) - the comparison is void")
     failed = 0
-    for v, head, base_hash in results:
-        same = head == base_hash
+    for v, noline, found in results:
+        same = found["head"]["sha256"] == found["base"]["sha256"]
         failed += not same
-        print("%s %s %s: head %s base %s" % ("IDENTICAL" if same else "DIFFERENT", territory, v,
-                                              head[:16], base_hash[:16]))
+        print("%s %s %s (%s)" % ("IDENTICAL" if same else "DIFFERENT", territory, v,
+                                 "line-insensitive" if noline else "strict"))
+        for side in ("head", "base"):
+            print("    %s %8d B  crc32 %s  sha256 %s" % (
+                side, found[side]["size"], found[side]["crc32"], found[side]["sha256"]))
+    print("trans.h sha256 %s" % trans_before)
     if failed:
         print("cpe copies and build logs: %s" % outdir)
     return 1 if failed else 0
@@ -348,13 +429,15 @@ def cmd_build(args):
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
-    pl = sub.add_parser("lines", help="static check: the PS1 sees the same text on the same lines")
+    pl = sub.add_parser("lines", help="static check: the PS1 sees the same text, in the same order")
     pl.add_argument("--base")
     pl.add_argument("files", nargs="*")
     pb = sub.add_parser("build", help="clean PS1 builds of HEAD and base, Spongey.cpe hashes compared")
     pb.add_argument("--base")
     pb.add_argument("--territory", default="USA")
     pb.add_argument("--version", action="append", help="DEBUG and/or FINAL (default both)")
+    pb.add_argument("--strict", action="store_true",
+                    help="compare DEBUG with its line numbers too (the normal DEBUG build)")
     args = p.parse_args()
     return cmd_lines(args) if args.cmd == "lines" else cmd_build(args)
 

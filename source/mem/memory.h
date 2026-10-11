@@ -95,7 +95,7 @@ void	operator delete[](void *Ptr);
 #ifdef __DEBUG_MEM__
 	void	dumpDebugMem();
 	void	DebugMemFontInit();
-	#define MemAlloc( Size, Name )	MemAllocate( (Size), (Name), __FILE__, __LINE__ )
+	#define MemAlloc( Size, Name )	MemAllocate( (Size), (Name), __FILE__, PORT_LINE )
 #else
 	#define MemAlloc(Size,Name)	MemAllocate( (Size), NULL, NULL, 0 )
 	#define	dumpDebugMem	;

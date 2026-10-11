@@ -32,6 +32,14 @@ mkdir -p "out/$TERRITORY/$VERSION/CD/temp"
 
 BUILD_PATH="/usr/bin:$PWD/port/tools:$PWD/tools:$PWD/tools/psyq/bin:$PWD/tools/psyq/bin/egcs"
 
+# Comparison-only, for port/tools/psx_identity.py: SBSP_IDENTITY_NOLINE=1
+# builds with PORT_LINE (source/system/dbg.h) as 0, so two DEBUG builds
+# compare without counting line shifts.  Never set it for a build anyone runs.
+NOLINE=()
+if [ "${SBSP_IDENTITY_NOLINE:-}" = 1 ]; then
+    NOLINE=(SBSP_IDENTITY_NOLINE=1)
+fi
+
 # Targets 'dirs link' only: the full 'all' also runs 'cddata' (CPE->BIN,
 # buildcd, ISO), which needs 16-bit tools (cpe2bin) and only matters for
 # pressing a physical disc - the port consumes the linked output directly.
@@ -41,6 +49,7 @@ if ! make -r -f makefile.gaz \
     "PSYQ_PATH=$PWD/tools/psyq/bin/egcs" \
     MKDIR=mkdir ECHO=echo MV=mv DATE=date SED=sed \
     RMDIR=rmdir LS=ls "ATTRIB=chmod +w" \
+    "${NOLINE[@]}" \
     dirs link
 then
     echo "PSX BUILD FAILED" >&2
