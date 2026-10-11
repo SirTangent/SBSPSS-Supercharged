@@ -410,8 +410,17 @@ cleansprites:
 
 sprites:	$(SPRITES_ALL_DEP)
 
+#	parkgrab exits 0 whether or not it wrote anything.  A native Windows
+#	make (Git Bash's) runs this recipe as `sh -c "..."`, and an msys sh
+#	started by a native program gets only the first ~8K of its command
+#	line: this one is ~9K, so the last sprites and -t/-l/-o never arrived,
+#	parkgrab wrote nothing, and the build stopped at the mv with "cannot
+#	stat sprites.h" (issue #42).  Only MSYS2's make runs this build now
+#	(build/globals.mak), but check for the header anyway, name the tool,
+#	and drop the texture so the next run cannot take it as up to date.
 $(SPRITES_TEX_OUT) : $(SPRITES_ALL_DEP)
 		@$(PARKGRAB) -b+ $(SPRITES_ALL_IN) -t:12,4,1 -l:$(SPRITES_OUT_DIR)/sprites.lbm -o:$(SPRITES_TEX_OUT)
+		@test -f $(SPRITES_OUT_DIR)/sprites.h || { $(ECHO) "makefile.gfx: $(PARKGRAB) exited 0 but wrote no $(SPRITES_OUT_DIR)/sprites.h (issue #42)" >&2; $(RM) -f $(SPRITES_TEX_OUT); exit 1; }
 		@$(MV) -f $(SPRITES_OUT_DIR)/sprites.h $(SPRITES_HDR_OUT)
 		@$(ECHO) Sprites Made
 
