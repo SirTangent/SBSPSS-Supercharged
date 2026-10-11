@@ -1402,7 +1402,100 @@ so what is muted is the lines' trailing silence.  `xa_test` streams every
 interleave slot at both rates through `Port_CdVblank` and
 `Spu_RenderFrames` and requires one unbroken run (46 of 62 broke before).
 The FMV/STR audio ring (`cd/str_stream.cpp`) has the same vblank
-quantization and is not changed here; it is left for a follow-up.
+quantization and is not changed here; see the next section (issue #71).
+
+### FMV audio pre-roll (issue #71)
+
+Shim-side only: `cd/str_stream.{h,cpp}`, `str_test` and the docs.
+
+**What was measured.**  All four movies carry their sound the same way:
+one stereo 37.8 kHz audio sector in every eight, the first at sector 7
+(THQ 169 audio sectors, CLIMAX 150, INTRO 759, DEMO 682, all file 1
+chan 1), so a sector's 2016 frames arrive every 3.2 vblanks at 60 Hz and
+2.67 at 50 Hz, exactly as fast as they play.  The ring level before each
+audio push (`Spu_CdInCount()`) and the frames the mixer drew from an
+empty ring were logged with a temporary trace, under `--uncapped
+--no-cd-pace --dump-audio`: the USA boot through THQ, CLIMAX and INTRO,
+the EUR boot, and the EUR PLAY TRAILER route through DEMO.
+
+- USA, 60 Hz: none of the 1046 pushes after each movie's first was
+  preceded by a dry draw, and the WAV has no zero run in the movies that
+  is not in the soundtrack.  But the levels before a push cycle 126, 252,
+  378, 504, 0: every fifth sector (210 of them) found the ring exactly
+  empty.  Slot 7 is one of the two slots of eight with no gap at 60 Hz.
+- EUR, 50 Hz: every movie (THQ, CLIMAX, INTRO, DEMO) ran dry for 252
+  frames before its second audio sector, a 293-output-frame (6.7 ms) zero
+  run 53 ms into its sound, and from then on found the ring exactly empty
+  before every third sector (levels 504, 252, 0).
+- A sector k lands on vblank ceil((k + 1) * hz / 150), up to 0.8 (60 Hz)
+  / 0.67 (50 Hz) of a vblank later than the movie's first audio sector
+  did.  Without a cushion that leaves the ring 0-504 frames short
+  depending on the slot (60 Hz: 6 slots of 8 short, 126-504; 50 Hz: 5 of
+  8, 252 or 504), and exactly empty at some point on every slot.  A
+  playback device pulls a period ahead of that, so live play had no
+  headroom at all.
+
+**The fix.**  `StrStream_Start` (CdRead2) arms a pre-roll, and the
+stream's first audio sector that passes the SF gate is preceded by
+`STR_PREROLL_FRAMES` (1512 frames, 40 ms at 37.8 kHz; 756 for a mono
+18.9 kHz stream) of silence when the ring is empty, the XA pre-roll's
+40 ms.  It covers the worst slot's 504 frames and leaves at least 1008
+(~1176 output frames); for the shipped movies the ring now bottoms out
+at 1512 frames at 60 Hz and 1260 at 50 Hz (~1760 / ~1470 output frames),
+so it does not run dry in a dump or at the default device period
+(~480), but an `audio_buffer_frames` above ~1470 (50 Hz) / ~1760
+(60 Hz) can still underrun mid-movie in live play.  Nothing the game
+sees moves: frames, the stop threshold and `CdlPause` are still on the
+sector clock.
+
+**A/V sync.**  The pre-roll delays the sound against the pictures by
+40 ms, and that moves it toward them.  Measured per movie as the vblank
+each frame is shown on (`--frame-crc`) against its movie time and the
+first audio push, median over every frame whose picture changes
+(positive = the picture is later than the sound):
+
+| Movie | 60 Hz before | 60 Hz after | 50 Hz before | 50 Hz after |
+|---|---|---|---|---|
+| THQ (30 fps) | +33 ms | -7 ms | +53 ms (+47 after the gap) | +13 ms |
+| CLIMAX (25 fps) | +53 ms | +13 ms | +60 ms (+53) | +20 ms |
+| INTRO (15 fps) | +100 ms | +60 ms | +120 ms (+113) | +80 ms |
+| DEMO (25 fps) | - | - | +60 ms (+53) | +20 ms |
+
+The sound led because `fmv.cpp` decodes a frame while it waits for the
+next one: a frame appears two vblanks after `StGetNext` hands out the
+frame after it (the same code path as on hardware), ~6 vblanks behind its
+movie time at INTRO's 15 fps.  Every offset gets smaller and only THQ at
+60 Hz changes sign, to 7 ms, so nothing is matched on the video side -
+holding pictures back would undo it.
+
+**Before/after oracle** (the same routes, the commit before against this
+one, both under the determinism set): the `[frame]` and `[scene]`
+streams are identical; the WAVs are identical outside the movies; inside
+each movie the new WAV is the old one delayed by exactly 1764 output
+frames up to the stop (USA), and at 50 Hz by 1764 up to the old gap and
+1470 after it (two frames at the old gap differ, its ramps), with no
+zero run left that is not in the soundtrack.  The game's stop
+(`SetCDVolumeOff`, then `CdlPause` flushes the ring) now falls 40 ms
+earlier in the soundtrack (33 ms at 50 Hz, where the old gap had already
+cost 6.7 ms).  What it drops peaks at 0 for THQ and CLIMAX and at 96 (USA)
+/ 95 (EUR) for INTRO; DEMO's music is still playing where the game cuts
+it at frame 909 (peaks of 4700-6400 over its last 70 ms, either way),
+and its dropped part peaks at 4983.  A START skip cuts the same way,
+40 ms earlier in the soundtrack.
+
+`[audio]` lines: the CRC changes, the length does not, for every run in
+which a movie's sound plays.  Tier 1 `campaign` and `gameover_final`
+(both territories; the latter returns to the front end, which opens on
+INTRO) and `play_trailer` (EUR); `bonus1`-`5`, `gameover_continue`,
+`pause_quit` and all 25 Tier 2 levels (USA) are identical.  No committed
+golden holds audio; the line only matters to `--compare-frames` against
+logs from before this change.
+
+`str_test` streams the movies' interleave (8 audio sectors, padding for
+pictures) from each of the 8 slots at 60 Hz and 50 Hz through
+`Port_CdVblank` then `Spu_RenderFrames` and requires one unbroken run as
+long as the sectors; 11 of the 16 runs broke without the pre-roll
+(146-587 zero frames).  Its ring counts include the pre-roll, once.
 
 ### Video accuracy and bounds (issues #60, #28, #29)
 

@@ -16,14 +16,18 @@
 	str_test_tmp/CLIMAX.STR is one 1-chunk frame whose payload is a BS v2
 	stream with no end-of-frame code (issue #60).
 
+	str_test_tmp/INTRO.STR is the movies' 1-in-8 audio interleave with
+	padding for pictures (issue #71).
+
 	Covers: arming + streaming via the real dispatch, frame assembly
 	order/content/StHEADER copies, the 9-chunk frame, ring backpressure
 	(frames held un-freed until delivery stalls, then resumes on free),
-	the CdlModeSF filter gate both ways, stereo pairs at 37.8kHz, EOF,
-	CdlPause mid-stream, StUnSetRing + full re-arm (the THQ->CLIMAX
-	shape), StrStream_FrameEnd, and DecDCTvlc3 on an unterminated frame
-	that ends at a guard page.  The XA speech engine's own coverage is
-	xa_test.
+	the CdlModeSF filter gate both ways, stereo pairs at 37.8kHz and the
+	pre-roll ahead of them, EOF, CdlPause mid-stream, StUnSetRing + full
+	re-arm (the THQ->CLIMAX shape), StrStream_FrameEnd, DecDCTvlc3 on an
+	unterminated frame that ends at a guard page, and movie audio rendered
+	through Spu_RenderFrames with no gap at either vblank rate.  The XA
+	speech engine's own coverage is xa_test.
 */
 #include <windows.h>
 
@@ -80,13 +84,17 @@ static void writeVideoSector(FILE *f, unsigned frameNo, unsigned chunk,
 	fwrite(sec, 1, sizeof(sec), f);
 }
 
-static void writeAudioSector(FILE *f, int file, int chan)
+static void writeAudioSector(FILE *f, int file, int chan, uint8_t nibble = 0)
 {
 	uint8_t sec[2336];
 	memset(sec, 0, sizeof(sec));
 	sec[0] = (uint8_t)file; sec[1] = (uint8_t)chan;
 	sec[2] = 0x64; sec[3] = 0x01;		/* audio, stereo 37.8kHz 4-bit */
 	memcpy(sec + 4, sec, 4);
+	/*	params 0 (filter 0, shift 0), data = nibble in both positions of
+		every byte -> every L and R sample is nibble<<12  */
+	for (int grp = 0; grp < 18; grp++)
+		memset(sec + 8 + grp * 128 + 16, nibble | (nibble << 4), 112);
 	fwrite(sec, 1, sizeof(sec), f);
 }
 
@@ -138,6 +146,24 @@ static void buildDisc(void)
 	writeVideoSector(f, 1, 0, 1, (const uint8_t *)bs);
 	writeZeroSector(f);
 	fclose(f);
+
+	/*	INTRO.STR: the shipped movies' audio interleave without pictures -
+		8 groups of 8 sectors, slot 7 a stereo audio sector whose every
+		sample is 0x3000, slots 0-6 zero padding - and one more group of
+		padding, so a test that stops after the last audio sector never
+		reaches the end of the file.  */
+	f = fopen("str_test_tmp\\INTRO.STR", "wb");
+	check(f != NULL, "gap movie created");
+	if (!f)
+		return;
+	for (int s = 0; s < 9 * 8; s++)
+	{
+		if (s < 8 * 8 && s % 8 == 7)
+			writeAudioSector(f, 1, 1, 0x3);
+		else
+			writeZeroSector(f);
+	}
+	fclose(f);
 }
 
 static bool frameContentOk(const uint8_t *p, unsigned frameNo, unsigned nChunks)
@@ -151,10 +177,10 @@ static bool frameContentOk(const uint8_t *p, unsigned frameNo, unsigned nChunks)
 
 static long g_movieLBA;
 
-static void kick(long mode)
+static void kick(long mode, long offset = 0)
 {
 	CdlLOC loc;
-	CdIntToPos((int)g_movieLBA, &loc);
+	CdIntToPos((int)(g_movieLBA + offset), &loc);
 	check(CdControl(CdlSeekL, (u_char *)&loc, 0) != 0, "CdlSeekL accepted");
 	check(CdRead2(mode) != 0, "CdRead2 reports streaming");
 }
@@ -163,6 +189,97 @@ static void pump(int vblanks)
 {
 	for (int i = 0; i < vblanks; i++)
 		Port_CdVblank(60);
+}
+
+/*****************************************************************************/
+/*	No gap mid-movie (issue #71).  INTRO.STR (buildDisc) streamed from each
+	of its first 8 sectors, so the first audio sector lands at every slot
+	of the 1-in-8 interleave, at 60Hz (735 frames per vblank) and 50Hz
+	(882), in the dump path's order - Port_CdVblank, then that vblank's
+	frames rendered.  The output must be one unbroken nonzero run as long
+	as the 8 audio sectors: a sector quantized to a vblank lands up to 0.8
+	of one later than the first did, and without the pre-roll the ring ran
+	dry on 11 of the 16 runs (126-504 frames; the shipped movies start
+	audio at slot 7: dry at 50Hz, not at 60Hz).  */
+static void noGapTest(u_long *ring)
+{
+	CdlFILE cf;
+	check(CdSearchFile(&cf, (char *)"\\INTRO.STR;1") != NULL,
+		  "gap movie in the virtual dir");
+	g_movieLBA = CdPosToInt(&cf.pos);
+
+	Spu_Lock();
+	memset(g_spuVoice, 0, sizeof(SpuVoiceState) * SPU_NVOICES);
+	g_spuMasterVolL = g_spuMasterVolR = 0x3FFF;
+	g_spuCdVolL = g_spuCdVolR = 0x7FFF;
+	g_spuCdMixOn = 1;
+	Spu_Unlock();
+	Spu_SetCdAtv(128, 0, 0, 128);
+
+	const int runFrames = 8 * XA_SECTOR_PAIRS * 44100 / 37800;	/* 18816 */
+	static int16_t out[60 * 882 * 2];
+	int badRuns = 0;
+	const int rates[2] = { 60, 50 };
+	for (int r = 0; r < 2; r++)
+	{
+		int hz = rates[r], per = 44100 / hz;
+		for (int start = 0; start < 8; start++)
+		{
+			StUnSetRing();
+			StrStream_ResetForTest();
+			Spu_CdInClear();
+			StSetRing(ring, 32);
+			StSetStream(1, 1, 0xFFFFFFFFu, 0, 0);
+			kick(CdlModeStream | CdlModeSpeed | CdlModeRT, start);
+			/*	deliver through the last audio sector (sector 63; the
+				padding group after it keeps a burst off the file's end),
+				then keep rendering until the ring has drained  */
+			int n = 0;
+			for (int v = 0; v < 60; v++)
+			{
+				if (start + (v * 150) / hz < 64)
+					Port_CdVblank(hz);
+				Spu_RenderFrames(out + n * 2, per);
+				n += per;
+			}
+			CdControlB(CdlPause, 0, 0);
+
+			int first = -1, last = -1, zeros = 0;
+			for (int i = 0; i < n; i++)
+				if (out[i * 2] != 0)
+				{
+					if (first < 0)
+						first = i;
+					last = i;
+				}
+			for (int i = first; first >= 0 && i <= last; i++)
+				if (out[i * 2] == 0)
+					zeros++;
+			/*	the ramps in and out interpolate against silence, so the run
+				is the sectors' length give or take a source frame  */
+			if (first < 0 || zeros || last - first + 1 < runFrames - 3)
+			{
+				if (badRuns < 4)
+					std::printf("  (first audio at slot %d, %dHz: %d zero frames "
+								"mid-movie, run %d of %d)\n", 7 - start, hz,
+								zeros, first < 0 ? 0 : last - first + 1,
+								runFrames);
+				badRuns++;
+			}
+		}
+	}
+	check(badRuns == 0,
+		  "STR pre-roll: no gap mid-movie at any interleave slot, 60Hz or 50Hz");
+	if (badRuns)
+		std::printf("  (%d of 16 slot/rate runs broken)\n", badRuns);
+
+	Spu_Lock();
+	g_spuCdMixOn = 0;
+	g_spuCdVolL = g_spuCdVolR = 0;
+	Spu_Unlock();
+	StUnSetRing();
+	StrStream_ResetForTest();
+	Spu_CdInClear();
 }
 
 /*****************************************************************************/
@@ -205,8 +322,8 @@ int main(void)
 		check(StrStream_FrameEnd((const uint8_t *)addr + 2) == NULL,
 			  "FrameEnd: only a frame's start pointer is known");
 	}
-	check(Spu_CdInCount() == XA_SECTOR_PAIRS,
-		  "audio sector became 2016 stereo pairs (no SF: filter ignored)");
+	check(Spu_CdInCount() == STR_PREROLL_FRAMES + XA_SECTOR_PAIRS,
+		  "pre-roll + audio sector as 2016 stereo pairs (no SF: filter ignored)");
 	StFreeRing(addr);
 	check(StrStream_FrameEnd(addr) == NULL, "FrameEnd: a freed frame is unknown");
 
@@ -215,6 +332,8 @@ int main(void)
 	if (hdr)
 		check(((const StHEADER *)hdr)->frameCount == 2, "frame 2 in order");
 	StFreeRing(addr);
+	check(Spu_CdInCount() == STR_PREROLL_FRAMES + 2 * XA_SECTOR_PAIRS,
+		  "second audio sector: no second pre-roll");
 
 	pump(4);							/* the 9-chunk frame */
 	check(StGetNext(&addr, &hdr) == 0, "9-chunk frame 3 ready");
@@ -363,6 +482,9 @@ int main(void)
 			VirtualFree(base, 0, MEM_RELEASE);
 		}
 	}
+
+	/*	-------- 8: the movie audio has no gap mid-stream  */
+	noGapTest(ring);
 
 	if (g_failures)
 	{

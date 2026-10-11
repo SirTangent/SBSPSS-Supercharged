@@ -13,7 +13,8 @@
 	  when the CdRead2 mode carries CdlModeSF - fmv.cpp streams with
 	  Stream|Speed|RT and no SF, so a stale speech filter never mutes a
 	  movie; decoded by coding (0x01 stereo 37.8kHz / 0x04 mono 18.9kHz)
-	  into the SPU CD-input ring at the matching rate.
+	  into the SPU CD-input ring at the matching rate, the stream's first
+	  one behind 40ms of silence (STR_PREROLL_FRAMES, issue #71).
 	- video (StHEADER id 0160h type 8001h): the 2016-byte payload is
 	  assembled into the GAME's StSetRing buffer by frame - a contiguous-
 	  with-wrap region of nSectors*2016 bytes per frame, chunk placed at
@@ -90,6 +91,8 @@ const char	*g_fileName;
 long		g_curSector;
 long		g_acc;						/* fractional sector clock */
 int32_t		g_hL1, g_hL2, g_hR1, g_hR2;	/* ADPCM history (stereo/mono) */
+int			g_preroll;					/* StrStream_Start armed the pre-roll
+										   (issue #71) */
 
 int			g_trace = -1;				/* SBSP_STR_LOG */
 
@@ -153,6 +156,31 @@ void resetStream(void)
 	g_curSector = 0;
 	g_acc = 0;
 	g_hL1 = g_hL2 = g_hR1 = g_hR2 = 0;
+	g_preroll = 0;
+}
+
+/*	Pre-roll, once per CdRead2, ahead of the stream's first audio sector.
+	The sectors come 8 apart - 2016 frames every 3.2 vblanks at 60Hz - but
+	each lands on a whole vblank while the mixer drains the ring
+	continuously from the first push, so without a cushion the ring ran
+	dry ~53ms into every movie at 50Hz (a 252-frame gap) and, at both
+	rates, was exactly empty when every fifth (60Hz) / third (50Hz) sector
+	landed.  So the first sector is preceded by STR_PREROLL_FRAMES of
+	silence (only into an empty ring - nothing is ever delayed behind
+	queued audio).  The picture does not move: the movie's frames and its
+	end are still the sector clock's.  */
+void prerollOnce(int stereo)
+{
+	if (!g_preroll)
+		return;
+	g_preroll = 0;
+	if (Spu_CdInCount() != 0)
+		return;
+	static const int16_t zeros[STR_PREROLL_FRAMES * 2] = { 0 };
+	if (stereo)
+		Spu_CdInPushStereo(zeros, STR_PREROLL_FRAMES);
+	else
+		Spu_CdInPush(zeros, STR_PREROLL_FRAMES / 2);	/* 40ms at 18.9kHz */
 }
 
 void resetRing(void)
@@ -215,12 +243,14 @@ int deliverNext(void)
 			Spu_CdInSetRate(37800);
 			XaAdpcm_DecodeSector4bitStereo(sec + 8, pcm,
 										   &g_hL1, &g_hL2, &g_hR1, &g_hR2);
+			prerollOnce(1);
 			Spu_CdInPushStereo(pcm, XA_SECTOR_PAIRS);
 		}
 		else if (coding == 0x04)
 		{
 			Spu_CdInSetRate(18900);
 			XaAdpcm_DecodeSector4bitMono(sec + 8, pcm, &g_hL1, &g_hL2);
+			prerollOnce(0);
 			Spu_CdInPush(pcm, XA_SECTOR_SAMPLES);
 		}
 		else
@@ -362,6 +392,7 @@ extern "C" int StrStream_Start(long mode)
 	g_fileSectors = sectors;
 	g_fileName = name;
 	g_curSector = g_seekLBA - start;
+	g_preroll = 1;
 	g_streaming = 1;
 	if (trace())
 		fprintf(stderr, "[str] streaming %s from sector %ld (mode %03lX)\n",
