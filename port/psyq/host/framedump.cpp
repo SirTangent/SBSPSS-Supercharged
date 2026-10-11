@@ -19,10 +19,9 @@ static void put16(FILE *f, uint16_t v)	{ fwrite(&v, 2, 1, f); }
 
 int Host_WriteDisplayBMP(const char *path)
 {
-	int w = g_gpu.dispW ? g_gpu.dispW : 512;	/* pixels in BOTH modes:
-												   fmv.cpp pre-divides for
-												   isrgb24 */
-	int h = g_gpu.dispH ? g_gpu.dispH : 256;
+	int w = GPU_DisplayWidth();		/* pixels in BOTH modes: fmv.cpp
+									   pre-divides for isrgb24 */
+	int h = GPU_DisplayHeight();
 	int masked = !g_gpu.dispMask;
 
 	int rowBytes = (w * 3 + 3) & ~3;

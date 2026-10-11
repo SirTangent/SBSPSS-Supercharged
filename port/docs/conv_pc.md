@@ -1977,6 +1977,12 @@ short file instead of logging `wrote`.  The frame CRCs (`GPU_DisplayCRC32`)
 hash VRAM, masked or not, and say `masked` on the `[frame]` line; they do
 not move.
 
+The displayed size has one definition: `GPU_DisplayWidth()` /
+`GPU_DisplayHeight()` in `gpu/gpu_core.h` (`GPU_DEFAULT_DISP_W/H`, 512x256,
+for the moment before anything has set a mode).  The dumper, the frame CRC
+and the presenter each carried their own `dispW ? dispW : 512` copy - six in
+all - and now call it; the numbers are unchanged, so no CRC moves.
+
 `framedump_test` (unit) pins it: mask=1 pixels match
 `GPU_ReadDisplayPixelRGB` for an offset display rect, mask=0 gives an
 all-black file with the same header and size, and an uncreatable path

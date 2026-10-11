@@ -151,8 +151,8 @@ extern "C" uint32_t GPU_DisplayCRC32(int *masked)
 		tableInit = 1;
 	}
 
-	int w  = g_gpu.dispW ? g_gpu.dispW : 512;		/* pixels in both modes */
-	int h  = g_gpu.dispH ? g_gpu.dispH : 256;
+	int w  = GPU_DisplayWidth();		/* pixels in both modes */
+	int h  = GPU_DisplayHeight();
 	int hw = g_gpu.dispRgb24 ? (w * 3 + 1) / 2 : w;	/* halfwords per row */
 
 	uint32_t crc = 0xFFFFFFFFu;
