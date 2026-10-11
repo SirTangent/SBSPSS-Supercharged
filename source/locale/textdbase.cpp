@@ -56,9 +56,6 @@
 #else
 #define	TRANS_PTR				char *
 #define	TRANS_RELOC(p,base)		(p)=(char *)((u32)(p)+(u32)(base))
-#if defined(mips) || defined(__mips__)
-#line 48	// PS1 only: keep its __LINE__ (ASSERTs below) byte-identical
-#endif
 #endif
 
 /*----------------------------------------------------------------------
@@ -276,9 +273,7 @@ static void dumpDatabase(void)
 	in dstructs.h are overlaid on the level and actor files, and TRANS_PTR is
 	a hand-rolled parallel of their DPTR.  port/abi/abi_check.cpp cannot guard
 	it - the struct is file-local - so its ABI_CHECK (abi_check.h) is made
-	here.  Kept at the end of the file: the #line 48 above fixes the PS1
-	build's __LINE__ for the ASSERTs, and inserting anything between it and
-	them would move them.  */
+	here.  */
 ABI_CHECK(TransHeader, sizeof(TransHeader) == 8);
 
 

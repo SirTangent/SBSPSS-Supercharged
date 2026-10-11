@@ -41,11 +41,6 @@
 // walking back to the length word, dumpDebugMem (__DEBUG_MEM__) reading it -
 // so they cannot drift.  Walked in bytes: stepping back a count of u32s is
 // only the same address while MEM_ALIGN is 4.
-//
-// These live here rather than in memory.cpp deliberately: that file's line
-// numbering is load-bearing.  The PS1 build bakes __LINE__ into its ASSERTs
-// and Spongey.cpe is held to byte-identity, so adding or removing a line in
-// memory.cpp moves every assert below it.  A header cannot do that.
 #ifdef __VERSION_DEBUG__		// == memory.cpp's USE_MEM_GUARDS
 #define	MEM_BLOCK_HDR	(MEM_ALIGN + MEM_NUM_GUARDS*sizeof(int))
 #else
