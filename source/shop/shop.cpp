@@ -548,18 +548,18 @@ void CShopScene::renderUi()
 	y=ybase+SHOP_INSTRUCTIONS_Y_BASE+SHOP_Y_GAP_BETWEEN_INSTRUCTION_LINES;
 	m_font->print(x,y,STR__SHOP_SCREEN__CROSS_TO_PURCHASE);
 	fh1=sb->getFrameHeader(CPadIcon::getFrame(PAD_CROSS));
-	/*	fh1, not fh2: the icon is right-aligned against the text, so the
-		step back has to be its OWN width.  Reading fh2 here (the right
-		arrow left over from the line above) was invisible while every
-		icon was 18px wide; the PC key caps are not (github issue #43).  */
-	x-=SHOP_SPACE_BETWEEN_INSTRUCTIONS_AND_BUTTONS+fh1->W;
+	/*	A glyph steps back by the right-arrow GLYPH's width (fh2->W in the
+		original): 15px to the cross's 18 lines their right edges up, even
+		when Right itself shows a key cap.  A key cap steps by its own width
+		(github issues #43, #56); the PS1 compiler gets the original fh2->W.  */
+	x-=SHOP_SPACE_BETWEEN_INSTRUCTIONS_AND_BUTTONS+PC_PS1((CPadIcon::isKeyCap(CPadIcon::getFrame(PAD_CROSS))?fh1->W:sb->getFrameWidth(CPadIcon::getPsxFrame(PAD_RIGHT))),fh2->W);
 	sb->printFT4(fh1,x-1,y+CPadIcon::getYOffset(PAD_CROSS,SHOP_Y_BUTTON_OFFSET_FORM_TOP_OF_TEXT,SHOP_Y_KEYCAP_OFFSET_FORM_TOP_OF_TEXT),0,0,0);
 
 	x=xbase+instructionsXBase;
 	y=ybase+SHOP_INSTRUCTIONS_Y_BASE+(SHOP_Y_GAP_BETWEEN_INSTRUCTION_LINES*2);
 	m_font->print(x,y,STR__SHOP_SCREEN__TRIANGLE_TO_EXIT);
 	fh1=sb->getFrameHeader(CPadIcon::getFrame(PAD_TRIANGLE));
-	x-=SHOP_SPACE_BETWEEN_INSTRUCTIONS_AND_BUTTONS+fh1->W;	/* see above */
+	x-=SHOP_SPACE_BETWEEN_INSTRUCTIONS_AND_BUTTONS+PC_PS1((CPadIcon::isKeyCap(CPadIcon::getFrame(PAD_TRIANGLE))?fh1->W:sb->getFrameWidth(CPadIcon::getPsxFrame(PAD_RIGHT))),fh2->W);	/* see above */
 	sb->printFT4(fh1,x-1,y+CPadIcon::getYOffset(PAD_TRIANGLE,SHOP_Y_BUTTON_OFFSET_FORM_TOP_OF_TEXT,SHOP_Y_KEYCAP_OFFSET_FORM_TOP_OF_TEXT),0,0,0);
 
 	// Item price
