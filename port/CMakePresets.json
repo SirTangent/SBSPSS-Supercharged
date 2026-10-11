@@ -79,6 +79,26 @@
             }
         },
         {
+            "name": "clangcl-eur-debug",
+            "displayName": "EUR DEBUG (CD) - clang-cl",
+            "inherits": "clangcl",
+            "binaryDir": "${sourceDir}/build/clangcl-eur-debug",
+            "cacheVariables": {
+                "SBSP_VARIANT": "DEBUG",
+                "SBSP_TERRITORY": "EUR"
+            }
+        },
+        {
+            "name": "clangcl-eur-final",
+            "displayName": "EUR FINAL (CD) - clang-cl",
+            "inherits": "clangcl",
+            "binaryDir": "${sourceDir}/build/clangcl-eur-final",
+            "cacheVariables": {
+                "SBSP_VARIANT": "FINAL",
+                "SBSP_TERRITORY": "EUR"
+            }
+        },
+        {
             "name": "clangcl-x64",
             "hidden": true,
             "inherits": "clangcl",
@@ -102,6 +122,26 @@
             "binaryDir": "${sourceDir}/build/clangcl-x64-final",
             "cacheVariables": {
                 "SBSP_VARIANT": "FINAL"
+            }
+        },
+        {
+            "name": "clangcl-x64-eur-debug",
+            "displayName": "EUR DEBUG (CD) - clang-cl x64",
+            "inherits": "clangcl-x64",
+            "binaryDir": "${sourceDir}/build/clangcl-x64-eur-debug",
+            "cacheVariables": {
+                "SBSP_VARIANT": "DEBUG",
+                "SBSP_TERRITORY": "EUR"
+            }
+        },
+        {
+            "name": "clangcl-x64-eur-final",
+            "displayName": "EUR FINAL (CD) - clang-cl x64",
+            "inherits": "clangcl-x64",
+            "binaryDir": "${sourceDir}/build/clangcl-x64-eur-final",
+            "cacheVariables": {
+                "SBSP_VARIANT": "FINAL",
+                "SBSP_TERRITORY": "EUR"
             }
         }
     ],
@@ -131,12 +171,28 @@
             "configurePreset": "clangcl-final"
         },
         {
+            "name": "clangcl-eur-debug",
+            "configurePreset": "clangcl-eur-debug"
+        },
+        {
+            "name": "clangcl-eur-final",
+            "configurePreset": "clangcl-eur-final"
+        },
+        {
             "name": "clangcl-x64-debug",
             "configurePreset": "clangcl-x64-debug"
         },
         {
             "name": "clangcl-x64-final",
             "configurePreset": "clangcl-x64-final"
+        },
+        {
+            "name": "clangcl-x64-eur-debug",
+            "configurePreset": "clangcl-x64-eur-debug"
+        },
+        {
+            "name": "clangcl-x64-eur-final",
+            "configurePreset": "clangcl-x64-eur-final"
         }
     ]
 }

@@ -29,7 +29,8 @@ installation.  The 64-bit exes share all of it with the 32-bit ones - the
 same data/, the same sbsp.ini, the same card0.mcd (the save format has no
 pointer-size dependence: the M9 A/B compares the cards byte for byte) - so a
 tester can play one campaign on either, and run-test-session.cmd takes an
-`x64` word.  USA only for now: there are no clang-cl EUR presets.
+`x64` word.  For --territory eur the 64-bit pair is the clang-cl EUR trees
+(issue #39).
 
 Inputs are the repo's own build products - port/build/<preset>/sbsp.exe for
 the territory's two presets and out/<T>/cd/* from port/build-data.cmd <T>.
@@ -53,9 +54,10 @@ PACKAGE_DIR = HERE / "package"                  # README.txt, run-test-session.c
 DATA_FILES = ["BIGLUMP.BIN", "TRACK1.IXA", "THQ.STR", "CLIMAX.STR", "INTRO.STR", "DEMO.STR"]
 RAW_XA = {"TRACK1.IXA", "THQ.STR", "CLIMAX.STR", "INTRO.STR", "DEMO.STR"}   # 2336-byte sectors
 PRESETS = {"usa": ("final", "debug"), "eur": ("eur-final", "eur-debug")}
-# --x64: the clang-cl x86_64 trees (port/build-pc.cmd clangcl64), and the DLL
-# sbsp_exe_link copies beside each of their exes
-PRESETS_X64 = {"usa": ("clangcl-x64-final", "clangcl-x64-debug")}
+# --x64: the clang-cl x86_64 trees (port/build-pc.cmd clangcl64 <territory>),
+# and the DLL sbsp_exe_link copies beside each of their exes
+PRESETS_X64 = {"usa": ("clangcl-x64-final", "clangcl-x64-debug"),
+               "eur": ("clangcl-x64-eur-final", "clangcl-x64-eur-debug")}
 X64_DLLS = ["SDL3.dll"]
 PE_MACHINE = {0x014C: "x86", 0x8664: "x64"}
 
@@ -96,17 +98,17 @@ def preflight(territory, build, x64):
         final64, debug64 = PRESETS_X64[territory]
         for name, preset in (("sbsp64.exe", final64), ("sbsp64-debug.exe", debug64)):
             exes[name] = HERE / "build" / preset / "sbsp.exe"
-            want[name], how[name] = "x64", "clangcl64"
+            want[name], how[name] = "x64", f"clangcl64 {territory}"
         for dll in X64_DLLS:      # one copy serves both exes; take the FINAL tree's
             exes[dll] = HERE / "build" / final64 / dll
-            want[dll], how[dll] = "x64", "clangcl64"
+            want[dll], how[dll] = "x64", f"clangcl64 {territory}"
     data_dir = REPO / "out" / terr / "cd"
 
     if build:
         run([str(HERE / "build-data.cmd"), territory])
         run([str(HERE / "build-pc.cmd"), territory])
         if x64:
-            run([str(HERE / "build-pc.cmd"), "clangcl64"])
+            run([str(HERE / "build-pc.cmd"), "clangcl64", territory])
 
     problems = []
     for name, path in exes.items():

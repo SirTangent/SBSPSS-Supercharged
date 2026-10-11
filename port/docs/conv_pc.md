@@ -863,7 +863,8 @@ offsets.
 ### x64 A/B (M9 PR 2)
 
 No game-source change.  The x64 exe is proven against the 32-bit one by
-three oracles, `port/build-pc.sh parity64 [final|debug]`:
+three oracles, `port/build-pc.sh parity64 [usa|eur] [debug|final]` (the
+territory word since issue #39, below):
 
 1. **Streams** - `run_tier.py --compare-frames` (M8 PR 5): every Tier 1
    route and Tier 2 level, `[scene]` + `[frame]` CRC lines identical.
@@ -905,6 +906,9 @@ a latent compiler-dependent read in the game, not an x64 matter, left
 for the cross-toolchain work (issue #39) together with the frames on
 which MinGW and clang-cl differ whatever the pointer size (campaign
 463-512 in both variants; Tier 2 level 24 from frame 306 in DEBUG).
+(Issue #39 traced the 39 frames to an uninitialised read and found the
+other two gone - "EUR clang-cl presets and cross-toolchain identity",
+below.)
 
 ### x64 in the tester zip (M9 PR 3)
 
@@ -916,9 +920,9 @@ package, because the official SDL VC package has no static library.  The
 MinGW exes are static and never look at it, so the x64 DLL can sit in the
 same folder; what must never happen is an exe or DLL of the wrong
 architecture getting in from a stale tree, so every PE file's machine
-word is checked against what its name promises (`pe_machine`).  USA only:
-there are no clang-cl EUR presets, and `--territory eur --x64` says so.
-Without `--x64` the zip is what it was.
+word is checked against what its name promises (`pe_machine`).  USA only
+at first; since issue #39 `--territory eur --x64` takes the clang-cl EUR
+x64 pair.  Without `--x64` the zip is what it was.
 
 The four exes share `data\`, `sbsp.ini` and `saves\card0.mcd` - everything
 is found beside the exe (`cd.cpp`, `hostpath.cpp`) and the save format has
@@ -929,6 +933,109 @@ x64 [final]` records a session on the 64-bit pair; `session.pad`'s
 zip into a scratch directory and booting all four exes from there
 headlessly: each finds `data\` beside itself and they agree on the frame
 CRC.
+
+### EUR clang-cl presets and cross-toolchain identity (issue #39)
+
+No game-source change.  This is the part of retiring the MinGW build that
+removes nothing: the removal itself waits on #39's gates.
+
+**Presets.**  `clangcl-eur-debug` / `clangcl-eur-final` and
+`clangcl-x64-eur-debug` / `clangcl-x64-eur-final` are the clang-cl and
+clang-cl x64 presets with `SBSP_TERRITORY=EUR`, like the MinGW `eur-*`
+pair.  `build-pc.sh clangcl eur` and `clangcl64 eur` name the EUR pairs,
+for `test` and `soak` too; without the word (or with `usa`) they are the
+USA pairs as before.  Every `*-eur-*` preset is EUR to the data check and
+to `soak`'s `--territory` (`territory_of`), and the ctest playthrough tests
+already pass `--territory ${SBSP_TERRITORY}`.  `parity64 [usa|eur]
+[debug|final]` takes the territory word (USA and DEBUG by default): it
+picks `clangcl-<v>` or `clangcl-eur-<v>` and the matching x64 tree, passes
+`--territory` to all three legs, so an EUR A/B includes the EUR-only
+`play_trailer` route, and writes `build/parity64-<v>` (USA, as before) or
+`build/parity64-eur-<v>`.  `package.py --territory eur --x64` takes the EUR
+x64 pair.  The MinGW presets and the `base` preset's ninja path stay as
+they are until the removal.
+
+**EUR x64 A/B** (seed 1; 10 Tier 1 routes including `play_trailer`, and
+25 Tier 2 levels):
+
+| | DEBUG | FINAL |
+|---|---|---|
+| x64 = x86 `[scene]`/`[frame]`/`[audio]` streams (35 runs, 167,000 `[frame]` lines) | identical | identical |
+| x64 replays the x86 recordings (10 routes): desyncs, streams, `card0.mcd` | none, identical, identical | none, identical, identical |
+| `build-pc.sh test clangcl eur` / `test clangcl64 eur` | 0 warnings, 25 unit + 3 playthrough on each tree | same |
+
+The USA FINAL A/B's 39 campaign frames (6858-6897, above) do not appear:
+the EUR x86 and x64 FINAL campaigns are identical.  They come from an
+uninitialised read (below), so whether two exes agree depends on the stale
+bytes each one finds; on EUR the 32- and 64-bit FINAL exes draw the same.
+
+**Gate 2: MinGW i686 against clang-cl i686.**  USA, DEBUG and FINAL, seed
+1, the determinism set.  The MinGW exe plays every route and level
+(`run_tier.py --tier1 --tier2 --no-replay --logs L --keep-artifacts A` on
+`build/<v>/sbsp.exe`); the clang-cl exe then plays the same tiers against
+those logs (`--compare-frames L`) and replays the MinGW recordings
+(`--tier1 --replay-from A --compare-frames L`).  `run_tier.py` holds each
+run's `[audio]` line (the CRC-32 of the run's `--dump-audio` PCM, the M5
+WAV) like a frame.
+
+| Check | DEBUG | FINAL |
+|---|---|---|
+| `[scene]`/`[frame]` streams, 9 routes + 25 levels (126,500 `[frame]` lines) | 34/34 identical | 33/34; campaign frames 6858-6869 and 6871-6897 differ |
+| `[audio]` lines (the WAV dump) | 34/34 identical | 34/34 identical |
+| clang-cl replays the MinGW recordings: streams | 9/9 identical | 8/9; the same 39 campaign frames |
+| ... `card0.mcd` | 9/9 byte-identical | 9/9 byte-identical |
+| ... `[replay] desync` | on `ram` only, in 4 of 9 routes: campaign (18 epochs), gameover_continue, gameover_final, pause_quit (2 each); rng and crc equal on every epoch; bonus1-5 clean | the same |
+| `ctest -L unit` (`gpu_test`, `raster_diff_test`, `fmv_pipeline_test` goldens, `mdec_test`, `spu_test`, `xm_test`, `xa_test` ...) | 25/25 on both exes | 25/25 on both exes |
+| two tester sessions recorded on a MinGW DEBUG exe (PR #68's test zip), replayed on both DEBUG exes | streams identical between the exes (22,322 frames), both cards equal to `card-after.mcd`; MinGW replays both clean, clang-cl desyncs on `ram` only in one (33 of 41 epochs, exit 13) | not run |
+
+(The sessions predate `# render`, so their epochs compare rng and ram, not
+crc.)  The PR #45 frames on which MinGW and clang-cl differed whatever the
+pointer size (campaign 463-512, Tier 2 level 24 from frame 306) are gone;
+the floating-point split between the two 32-bit exes (g++ evaluates on
+x87, `__FLT_EVAL_METHOD__` 2; clang-cl on SSE2) shows nowhere.  The game
+has no floating point, and the shim's only float on the frame path is
+`gte/trig.cpp` (the sine table at start-up, `ratan2` through `atan2`).
+What differs is two things, neither of them floating point:
+
+1. **`RamUsed` depends on the C++ ABI.**  The Itanium ABI (g++) places a
+   derived class's first members in the tail padding of a non-POD base;
+   the MSVC ABI (clang-cl) never does.  A temporary allocation log
+   (`operator new` and `MemAllocate` printing size and caller; both DEBUG
+   exes, campaign route: 16,047 allocations, same order) found 11 call
+   sites whose objects are 4 bytes bigger under clang-cl: `CFXBubble`
+   (two sites, 144 -> 148: `CFXBaseAnim` ends in `s16 CurrentHeading` and
+   two padding bytes, which g++ gives to `CFXBubble::XIdx`), `CFXSteam`
+   (384 -> 388), and eight `CNpcEnemy` subclasses from `CNpcEnemy::Create`
+   (`CNpcEnemy` ends in `s16 m_drawRotation`): shark man, mother
+   jellyfish, sub shark, flying dutchman, iron dogfish, sea snake, shell
+   (`u8 m_shellType`) and small jellyfish background.  Each live object
+   adds 4 bytes to `RamUsed`, so an epoch's ram check fails while rng,
+   crc, every frame and the card agree.  The x64 replay already skips ram
+   across pointer sizes (`# abi ptr`); a replay across toolchains needs
+   the same, for instance a C++-ABI field in `# abi`.  Until then a #55
+   recording (made on the MinGW `sbsp-debug.exe`) replayed on a clang-cl
+   32-bit exe exits 13 on ram; on x64 it does not.
+2. **The FINAL campaign frames are an uninitialised read.**  They fall in
+   level 3-4 (Inside the Whale): a skeletal fish at the top right of the
+   opening screen.  `CNpcSkeletalFishEnemy::getFrameShift` animates at
+   full speed while `m_chargeTime < getOneSecondInFrames()` and at quarter
+   speed otherwise, and `m_chargeTime` is first written when the fish's
+   sensor fires (`processSensor`, `processClose`); until then it is
+   whatever its heap block held.  DEBUG fills every new block with
+   `0x3d3d3d3d` (`mem/memory.cpp`, `USE_MEM_GUARDS`), so DEBUG builds swim
+   at quarter speed on every toolchain; FINAL leaves stale bytes.  A
+   temporary log in `CNpcEnemy::render` showed the MinGW FINAL fish at
+   +64 `m_frame` per frame and the clang-cl FINAL fish at +256, with
+   position, rotation, flip and every other input to the draw identical,
+   so from 6858 the two exes draw different frames of the swim animation
+   (PR #45 read the difference as a missing sprite).  The stale bytes
+   differ because the heap history does (item 1's sizes among it).  The
+   same read separates DEBUG from FINAL within one toolchain: on Tier 2
+   level 13, which boots 3-4 directly, the FINAL fish swims at full speed
+   on both toolchains, and the level differs from DEBUG in periodic
+   windows (285-337, 542-606, ...) on MinGW and clang-cl alike.
+   Initialising `m_chargeTime` is a game-source change and a choice
+   between the two speeds; not made here.
 
 ### Replaying a tester session (issue #58)
 
