@@ -72,11 +72,17 @@ are the whole difference from `master`:
 | 53 | `gfx/font.cpp` | `(u8)` font-table indexes (issue #24) |
 | 61 | `shop/shop.cpp` | the cross and triangle glyphs back on `master`'s step (issue #56) |
 
-A change that alters the PS1 build on purpose adds its row here and gives
-the before and after `Spongey.cpe` hashes from `psx_identity.py build` in its
-pull request.  A hash is only comparable with one from the same data build
-(`trans.h`, above), so hashes are recorded per run, not kept here as a fixed
-reference.
+A change that alters the PS1 build on purpose adds its row here.  It also
+appends its before and after `Spongey.cpe` hashes to
+`port/docs/psx_build_log.csv`, and gives them in its pull request.  The log
+takes one row per side for USA DEBUG and FINAL, from `psx_identity.py build`:
+- `baseline` for the base commit, `change` for the branch;
+- the size, the CRC32 (zlib), the SHA-256;
+- the SHA-256 of the `trans.h` that build used.
+
+`historical` rows are older, partial records.  A hash is only comparable with
+one from the same data build (`trans.h`, above), so compare rows only when
+their `trans_h_sha256` matches.
 
 ## Where the gate comes from
 
