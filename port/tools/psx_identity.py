@@ -10,11 +10,14 @@ this is the tooling that goes with it.
   psx_identity.py lines [--base REV] [FILE...]
       Static and fast (seconds).  Preprocesses each file the way the PS1
       compiler would - only as far as the PSX_MIPS_ASM / mips gates go -
-      and requires the PS1 to see the text it saw in the base revision, in
-      the same order.  Line numbers don't count.  A #line directive the PS1
-      compiles is reported too: none is needed any more.  Default files:
-      every file under source/ and tools/Data/include the working tree
-      changes against the base, untracked ones included.
+      and requires the PS1 to see the tokens it saw in the base revision,
+      in the same order.  Line numbers, comments and whitespace don't
+      count, and the two same-line patterns of psx_byte_identity.md are
+      expanded before comparing: PC_PS1(pc, ps1) as its PS1 argument, and
+      a macro the file newly defines (one shared copy) at each use.  A
+      #line directive the PS1 compiles is reported too: none is needed any
+      more.  Default files: every file under source/ and tools/Data/include
+      the working tree changes against the base, untracked ones included.
 
   psx_identity.py build [--base REV] [--territory USA] [--version DEBUG ...] [--strict]
       The proof (one to two minutes a build).  Clean PS1 builds of HEAD and
@@ -23,10 +26,11 @@ this is the tooling that goes with it.
       below), not just the game source.  FINAL is compared strictly.  DEBUG
       is compared line-insensitively: both sides are built with
       SBSP_IDENTITY_NOLINE, which compiles every baked-in __LINE__
-      (PORT_LINE, source/system/dbg.h) as 0.  Strictly instead with
-      --strict, or when the base predates PORT_LINE.  Needs MSYS2 and the
-      territory's data, a committed tree, and no other PS1 build running on
-      the machine.
+      (PORT_LINE, source/system/dbg.h) as 0, and their objects are deleted
+      afterwards so a later normal DEBUG build cannot reuse them.  Strictly
+      instead with --strict, or when either side lacks the plumbing
+      (NOLINE_PLUMBING below).  Needs MSYS2 and the territory's data, a
+      committed tree, and no other PS1 build running on the machine.
 
 --base defaults to the merge-base of HEAD and SBSP-Win11, so a branch is
 compared with where it started, not with whatever has merged since.
@@ -73,9 +77,20 @@ PS1_MACROS = {
 # The line-insensitive DEBUG compare (issue #81) takes three files: the header
 # that defines PORT_LINE, the makefile that turns SBSP_IDENTITY_NOLINE into a
 # -D, and the wrapper that hands it to make.  A revision has the compare only
-# if all three name it; against an older base, DEBUG is compared strictly.
+# if all three carry the working plumbing - these patterns, matched with the
+# file's comments stripped, so a comment naming the define is not enough.
+# Against an older base, DEBUG is compared strictly.
 NOLINE_DEFINE = "SBSP_IDENTITY_NOLINE"
-NOLINE_FILES = ["source/system/dbg.h", "makefile.gaz", "port/build-psx.sh"]
+NOLINE_PLUMBING = {
+    "source/system/dbg.h": [r"#\s*ifdef\s+SBSP_IDENTITY_NOLINE\b",
+                            r"#\s*define\s+PORT_LINE\s+0\b"],
+    "makefile.gaz": [r"^ifeq \(\$\(origin SBSP_IDENTITY_NOLINE\),command line\)",
+                     r"-DSBSP_IDENTITY_NOLINE\b"],
+    "port/build-psx.sh": [r"--identity-noline\)",
+                          r"SBSP_IDENTITY_NOLINE=1"],
+}
+NOLINE_FILES = list(NOLINE_PLUMBING)
+NOLINE_ARG = "--identity-noline"
 # What makefile.gaz prints when it takes the define.  Every line-insensitive
 # build's log must hold it, and no strict build's may.
 NOLINE_MARKER = "SBSP_IDENTITY_NOLINE: PORT_LINE is 0"
@@ -222,6 +237,182 @@ def ps1_view(text):
     return out, pinned
 
 
+# The text the PS1 sees, as tokens: what the compiler reads, so comments,
+# whitespace and line breaks drop out.  Two macro patterns are expanded,
+# because psx_byte_identity.md recommends them for edits the PS1 must not
+# see: PC_PS1 (source/system/asmport.h), whose PS1 expansion is its second
+# argument, and a macro the file defines that the base did not (one shared
+# copy of code that used to be written out).  A new macro produces no code
+# where it is defined, only where it is used, so its #define and #undef go
+# and its uses are expanded.  Every other macro is compared as written.
+
+SHARED_MACROS = {"PC_PS1": (["pc", "ps1"], ["ps1"])}
+
+TOKEN = re.compile(r"""
+    [A-Za-z_]\w*                        # identifier or keyword
+  | \.?\d(?:[eEpP][+-]|[\w.])*          # number
+  | "(?:\\.|[^"\\\n])*"                 # string literal
+  | '(?:\\.|[^'\\\n])*'                 # character literal
+  | ->|\+\+|--|<<=|>>=|<<|>>|<=|>=|==|!=|&&|\|\||::|\.\.\.|\#\#|[-+*/%&|^]=
+  | \S
+""", re.X)
+COMMENT_OR_LITERAL = re.compile(
+    r"""//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'""", re.S)
+DEFINE = re.compile(r"#\s*define\s+([A-Za-z_]\w*)(\(([^)]*)\))?\s*(.*)$", re.S)
+UNDEF = re.compile(r"#\s*undef\s+([A-Za-z_]\w*)")
+COND_OPEN = re.compile(r"#\s*if(n?def)?\b")
+COND_CLOSE = re.compile(r"#\s*endif\b")
+
+
+def parse_view(rows):
+    """([(kind, text)] logical lines with comments gone, {name: (params or
+    None, body tokens)} for each macro defined once and unconditionally)."""
+    text = COMMENT_OR_LITERAL.sub(
+        lambda m: " " if m.group(0)[0] == "/" else m.group(0), "\n".join(t for _, t in rows))
+    text = text.replace("\\\n", "")         # continued lines, as the preprocessor splices them
+    items, defines, seen = [], {}, {}
+    depth = 0                               # open conditions ps1_view could not evaluate
+    for line in text.split("\n"):
+        s = line.strip()
+        if not s:
+            continue
+        if not s.startswith("#"):
+            items.append(("code", s))
+            continue
+        items.append(("dir", s))
+        if COND_OPEN.match(s):
+            depth += 1
+        elif COND_CLOSE.match(s):
+            depth = max(depth - 1, 0)
+        m = DEFINE.match(s)
+        if m:
+            name = m.group(1)
+            seen[name] = seen.get(name, 0) + 1
+            if depth == 0:
+                params = [p.strip() for p in m.group(3).split(",")] if m.group(2) is not None else None
+                defines[name] = ([] if params == [""] else params, TOKEN.findall(m.group(4)))
+    # defined twice, or only under a condition: not known to apply everywhere
+    return items, {n: d for n, d in defines.items() if seen[n] == 1}
+
+
+def view_tokens(items, drop):
+    """The token stream; a directive is one token, never expanded; the
+    #define/#undef lines of the macros in drop are left out."""
+    out = []
+    for kind, s in items:
+        if kind == "code":
+            out += TOKEN.findall(s)
+            continue
+        m = DEFINE.match(s) or UNDEF.match(s)
+        if not (m and m.group(1) in drop):
+            out.append(" ".join(TOKEN.findall(s)))
+    return out
+
+
+def macro_args(tokens, k):
+    """The arguments of a call whose '(' is tokens[k], and the index after
+    its ')'.  Only parentheses nest, as in the preprocessor: a comma inside
+    braces or brackets still splits."""
+    args, cur, depth = [], [], 0
+    for i in range(k, len(tokens)):
+        t = tokens[i]
+        if t == "(":
+            depth += 1
+            if depth == 1:
+                continue
+        elif t == ")":
+            depth -= 1
+            if depth == 0:
+                args.append(cur)
+                return args, i + 1
+        elif t == "," and depth == 1:
+            args.append(cur)
+            cur = []
+            continue
+        cur.append(t)
+    raise Unknown("unbalanced macro call")
+
+
+def expand(tokens, macros, disabled=frozenset()):
+    out = []
+    i = 0
+    while i < len(tokens):
+        t = tokens[i]
+        if t not in macros or t in disabled:
+            out.append(t)
+            i += 1
+            continue
+        params, body = macros[t]
+        if "#" in body or "##" in body:
+            raise Unknown("%s uses # or ##" % t)
+        if params is None:
+            out += expand(body, macros, disabled | {t})
+            i += 1
+            continue
+        if i + 1 >= len(tokens) or tokens[i + 1] != "(":
+            out.append(t)                   # the name without a call: not expanded
+            i += 1
+            continue
+        args, i = macro_args(tokens, i + 1)
+        if params == [] and args == [[]]:
+            args = []
+        if len(args) != len(params):
+            raise Unknown("%s called with %d argument(s), takes %d" % (t, len(args), len(params)))
+        actual = dict(zip(params, (expand(a, macros, disabled) for a in args)))
+        body_out = []
+        for b in body:
+            body_out += actual.get(b, [b])
+        out += expand(body_out, macros, disabled | {t})
+    return out
+
+
+def ps1_tokens(old, new):
+    """The base's and the working tree's token streams, macros expanded as
+    above.  Raises Unknown when a macro cannot be expanded."""
+    old_items, old_defs = parse_view(old)
+    new_items, new_defs = parse_view(new)
+    fresh = {n: d for n, d in new_defs.items() if n not in old_defs}
+    old_macros = dict(SHARED_MACROS)
+    new_macros = dict(SHARED_MACROS, **fresh)
+    return (expand(view_tokens(old_items, set()), old_macros),
+            expand(view_tokens(new_items, set(fresh)), new_macros))
+
+
+def show_token_diff(old_tok, new_tok):
+    def span(toks, a, b):
+        text = " ".join(toks[max(a - 4, 0):b + 4])
+        return text if len(text) <= 110 else text[:107] + "..."
+    matcher = difflib.SequenceMatcher(None, old_tok, new_tok, autojunk=False)
+    shown = 0
+    for op, i1, i2, j1, j2 in matcher.get_opcodes():
+        if op == "equal":
+            continue
+        if shown == 6:
+            print("        ...")
+            break
+        print("        base: %s" % span(old_tok, i1, i2))
+        print("        now : %s" % span(new_tok, j1, j2))
+        shown += 1
+
+
+def show_line_diff(old, new):
+    old_text, new_text = [t for _, t in old], [t for _, t in new]
+    shown = 0
+    matcher = difflib.SequenceMatcher(None, old_text, new_text, autojunk=False)
+    for op, i1, i2, j1, j2 in matcher.get_opcodes():
+        if op == "equal":
+            continue
+        for side, rows in (("base", old[i1:i2]), ("now ", new[j1:j2])):
+            for n, t in rows:
+                if shown == 12:
+                    break
+                print("        %s %5d: %s" % (side, n, t.strip()[:100]))
+                shown += 1
+        if shown == 12:
+            print("        ...")
+            break
+
+
 def cmd_lines(args):
     base = args.base or default_base()
     files = args.files
@@ -251,27 +442,28 @@ def cmd_lines(args):
             print("LINE  %s:%d - a #line the PS1 compiles; none is needed since #81: %s"
                   % (f, n, t.strip()[:60]))
             bad += 1
-        old_text, new_text = [t for _, t in old], [t for _, t in new]
-        if old_text == new_text:
+        if [t for _, t in old] == [t for _, t in new]:
             if not pinned:
                 print("ok    %s" % f)
             continue
+        try:
+            old_tok, new_tok = ps1_tokens(old, new)
+        except Unknown as e:
+            old_tok = new_tok = None
+            why = str(e)
+        if old_tok is not None and old_tok == new_tok:
+            if not pinned:
+                print("ok    %s - same tokens (comments, layout or the macro patterns differ)" % f)
+            continue
         bad += 1
-        print("DIFF  %s - the PS1 sees different text:" % f)
-        shown = 0
-        matcher = difflib.SequenceMatcher(None, old_text, new_text, autojunk=False)
-        for op, i1, i2, j1, j2 in matcher.get_opcodes():
-            if op == "equal":
-                continue
-            for side, rows in (("base", old[i1:i2]), ("now ", new[j1:j2])):
-                for n, t in rows:
-                    if shown == 12:
-                        break
-                    print("        %s %5d: %s" % (side, n, t.strip()[:100]))
-                    shown += 1
-            if shown == 12:
-                print("        ...")
-                break
+        if old_tok is None:
+            print("DIFF  %s - the PS1 sees different text (tokens not compared: %s):" % (f, why))
+            show_line_diff(old, new)
+        else:
+            print("DIFF  %s - the PS1 sees different tokens:" % f)
+            show_token_diff(old_tok, new_tok)
+    if bad:
+        print("a DIFF is not proof of a different executable: psx_identity.py build decides")
     return 1 if bad else 0
 
 
@@ -290,28 +482,51 @@ def posix(path):
     return "/%s/%s" % (m.group(1).lower(), m.group(2)) if m else path
 
 
-def sha256(path):
-    h = hashlib.sha256()
+def describe(path):
+    """Size, CRC32 and SHA-256, read in one streaming pass: the columns of
+    port/docs/psx_build_log.csv."""
+    h, crc, size = hashlib.sha256(), 0, 0
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
-    return h.hexdigest()
+            crc = zlib.crc32(chunk, crc)
+            size += len(chunk)
+    return dict(size=size, crc32="%08X" % (crc & 0xFFFFFFFF), sha256=h.hexdigest())
 
 
-def describe(path):
-    """Size, CRC32 and SHA-256: the columns of port/docs/psx_build_log.csv."""
-    data = open(path, "rb").read()
-    return dict(size=len(data), crc32="%08X" % (zlib.crc32(data) & 0xFFFFFFFF),
-                sha256=hashlib.sha256(data).hexdigest())
+def strip_file_comments(path, text):
+    """text without its comments, by the file's language: C for headers,
+    '#' to the end of the line for the makefile and the shell script."""
+    if path.endswith((".h", ".cpp", ".H")):
+        return COMMENT_OR_LITERAL.sub(
+            lambda m: " " if m.group(0)[0] == "/" else m.group(0), text)
+    return "\n".join(l for l in text.split("\n") if not l.lstrip().startswith("#"))
 
 
 def knows_noline(rev):
-    """Whether rev's tree has the line-insensitive DEBUG compare end to end."""
-    for f in NOLINE_FILES:
+    """Whether rev's tree has the line-insensitive DEBUG compare end to end:
+    every pattern of NOLINE_PLUMBING in code, not only in a comment."""
+    for f, patterns in NOLINE_PLUMBING.items():
         r = git("show", "%s:%s" % (rev, f), check=False)
-        if r.returncode != 0 or NOLINE_DEFINE.encode() not in r.stdout:
+        if r.returncode != 0:
+            return False
+        text = strip_file_comments(f, r.stdout.decode("latin-1").replace("\r\n", "\n"))
+        if not all(re.search(p, text, re.M) for p in patterns):
             return False
     return True
+
+
+def clean_tree(territory, version):
+    """Delete a PS1 tree's objects, dependency files and linked Spongey.cpe,
+    so its next build recompiles every TU.  make tracks no -D flags, so this
+    also keeps a line-insensitive build's objects out of a normal one."""
+    tree = os.path.join(REPO, "out", territory, version)
+    for d in (os.path.join(tree, "CD", "objs"), os.path.join(tree, "deps")):
+        shutil.rmtree(d, ignore_errors=True)
+    cpe = os.path.join(tree, "version", "CD", "Spongey.cpe")
+    if os.path.exists(cpe):
+        os.remove(cpe)
+    return cpe
 
 
 def psx_build(territory, version, log, noline):
@@ -320,17 +535,12 @@ def psx_build(territory, version, log, noline):
     new one must be newer than the start, so a build that fails without
     saying so cannot hand back the other side's executable (build-psx.sh
     warns its exit status can be swallowed)."""
-    tree = os.path.join(REPO, "out", territory, version)
-    for d in (os.path.join(tree, "CD", "objs"), os.path.join(tree, "deps")):
-        shutil.rmtree(d, ignore_errors=True)        # a clean build: every TU recompiled
-    cpe = os.path.join(tree, "version", "CD", "Spongey.cpe")
-    if os.path.exists(cpe):
-        os.remove(cpe)
+    cpe = clean_tree(territory, version)
     start = time.time()
     env = dict(os.environ, MSYSTEM="MSYS")
-    env.pop(NOLINE_DEFINE, None)        # only this run's choice reaches the build
-    cmd = "cd '%s' && %sport/build-psx.sh %s %s" % (
-        posix(REPO), NOLINE_DEFINE + "=1 " if noline else "", territory, version)
+    env.pop(NOLINE_DEFINE, None)        # build-psx.sh ignores it; keep its warning out of the log
+    cmd = "cd '%s' && port/build-psx.sh %s %s%s" % (
+        posix(REPO), territory, version, " " + NOLINE_ARG if noline else "")
     with open(log, "wb") as f:
         r = subprocess.run([msys_bash(), "-lc", cmd], stdout=f, stderr=subprocess.STDOUT, env=env)
     if r.returncode != 0 or not os.path.exists(cpe) or os.path.getmtime(cpe) < start - 2:
@@ -375,26 +585,29 @@ def cmd_build(args):
     if args.strict:
         debug_noline, why = False, "--strict"
     elif not knows_noline(base):
-        debug_noline, why = False, "the base predates PORT_LINE (no %s in %s)" % (
-            NOLINE_DEFINE, ", ".join(NOLINE_FILES))
+        debug_noline, why = False, "the base predates the %s plumbing in %s" % (
+            NOLINE_ARG, ", ".join(NOLINE_FILES))
     elif not knows_noline("HEAD"):
-        debug_noline, why = False, "HEAD has no %s in %s" % (NOLINE_DEFINE, ", ".join(NOLINE_FILES))
+        debug_noline, why = False, "HEAD lacks the %s plumbing in %s" % (
+            NOLINE_ARG, ", ".join(NOLINE_FILES))
     else:
         debug_noline, why = True, "both sides built with %s, PORT_LINE 0" % NOLINE_DEFINE
 
+    def mode(v):
+        """(line-insensitive?, the reason printed for it) for one version."""
+        if v != "DEBUG":
+            return False, "strict - it bakes in no line numbers"
+        return debug_noline, ("line-insensitive - " if debug_noline else "strict - ") + why
+
     outdir = os.path.join(REPO, "out", "psx_identity")
     os.makedirs(outdir, exist_ok=True)
-    trans_before = sha256(trans)
+    trans_before = describe(trans)["sha256"]
     print("base %s, %d changed file(s), trans.h %s" % (base[:10], len(files), trans_before[:16]))
-    modes = {}
     for v in versions:
-        noline = v == "DEBUG" and debug_noline
-        modes[v] = noline
-        print("%s: %s" % (v, ("line-insensitive - " + why) if noline else
-                          ("strict - " + why) if v == "DEBUG" else "strict - it bakes in no line numbers"))
+        print("%s: %s" % (v, mode(v)[1]))
     results = []
     for v in versions:
-        noline = modes[v]
+        noline = mode(v)[0]
         name = v + ("-noline" if noline else "")
         found = {}
         for side in ("head", "base"):
@@ -408,8 +621,12 @@ def cmd_build(args):
             finally:
                 if side == "base":
                     git("checkout", "HEAD", "--", *files)
+                if noline:
+                    # Its objects hold PORT_LINE 0, and make would reuse
+                    # them in the next normal DEBUG build: leave none.
+                    clean_tree(territory, v)
         results.append((v, noline, found))
-    if sha256(trans) != trans_before:
+    if describe(trans)["sha256"] != trans_before:
         fail("trans.h changed during the run (a data build?) - the comparison is void")
     failed = 0
     for v, noline, found in results:

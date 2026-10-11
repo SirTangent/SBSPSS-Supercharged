@@ -67,24 +67,32 @@ it used:
   FINAL bakes in no line numbers, so nothing is left out.
 - **DEBUG: line-insensitive.**  Both sides are built with
   `SBSP_IDENTITY_NOLINE`, which makes `PORT_LINE` 0 instead of `__LINE__`.
-  Every code change still shows; a line shift doesn't.  The tool sets
-  `SBSP_IDENTITY_NOLINE=1` for `port/build-psx.sh`, which passes it on the
-  `make` command line.  `makefile.gaz` takes it from there only, never from
-  the environment, adds `-DSBSP_IDENTITY_NOLINE` and prints
-  `SBSP_IDENTITY_NOLINE: PORT_LINE is 0 ...`.  The tool requires that line
-  in the log of every line-insensitive build, and its absence from every
-  other build, so a side that silently ignored the define can't pass.
+  Every code change still shows; a line shift doesn't.  The tool passes
+  `--identity-noline` to `port/build-psx.sh`, which puts
+  `SBSP_IDENTITY_NOLINE=1` on the `make` command line.  It is an argument,
+  not an environment variable: `build-psx.sh` ignores (and warns about) one
+  in the environment, and `makefile.gaz` takes the variable from the
+  command line only.  `makefile.gaz` then adds `-DSBSP_IDENTITY_NOLINE` and
+  prints `SBSP_IDENTITY_NOLINE: PORT_LINE is 0 ...`.  The tool requires that
+  line in the log of every line-insensitive build, and its absence from
+  every other build, so a side that silently ignored the define can't pass.
   The result is a different, slightly smaller executable than the normal
-  DEBUG build (220 bytes, USA), made for comparing and nothing else.
+  DEBUG build (220 bytes, USA), made for comparing and nothing else.  make
+  does not track `-D` flags, so the tool deletes the objects of every
+  line-insensitive build when it is done: the next normal DEBUG build then
+  recompiles everything instead of linking in objects with line 0.
 - **DEBUG: strict**, line numbers included, in two cases:
-  - **The base predates `PORT_LINE`.**  The tool looks in the base tree:
-    `system/dbg.h`, `makefile.gaz` and `port/build-psx.sh` must all name
-    `SBSP_IDENTITY_NOLINE`.  A branch started before #81 that moves lines
-    therefore sees DEBUG differ.  Rebase it rather than add `#line` arms.
+  - **Either side lacks the plumbing.**  The tool reads both trees, with
+    comments stripped: `system/dbg.h` must define `PORT_LINE` as 0 under
+    `#ifdef SBSP_IDENTITY_NOLINE`, `makefile.gaz` must have the command-line
+    `ifeq` and the `-D`, and `port/build-psx.sh` must take
+    `--identity-noline` (`NOLINE_PLUMBING` in the tool).  A branch started
+    before #81 that moves lines therefore sees DEBUG differ.  Rebase it
+    rather than add `#line` arms.
   - **`--strict`**, for the hash of the normal DEBUG build.
 
 No shipped or normal build sets `SBSP_IDENTITY_NOLINE`: not CI, not
-`build-psx.sh` without it in the environment, and never the PC builds,
+`build-psx.sh` without `--identity-noline`, and never the PC builds,
 where `PORT_LINE` is always `__LINE__`.
 
 ## Deliberate PS1 changes
@@ -250,32 +258,51 @@ but only as far as the gates go:
   as text.  Flipping such a condition is therefore a visible change.
 - An arm after one that already won is dead, as it is for the compiler.
 
-It then requires the two to be the same lines of text in the same order.
-Line numbers don't count, as in the DEBUG compare, so a gated PC-only block
-passes.  It also reports, as `LINE`, every `#line` directive the PS1
-compiles in those files:
+It then requires the two to be the same tokens in the same order: what the
+compiler reads, so line numbers (as in the DEBUG compare), comments,
+whitespace and line breaks don't count, and a gated PC-only block passes.
+Before comparing it expands the two same-line patterns above, the way the
+PS1 preprocessor would:
+- **`PC_PS1(pc, ps1)`** becomes its `ps1` argument (`system/asmport.h`).
+- **A macro the file defines and the base did not** (one shared copy of
+  code that used to be written out) is expanded at each use, and its
+  `#define` and `#undef` lines drop out: a new macro makes code only where
+  it is used.  It must be defined once, outside any condition the tool
+  can't evaluate, and use neither `#` nor `##`; otherwise the file falls
+  back to the line compare.
+
+Every other macro is compared as written, not expanded.  It also reports,
+as `LINE`, every `#line` directive the PS1 compiles in those files.  On
+#81's own branch, where `dbg.h` and `memory.h` change `__LINE__` to
+`PORT_LINE` on purpose:
 
 ```
 ok    source/game/game.cpp
-DIFF  source/map/map.cpp - the PS1 sees different text:
-        base   424: y+=MAP_INSTRUCTIONS_Y_SPACE_BETWEEN_LINES;
-        now    425: y+=PC_PS1(CPadIcon::getRowPitch(sb,PAD_CROSS,MAP_INSTRUCTIONS_Y_SPACE_BETWEEN_LINES),MAP_INSTRUCTION
-LINE  source/fma/fma.cpp:1279 - a #line the PS1 compiles; none is needed since #81: ...
+ok    source/map/map.cpp - same tokens (comments, layout or the macro patterns differ)
+DIFF  source/mem/memory.h - the PS1 sees different tokens:
+        base: DebugMemFontInit ( ) ; # define MemAlloc ( Size , Name ) MemAllocate ( ( Size ) , ( Name ) , __FILE__ , __L...
+        now : DebugMemFontInit ( ) ; # define MemAlloc ( Size , Name ) MemAllocate ( ( Size ) , ( Name ) , __FILE__ , POR...
+ok    source/player/player.cpp - same tokens (comments, layout or the macro patterns differ)
+a DIFF is not proof of a different executable: psx_identity.py build decides
 ```
+
+`map.cpp` passes through `PC_PS1`, and `player.cpp` through its new
+`PROMPT_ICONS` macro, expanded back into the statements the PS1 compiled
+before.  A directive is shown as one token, so `memory.h`'s difference is
+at the end of that `#define`.
 
 Before #81 it compared the line numbers too, which is how it caught a
 stale `#line`.  With the arms gone and the DEBUG compare ignoring line
 numbers, that half had nothing left to check.  What stays is the part that
-still pays: a check in seconds, before a ten-minute `build`, that a PC
-change left the PS1 text alone, and the `LINE` report that keeps new arms
-out.
+still pays: a check in seconds, before `build`'s four clean builds, that a
+PC change left the PS1 tokens alone, and the `LINE` report that keeps new
+arms out.
 
-The text check is stricter than the bytes in one way: it flags
-comment-only edits in PS1-visible code.  It is blind to anything outside
-the file: data, and macros defined elsewhere.  And a replacement that is
-shared on purpose (above) is always a `DIFF`.  Treat a pass as "very
-probably identical" and a `DIFF` as "fix it, or know why it is harmless".
-`build` is the arbiter.
+The token check is still stricter than the bytes: a deliberate change that
+compiles the same (redundant parentheses, a renamed local) is a `DIFF`.  It
+is blind to anything outside the file: data, and macros defined elsewhere.
+Treat a pass as "very probably identical" and a `DIFF` as "fix it, or know
+why it is harmless".  `build` is the arbiter.
 
 ### `psx_identity.py build`
 
@@ -335,7 +362,7 @@ run.  1 always means the two executables really differ.
 Copies of each cpe and each build log go to `out/psx_identity/`, named by
 side and version (`head-DEBUG-noline.cpe`, `base-FINAL.cpe`).  On this
 machine a clean build (289 files) takes one to two minutes, so the default
-run takes five to ten.
+run, four builds, takes four to eight.
 
 ## Build traps
 

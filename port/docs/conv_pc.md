@@ -2334,21 +2334,28 @@ from those numbers, so the `#line` arms that pinned them go.
     `*_DBGMSG`) and the `__DEBUG_MEM__` `MemAlloc` take their line number
     from one macro, `PORT_LINE` in `dbg.h`: `__LINE__`, or 0 when
     `SBSP_IDENTITY_NOLINE` is defined.  That define is for
-    `port/tools/psx_identity.py build` only.  It sets
-    `SBSP_IDENTITY_NOLINE=1` for `build-psx.sh`, which passes it on the
-    `make` command line, and `makefile.gaz` adds the `-D` only when the
-    variable comes from the command line, printing a marker the tool
-    checks in every build log.  DEBUG is then compared with the define on
-    both sides, FINAL strictly, and the tool prints which mode it used.  A
-    base whose `dbg.h`, `makefile.gaz` and `build-psx.sh` don't all name the
-    define gets the strict compare it had before, as does `--strict`.  No
-    shipped, CI or PC build sets it.  The only `__LINE__` uses under
+    `port/tools/psx_identity.py build` only.  It passes
+    `--identity-noline` to `build-psx.sh`, which puts
+    `SBSP_IDENTITY_NOLINE=1` on the `make` command line (an argument,
+    because a variable left in the environment would reach every later
+    build; `build-psx.sh` warns about one and ignores it).  `makefile.gaz`
+    adds the `-D` only when the variable comes from the command line,
+    printing a marker the tool checks in every build log.  DEBUG is then
+    compared with the define on both sides, FINAL strictly, and the tool
+    prints which mode it used.  make tracks no `-D` flags, so the tool
+    deletes a line-insensitive build's objects once it has its copy: the
+    next normal DEBUG build recompiles everything rather than link objects
+    with line 0.  A base without the working plumbing in `dbg.h`,
+    `makefile.gaz` and `build-psx.sh` (matched with comments stripped, not
+    just the name) gets the strict compare it had before, as does
+    `--strict`.  No shipped, CI or PC build sets it.  The only `__LINE__` uses under
     `source/` and `tools/Data/include` were these three macros; PsyQ's own
     `_assert` (`tools/psyq/include/ASSERT.H`) also bakes one, but no game
     file includes it.  With `PORT_LINE` as `__LINE__`, USA and EUR DEBUG and
     FINAL hash identical to the base.  `psx_identity.py lines` now compares
-    the PS1-visible text without line numbers, and reports any `#line` the
-    PS1 compiles.
+    the PS1-visible tokens, so line numbers, comments and layout don't
+    count, expands `PC_PS1` and any macro the file newly defines, and
+    reports any `#line` the PS1 compiles.
 
 65. **The `#line` arms, retired** - changes the PS1 DEBUG build on purpose,
     its line immediates only.  The 20 directives in 9 files go:
@@ -2363,8 +2370,11 @@ from those numbers, so the `#line` arms that pinned them go.
       `y+=PC_PS1(CPadIcon::getRowPitch(...),MAP_INSTRUCTIONS_Y_SPACE_BETWEEN_LINES);`.
     - `player.cpp`'s button-to-icon switch lived twice, as the PC's
       `promptIcons()` and the PS1 arm's inline copy.  It is one macro,
-      `PROMPT_ICONS(_input,Icon)`, which declares `Button` and `Icon` and
-      expands to the original statements.  The PC measuring pass and the
+      `PROMPT_ICONS(_cfg,Icon)`, which declares `Button` and `Icon` and
+      expands to the original statements.  The cast to `PAD_CFG` is at the
+      call, so `_cfg` stands alone as `getButton`'s argument and needs no
+      parentheses the PS1 never saw; the macro is `#undef`'d after
+      `promptRender()`.  The PC measuring pass and the
       shared drawing pass both use it.  A `static inline` function was tried
       first: EGCS kept `Icon`'s address in a register and stored through
       it, and FINAL came out 4 bytes smaller.  The row step is

@@ -7,13 +7,31 @@
 # globals.mak exports it empty; ccpsx looks for sn.ini in the cwd (its paths
 # are repo-root-relative), so stage a copy if missing.
 #
-# Usage: port/build-psx.sh [TERRITORY] [VERSION]      # defaults: USA DEBUG
+# Usage: port/build-psx.sh [TERRITORY] [VERSION] [--identity-noline]
+#        defaults: USA DEBUG; --identity-noline is comparison-only (below)
 set -e
 
 cd "$(dirname "$0")/.."
 
-TERRITORY="${1:-USA}"
-VERSION="${2:-DEBUG}"
+# Comparison-only, for port/tools/psx_identity.py: --identity-noline builds
+# with PORT_LINE (source/system/dbg.h) as 0, so two DEBUG builds compare
+# without counting line shifts.  An argument, never the environment, so a
+# variable left in a shell profile cannot turn it on for a normal build.
+NOLINE=()
+POS=()
+for a in "$@"; do
+    case "$a" in
+        --identity-noline) NOLINE=(SBSP_IDENTITY_NOLINE=1) ;;
+        *) POS+=("$a") ;;
+    esac
+done
+if [ -n "${SBSP_IDENTITY_NOLINE:-}" ]; then
+    echo "build-psx.sh: SBSP_IDENTITY_NOLINE in the environment is ignored" \
+         "(psx_identity.py passes --identity-noline)" >&2
+fi
+
+TERRITORY="${POS[0]:-USA}"
+VERSION="${POS[1]:-DEBUG}"
 
 # Always refresh: the toolchain copy is authoritative.
 cp -f tools/psyq/bin/egcs/sn.ini sn.ini
@@ -31,14 +49,6 @@ export MSYS2_ARG_CONV_EXCL='*'
 mkdir -p "out/$TERRITORY/$VERSION/CD/temp"
 
 BUILD_PATH="/usr/bin:$PWD/port/tools:$PWD/tools:$PWD/tools/psyq/bin:$PWD/tools/psyq/bin/egcs"
-
-# Comparison-only, for port/tools/psx_identity.py: SBSP_IDENTITY_NOLINE=1
-# builds with PORT_LINE (source/system/dbg.h) as 0, so two DEBUG builds
-# compare without counting line shifts.  Never set it for a build anyone runs.
-NOLINE=()
-if [ "${SBSP_IDENTITY_NOLINE:-}" = 1 ]; then
-    NOLINE=(SBSP_IDENTITY_NOLINE=1)
-fi
 
 # Targets 'dirs link' only: the full 'all' also runs 'cddata' (CPE->BIN,
 # buildcd, ISO), which needs 16-bit tools (cpe2bin) and only matters for

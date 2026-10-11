@@ -425,8 +425,8 @@ include $(BUILD_DIR)/ccopt.mak
 #	Comparison-only: port/tools/psx_identity.py builds DEBUG with PORT_LINE
 #	(source/system/dbg.h) as 0, so two builds compare without counting line
 #	shifts (port/docs/psx_byte_identity.md).  Taken from the make command
-#	line only, which port/build-psx.sh writes for SBSP_IDENTITY_NOLINE=1,
-#	never from the environment.  No shipped or normal build sets it.
+#	line only, which port/build-psx.sh writes for its --identity-noline
+#	argument, never from the environment.  No shipped or normal build sets it.
 ifeq ($(origin SBSP_IDENTITY_NOLINE),command line)
 ifeq ($(SBSP_IDENTITY_NOLINE),1)
 COMMON_CCFLAGS +=	-DSBSP_IDENTITY_NOLINE

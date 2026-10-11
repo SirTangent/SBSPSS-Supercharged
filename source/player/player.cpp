@@ -3417,8 +3417,8 @@ int		NewPrompt=m_currentMode;
 	A macro, not a function: EGCS compiles even an inline function's
 	stores through a pointer, and the PS1 build must compile the drawing
 	pass exactly as it did before #50 (conv_pc.md #65).  */
-#define	PROMPT_ICONS(_input,Icon)											\
-			int	Button=CPadConfig::getButton((CPadConfig::PAD_CFG)_input);	\
+#define	PROMPT_ICONS(_cfg,Icon)												\
+			int	Button=CPadConfig::getButton(_cfg);							\
 			int	Icon[2]={-1,-1};											\
 			switch(Button)													\
 			{																\
@@ -3457,7 +3457,7 @@ int			RowPitch=PromptYGap;
 			this prompt asks for, so the rows stay evenly spaced.  */
 		for (sPromptData *P=Ptr; (CPadConfig::PAD_CFG)P->m_input!=CPadConfig::PAD_CFG_NONE; P++)
 		{
-			PROMPT_ICONS(P->m_input,Icon)
+			PROMPT_ICONS((CPadConfig::PAD_CFG)P->m_input,Icon)
 			for (int i=0; i<2; i++)
 			{
 				if (Icon[i]!=-1)
@@ -3481,7 +3481,7 @@ int			RowPitch=PromptYGap;
 				actually pressing on PC (github issue #43), so the icons
 				are no longer a fixed width - the gap between them, and
 				the text that follows, come off the frame header now.  */
-			PROMPT_ICONS(Ptr->m_input,Icon)
+			PROMPT_ICONS((CPadConfig::PAD_CFG)Ptr->m_input,Icon)
 			for (int i=0; i<2; i++)
 			{
 				if (Icon[i]!=-1)
@@ -3518,6 +3518,7 @@ TPOLY_F4	*F4=GetPrimTF4(); setTSemiTrans(F4,1); setTABRMode(F4,0);
 			m_fontBank->setColour(128,128,128);
 			m_fontBank->setSMode(0);
 }
+#undef	PROMPT_ICONS	/* promptRender()'s alone */
 
 /*===========================================================================
 end */
