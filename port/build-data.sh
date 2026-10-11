@@ -6,9 +6,12 @@
 # MSYS2's make the MSYS2 utilities and PATH in place of the 1999 cygwin ones,
 # which crash on Windows 10/11 (issue #16), so the make line below is the
 # same one a bare make from an MSYS2 shell would take.  MSYS2's bash only, as
-# for build-psx.sh (issue #51): Git Bash finds a native Windows make.
+# for build-psx.sh (issue #51): Git Bash finds a native Windows make, whose
+# `sh -c` cuts the ~9K sprite-sheet command at ~8K, so parkgrab writes
+# nothing (issue #42).  make is run from MSYS2's /usr/bin by absolute path.
 #
-# Usage (from an MSYS2 shell, or port\build-data.cmd from cmd / PowerShell):
+# Usage (from an MSYS2 shell, or port\build-data.cmd from cmd, PowerShell or
+# Git Bash):
 #   port/build-data.sh [usa|eur]                  # default usa
 #   port/build-data.sh <preset>                   # debug|final|usa-*|eur-*: the build-pc.sh
 #                                                 # words; the variant half is ignored (note below)
@@ -27,7 +30,7 @@ cd "$(dirname "$0")/.."
 if [ -z "$MSYSTEM" ] || [ ! -x /usr/bin/make ]; then
     echo "port/build-data.sh runs only in MSYS2's bash, as a login shell, with make installed" >&2
     echo "(this shell: MSYSTEM=${MSYSTEM:-unset}, /usr/bin/make $([ -x /usr/bin/make ] && echo found || echo missing)).  Run:" >&2
-    echo "  port\\build-data.cmd $*        (from cmd or PowerShell)" >&2
+    echo "  port\\build-data.cmd $*        (cmd, PowerShell; port/build-data.cmd from Git Bash)" >&2
     echo "  MSYSTEM=MSYS C:/msys64/usr/bin/bash -lc 'cd \"$PWD\" && port/build-data.sh $*'" >&2
     exit 1
 fi

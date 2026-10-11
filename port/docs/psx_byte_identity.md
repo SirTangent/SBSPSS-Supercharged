@@ -371,16 +371,23 @@ run, four builds, takes four to eight.
 ## Build traps
 
 - **Run the PS1 build under MSYS2 bash, not Git Bash** (issue #51).  Git
-  Bash's `make` can't parse the POSIX `PATH` the script passes and dies on
-  `glecho`.  Run `MSYSTEM=MSYS C:/msys64/usr/bin/bash -lc '... port/build-psx.sh USA DEBUG'`.
+  Bash's `make` is a native Windows make that can't parse the POSIX `PATH`
+  and dies on `glecho`.  `build-psx.sh` now refuses to start outside MSYS2's
+  bash and says what to run: `port\build-psx.cmd` (also from Git Bash), or
+  `MSYSTEM=MSYS C:/msys64/usr/bin/bash -lc '... port/build-psx.sh USA DEBUG'`.
 - **The territory and version must be upper case** (`USA DEBUG`).  Lower
   case defines `__TERRITORY_usa__` and writes broken objects into the same
   `out/` tree.  A later run then considers those objects up to date.
+  `build-psx.sh` upper-cases both and accepts only `USA`/`EUR` and
+  `DEBUG`/`FINAL`; a bare `make -f makefile.gaz` does neither.
 - **Never run two PS1 builds at once.**  `ccpsx` writes its preprocessed
   intermediate to the fixed path `C:/msys64/tmp/PQ3`, shared by every build
   on the machine.  The loser fails on a random file.  The winner may have
   silently compiled the *other* tree's source.  After a collision, treat
-  both trees as dirty.
+  both trees as dirty.  `build-psx.sh` runs make under
+  `flock /tmp/sbsp-psx.lock`, so a second build through the script waits
+  for the first; a bare make, or a build-psx.sh from before #51, takes no
+  lock.
 - **Use a short checkout path.**  `asmpsx` records the source path in a
   fixed-size buffer.  Under a deep path such as `.claude/worktrees/<name>/`
   it overflows, and `slink` rejects `system/except_a.o` with "unknown record
