@@ -2,9 +2,14 @@
 
 The game source (`source/`, `tools/Data/include/`) is compiled twice: by the
 PC port, and by the original 1999 PlayStation toolchain (`ccpsx` / EGCS,
-`port/build-psx.sh`).  A change made for the PC must not change one byte of
-the PlayStation executable, `Spongey.cpe`.  **Byte-identical means
-hash-identical, not just the same size.**
+`port/build-psx.sh`).  A change made for the PC must not change the
+PlayStation executable, `Spongey.cpe`:
+- **FINAL** must stay hash-identical.  **Byte-identical means
+  hash-identical, not just the same size.**
+- **DEBUG** must stay hash-identical apart from the line numbers it bakes
+  in.  Since issue #81 the check builds DEBUG with every such number as 0
+  (the line-insensitive compare, below), so moving lines is not a PS1
+  change.
 
 A change that is *meant* to change the PS1 game too says so in its
 `conv_pc.md` entry, like #24's `(u8)` casts in `font.cpp`, and adds a row to
@@ -26,20 +31,22 @@ check.
 
 1. **Any code the PS1 compiles.**  A token changed outside a gate changes
    the bytes, even a refactor that "does the same thing".  Turning an inline
-   `switch` into a helper function, or a constant into a variable, changes
-   the code EGCS generates.
-2. **Line numbers, in DEBUG.**  Three macros bake `__LINE__` into the code
-   as an immediate:
+   `switch` into a helper function, or a constant into a variable, can
+   change the code EGCS generates.  The build compare is the arbiter.
+2. **Line numbers, in DEBUG only.**  Three macros bake the line where they
+   are used into the code as an immediate, all through `PORT_LINE`
+   (`system/dbg.h`):
    - `ASSERT` (`system/dbg.h`)
    - `DBGMSG` / `__DBGMSG` (`system/dbg.h`)
-   - `MemAlloc` (`mem/memory.h`, DEBUG only)
+   - `MemAlloc` (`mem/memory.h`), only with `__DEBUG_MEM__`, which only
+     user `paul`'s build defines.  The `CDBUILD` build the port uses never
+     does.
 
    Adding or removing a line *above* one of them in the same file moves its
-   number.  M8 found 14 such bytes, all `+3`, after its first two hooks.
+   number, so a normal DEBUG build changes.  The line-insensitive compare
+   doesn't see it, and FINAL compiles all three without a line number.
    `__LINE__` is the line in the file where the macro is *used*, so new
    lines in a header move only the macros used in that header.
-   `mem/memory.h` holds some helpers because `memory.cpp`'s line numbering is
-   load-bearing.
 3. **The data build.**  `tools/perl/pl/lang.pl` writes the `STR__*` enum in
    `out/<T>/include/trans.h` in Perl's randomised hash order, so every data
    build shuffles the string table.  About 30 objects and 250 KB of the cpe
@@ -50,6 +57,43 @@ check.
 4. **Adding or removing a file the PS1 builds.**  A new translation unit
    changes the link, so it cannot be identical.  #43's `pad/padicon.cpp` was
    one, and was accepted as a deliberate change.
+
+## The two compare modes
+
+`psx_identity.py build` compares each version its own way, and says which
+it used:
+
+- **FINAL: strict.**  The two `Spongey.cpe` files must hash the same.
+  FINAL bakes in no line numbers, so nothing is left out.
+- **DEBUG: line-insensitive.**  Both sides are built with
+  `SBSP_IDENTITY_NOLINE`, which makes `PORT_LINE` 0 instead of `__LINE__`.
+  Every code change still shows; a line shift doesn't.  The tool passes
+  `--identity-noline` to `port/build-psx.sh`, which puts
+  `SBSP_IDENTITY_NOLINE=1` on the `make` command line.  It is an argument,
+  not an environment variable: `build-psx.sh` ignores (and warns about) one
+  in the environment, and `makefile.gaz` takes the variable from the
+  command line only.  `makefile.gaz` then adds `-DSBSP_IDENTITY_NOLINE` and
+  prints `SBSP_IDENTITY_NOLINE: PORT_LINE is 0 ...`.  The tool requires that
+  line in the log of every line-insensitive build, and its absence from
+  every other build, so a side that silently ignored the define can't pass.
+  The result is a different, slightly smaller executable than the normal
+  DEBUG build (220 bytes, USA), made for comparing and nothing else.  make
+  does not track `-D` flags, so the tool deletes the objects of every
+  line-insensitive build when it is done: the next normal DEBUG build then
+  recompiles everything instead of linking in objects with line 0.
+- **DEBUG: strict**, line numbers included, in two cases:
+  - **Either side lacks the plumbing.**  The tool reads both trees, with
+    comments stripped: `system/dbg.h` must define `PORT_LINE` as 0 under
+    `#ifdef SBSP_IDENTITY_NOLINE`, `makefile.gaz` must have the command-line
+    `ifeq` and the `-D`, and `port/build-psx.sh` must take
+    `--identity-noline` (`NOLINE_PLUMBING` in the tool).  A branch started
+    before #81 that moves lines therefore sees DEBUG differ.  Rebase it
+    rather than add `#line` arms.
+  - **`--strict`**, for the hash of the normal DEBUG build.
+
+No shipped or normal build sets `SBSP_IDENTITY_NOLINE`: not CI, not
+`build-psx.sh` without `--identity-noline`, and never the PC builds,
+where `PORT_LINE` is always `__LINE__`.
 
 ## Deliberate PS1 changes
 
@@ -71,18 +115,24 @@ are the whole difference from `master`:
 | 51 | the ten prompt draw sites | resolver calls and measured icon widths |
 | 53 | `gfx/font.cpp` | `(u8)` font-table indexes (issue #24) |
 | 61 | `shop/shop.cpp` | the cross and triangle glyphs back on `master`'s step (issue #56) |
+| 65 | the nine files that carried `#line` arms | DEBUG only: its line immediates move, once, to the files' true line numbers (issue #81).  FINAL and the line-insensitive DEBUG compare are unchanged |
 
 A change that alters the PS1 build on purpose adds its row here.  It also
 appends its before and after `Spongey.cpe` hashes to
 `port/docs/psx_build_log.csv`, and gives them in its pull request.  The log
-takes one row per side for USA DEBUG and FINAL, from `psx_identity.py build`:
+takes one row per side for each version `psx_identity.py build` compared,
+USA: FINAL, and DEBUG as the tool compared it.  That is `DEBUG-NOLINE` (the
+line-insensitive build) since #81, or `DEBUG` where it fell back to strict.
+Each row has:
 - `baseline` for the base commit, `change` for the branch;
-- the size, the CRC32 (zlib), the SHA-256;
+- the size, the CRC32 (zlib), the SHA-256, as the tool prints them;
 - the SHA-256 of the `trans.h` that build used.
 
-`historical` rows are older, partial records.  A hash is only comparable with
-one from the same data build (`trans.h`, above), so compare rows only when
-their `trans_h_sha256` matches.
+A normal DEBUG build's hash moves with every line shift, so it isn't
+logged after #81's own pair of rows.  `historical` rows are older, partial
+records.  A hash is only comparable with one from the same data build
+(`trans.h`, above), so compare rows only when their `trans_h_sha256`
+matches.
 
 ## Where the gate comes from
 
@@ -93,69 +143,66 @@ through `system/global.h`.  A gate placed *before* that include would quietly
 read as "PC" on the PlayStation, so check the include order when you gate
 somewhere new.
 
-`source/locale/textdbase.cpp` gates on the compiler macros directly
-(`#if defined(mips) || defined(__mips__)`), for a `#line` that only the
-PlayStation should see in a file whose 32-bit and x64 PC builds use
-different arms.
+`source/system/vsprintf.h` gates on the compiler macros directly
+(`#if !defined(mips) && !defined(__mips__)`): its varargs are an ABI matter,
+and `PSX_NO_ASM` must not switch them on a PlayStation (`conv_pc.md` #33).
 
 ## Patterns
 
+In order of preference.  None of them needs a `#line`.
+
 ### Same-line edits through a macro
 
-This is the best option when it fits: no line moves, so no `#line` is needed.
-M9 did most of the x64 work this way.  For example, `RELOC_PTR(...)` expands
-to the original tokens everywhere except x64 (`conv_pc.md` #31).
+The best option when it fits: one line, no `#if` arm, and the PS1 compiler
+gets exactly the old tokens.  M9 did most of the x64 work this way.  For
+example, `RELOC_PTR(...)` expands to the original tokens everywhere except
+x64 (`conv_pc.md` #31).
 
 For a value that should differ on PC, use `PC_PS1(pc, ps1)` from
 `system/asmport.h`: `MAP_INSTRUCTIONS_KEYCAP_Y_OFFSET=PC_PS1(2,3),` gives the
 PC 2 and hands the PS1 compiler the original `3` (`conv_pc.md` #60).  It
-expands unparenthesised, so use it as a whole initializer or operand.
-
-### PC-only insertion
+expands unparenthesised, so use it as a whole initializer or operand.  It
+also takes a PC-only expression, which the PS1 compiler never sees:
 
 ```cpp
-	m_tempBuffer=(unsigned char*)MemAlloc(m_bufferSize,"MEMCARD");     // base line 532
+	y+=PC_PS1(CPadIcon::getRowPitch(sb,PAD_CROSS,MAP_INSTRUCTIONS_Y_SPACE_BETWEEN_LINES),MAP_INSTRUCTIONS_Y_SPACE_BETWEEN_LINES);
+```
+
+(`map/map.cpp`, #81.  `getRowPitch` is declared for the PC only.)
+
+### PC-only logic in PC-only code, called from one line
+
+Put the logic where the PS1 compiler never looks: the shim under `port/`
+(`Port_SceneEvent`, the `Port_Autoplay*` accessors), or a function in a
+PC-only block.  The game file gets the call, gated:
+
+```cpp
+	m_tempBuffer=(unsigned char*)MemAlloc(m_bufferSize,"MEMCARD");
 #if !defined(PSX_MIPS_ASM)
 	// PC: ... (conv_pc.md #57)
 	memset(m_tempBuffer,0,m_bufferSize);
-#else
-#line 532	// keep the PS1 build's __LINE__ (ASSERTs below) byte-identical
 #endif
-}                                                                       // base line 533
+}
 ```
 
-`#line N` gives the *next* line the number N, and here the next line is the
-`#endif`.  So **N is the base number of the line just before the
-insertion**: the `#endif` takes N, and the line after it gets N+1, which is
-its original number.  (`memcard/saveload.cpp`, #57.)
+The lines after the arm move.  That is fine: FINAL has no line numbers,
+and the DEBUG compare ignores them.  (`memcard/saveload.cpp`, #57.)
 
-### PC replacement of PS1 code
+### PC replacement of PS1 code: keep one copy
 
-The PS1 arm keeps the original lines, verbatim, with a `#line` at each end:
-
-```cpp
-#if !defined(PSX_MIPS_ASM)
-			int	Icon[2];
-			promptIcons(Ptr->m_input,Icon);
-#else
-#line 3440
-			int	Button=CPadConfig::getButton((CPadConfig::PAD_CFG)Ptr->m_input);
-			...                                      // base lines 3441-3451, the ASSERT on 3450
-			}
-#line 3452
-#endif
-			for (int i=0; i<2; i++)                  // base line 3453
-```
-
-- **The opening `#line`** is the base number of the first line kept.  Without
-  it, the `#if` / PC arm / `#else` lines would push everything in the arm
-  down.  It matters whenever a `__LINE__` macro sits in the arm.
-- **The closing `#line`** is the base number of the last line kept, because
-  the `#endif` takes that number.
-
-Write both even when nothing in the arm uses `__LINE__`.  The next person to
-add an `ASSERT` there then doesn't have to think, and `lines` (below)
-compares text *and* numbers.  (`player/player.cpp`, `map/map.cpp`, #59.)
+Don't keep a frozen copy of the PS1 code in an `#else` arm beside the PC
+version: a fix to one copy won't reach the other.  In order:
+1. **Share it**, if the shared form compiles to the same PS1 code.  The
+   FINAL hash and the line-insensitive DEBUG compare are the proof.  #50's
+   button-to-icon switch in `player/player.cpp` lived twice, as the PC's
+   `promptIcons()` and an inline PS1 copy.  It is one macro now,
+   `PROMPT_ICONS`, which expands to the original statements, so the PS1
+   build compiles the drawing pass as before.  A `static inline` function
+   was tried first and failed: EGCS kept the array's address in a register
+   and stored through it, and FINAL came out 4 bytes smaller (#81).
+2. **The difference on one line**, through `PC_PS1` (above).
+   `player.cpp`'s row step is `Y-=PC_PS1(RowPitch,PromptYGap);`.
+3. **The PC side in a PC-only function**, and a gated call (above).
 
 ### Declarations only the PC uses
 
@@ -164,31 +211,45 @@ Gate them in the header too, as `CPadIcon::getRowPitch` is in
 emits nothing.  It's so the PS1 build fails to compile if PS1 code ever
 starts calling the PC path.
 
-### Rules of thumb
+### `#line`: the last resort
 
-- The `#line` goes **inside the `#else` arm**, never after the `#endif`.  A
-  PC compiler skips that arm, so PC `__LINE__` stays true in assert
-  messages, crash reports and PDBs.
-- "Base line number" means the number the PS1 compiler assigns in the base
-  revision.  In a file that already carries `#line` arms, that is **not** the
-  editor's line number.  Run `lines` rather than counting by hand.
-- Comments in PS1-visible code: changing a comment on an existing line
-  doesn't change the bytes, but adding or removing a comment line moves
-  every `__LINE__` below it.  Put new commentary in the PC arm.
+Before #81, every PC-only block that added lines above a `__LINE__` user
+carried an `#else` arm ending in `#line <n>`, which made the PS1 compiler
+number the rest of the file as an older revision had.  #81 retired all 20
+of them, in 9 files.  The compare no longer needs them, and each one pinned
+a number that went quietly wrong once PS1-visible code above it changed:
+every `ASSERT` and `DBGMSG` below it then reported the wrong line.
+
+The tree has none, and `psx_identity.py lines` reports any `#line` the PS1
+compiles.  The one case left is a branch whose base predates `PORT_LINE`,
+which gets the strict DEBUG compare; rebase it instead.  If an arm is ever
+unavoidable, put the `#line` inside the `#else` arm, never after the
+`#endif`, so PC `__LINE__` stays true in assert messages, crash reports and
+PDBs, and list it here with its reason.
+
+To check: `git grep -n "^#line" -- source tools/Data/include`.
+
+### Comments
+
+Changing a comment in PS1-visible code doesn't change the bytes.  Adding or
+removing comment lines moves the DEBUG line numbers below them, which the
+compare ignores.  `lines` reports comment edits in PS1-visible code as a
+`DIFF`, since it compares text.
 
 ## Checking
 
 ### `psx_identity.py lines`
 
-Takes seconds.  By default it checks every file under `source/` and
-`tools/Data/include/` that the working tree changes against the base:
-committed or not, untracked included, and any extension, so the `.mip`
-assembly, `utils/gpu.inc` and the upper-case `.H` headers are covered.  A
-new file is reported `NEW`, because a new file the PS1 compiles can't be
-identical.  You can also name the files.
+Takes seconds, needs no data and checks uncommitted work.  By default it
+checks every file under `source/` and `tools/Data/include/` that the
+working tree changes against the base: committed or not, untracked
+included, and any extension, so the `.mip` assembly, `utils/gpu.inc` and
+the upper-case `.H` headers are covered.  A new file is reported `NEW`,
+because a new file the PS1 compiles can't be identical.  You can also name
+the files.
 
 For each one it preprocesses both revisions the way the PS1 compiler would,
-but only as far as gates and `#line` go:
+but only as far as the gates go:
 - It evaluates conditions over `PSX_MIPS_ASM`, `mips`, `__mips__`,
   `PSX_NO_ASM` and `SBSP_PC64`, and leaves those directive lines out: what
   they select is what gets compared.
@@ -196,25 +257,52 @@ but only as far as gates and `#line` go:
   a `\` continuation), and keeps those `#if`/`#elif`/`#else`/`#endif` lines
   as text.  Flipping such a condition is therefore a visible change.
 - An arm after one that already won is dead, as it is for the compiler.
-- It honours `#line`, but only in arms the PS1 compiles.
 
-It then requires the two to be the same lines of text on the same numbers:
+It then requires the two to be the same tokens in the same order: what the
+compiler reads, so line numbers (as in the DEBUG compare), comments,
+whitespace and line breaks don't count, and a gated PC-only block passes.
+Before comparing it expands the two same-line patterns above, the way the
+PS1 preprocessor would:
+- **`PC_PS1(pc, ps1)`** becomes its `ps1` argument (`system/asmport.h`).
+- **A macro the file defines and the base did not** (one shared copy of
+  code that used to be written out) is expanded at each use, and its
+  `#define` and `#undef` lines drop out: a new macro makes code only where
+  it is used.  It must be defined once, outside any condition the tool
+  can't evaluate, and use neither `#` nor `##`; otherwise the file falls
+  back to the line compare.
+
+Every other macro is compared as written, not expanded.  It also reports,
+as `LINE`, every `#line` directive the PS1 compiles in those files.  On
+#81's own branch, where `dbg.h` and `memory.h` change `__LINE__` to
+`PORT_LINE` on purpose:
 
 ```
-ok    source/map/map.cpp
-DIFF  source/player/player.cpp - the PS1 sees different text or line numbers:
-        base  3471: Y-=PromptYGap;
-        now   3474: Y-=PromptYGap;
+ok    source/game/game.cpp
+ok    source/map/map.cpp - same tokens (comments, layout or the macro patterns differ)
+DIFF  source/mem/memory.h - the PS1 sees different tokens:
+        base: DebugMemFontInit ( ) ; # define MemAlloc ( Size , Name ) MemAllocate ( ( Size ) , ( Name ) , __FILE__ , __L...
+        now : DebugMemFontInit ( ) ; # define MemAlloc ( Size , Name ) MemAllocate ( ( Size ) , ( Name ) , __FILE__ , POR...
+ok    source/player/player.cpp - same tokens (comments, layout or the macro patterns differ)
+a DIFF is not proof of a different executable: psx_identity.py build decides
 ```
 
-The check is stricter than the bytes.  It flags comment-only edits in
-PS1-visible code.  It also flags a line shift in a file with no `__LINE__`
-user below it, which the bytes don't notice.  For example, #67's PC-only
-addition to `system/asmport.h` moved the lines after it and the hash stayed
-the same.  It is also blind to anything outside the file: data,
-and macros defined elsewhere.  Treat a pass as "very probably identical"
-and a `DIFF` as "fix it, or know why it is harmless".  `build` is the
-arbiter.
+`map.cpp` passes through `PC_PS1`, and `player.cpp` through its new
+`PROMPT_ICONS` macro, expanded back into the statements the PS1 compiled
+before.  A directive is shown as one token, so `memory.h`'s difference is
+at the end of that `#define`.
+
+Before #81 it compared the line numbers too, which is how it caught a
+stale `#line`.  With the arms gone and the DEBUG compare ignoring line
+numbers, that half had nothing left to check.  What stays is the part that
+still pays: a check in seconds, before `build`'s four clean builds, that a
+PC change left the PS1 tokens alone, and the `LINE` report that keeps new
+arms out.
+
+The token check is still stricter than the bytes: a deliberate change that
+compiles the same (redundant parentheses, a renamed local) is a `DIFF`.  It
+is blind to anything outside the file: data, and macros defined elsewhere.
+Treat a pass as "very probably identical" and a `DIFF` as "fix it, or know
+why it is harmless".  `build` is the arbiter.
 
 ### `psx_identity.py build`
 
@@ -227,7 +315,25 @@ default) it:
    per-user makefile under `users/`, the toolchain under `tools/`, and
    `port/build-psx.sh`.  So a change to compiler flags is compared too.
 3. Puts `HEAD`'s copies back with `git checkout HEAD`.
-4. Compares the two `Spongey.cpe` SHA-256 hashes.
+4. Compares the two `Spongey.cpe` SHA-256 hashes, in the mode it printed at
+   the start (above).
+
+```
+base 0785f0afe, 11 changed file(s), trans.h ca662f971dc60bd0
+DEBUG: line-insensitive - both sides built with SBSP_IDENTITY_NOLINE, PORT_LINE 0
+FINAL: strict - it bakes in no line numbers
+IDENTICAL USA DEBUG (line-insensitive)
+    head   752527 B  crc32 1084A321  sha256 e7d4d5f3e9e539f1...
+    base   752527 B  crc32 1084A321  sha256 e7d4d5f3e9e539f1...
+IDENTICAL USA FINAL (strict)
+    head   665207 B  crc32 367F237E  sha256 d408200c15066e94...
+    base   665207 B  crc32 367F237E  sha256 d408200c15066e94...
+trans.h sha256 ca662f971dc60bd0eedf16ebc85277920be2961cc6d9428ce385e8fab9c5db63
+```
+
+(#81 against its own first commit; the tool prints the whole SHA-256.)
+
+The size, CRC32 and SHA-256 lines are the columns of `psx_build_log.csv`.
 
 Before each build it deletes the old `Spongey.cpe`, and it accepts only one
 written by that build.  A build that fails without saying so (a login shell
@@ -241,19 +347,22 @@ It needs:
   `--territory EUR`).
 - **The changes committed, and no untracked files among the build inputs.**
   Step 2 overwrites the working copies, and an untracked file would be built
-  into both sides.
+  into both sides.  Don't edit build inputs while it runs either: the `HEAD`
+  side compiles the working tree.
 - **The same set of files as the base.**  Swapping in base copies can't
   undo an added or removed file, so the tool won't compare that change.
 - **A short checkout path** (see the traps below).
 - **No other PS1 build running anywhere on the machine.**
 
 Anything that stops it from comparing exits 2 with the reason on stderr:
-a build failure, a missing prerequisite, or `trans.h` changing during the
+a build failure, a missing prerequisite, a build that did or didn't take
+`SBSP_IDENTITY_NOLINE` against the mode, or `trans.h` changing during the
 run.  1 always means the two executables really differ.
 
-Copies of each cpe and each build log go to `out/psx_identity/`.  On this
+Copies of each cpe and each build log go to `out/psx_identity/`, named by
+side and version (`head-DEBUG-noline.cpe`, `base-FINAL.cpe`).  On this
 machine a clean build (289 files) takes one to two minutes, so the default
-run takes five to ten.
+run, four builds, takes four to eight.
 
 ## Build traps
 
@@ -275,19 +384,3 @@ run takes five to ten.
 - **"Clean" means deleting `out/<T>/<V>/CD/objs` and `out/<T>/<V>/deps`.**
   Only compare clean builds of every file.  An incremental build can keep
   stale objects.
-
-## Where the `#line` arms are
-
-| file | conv_pc.md | protects |
-|---|---|---|
-| `source/system/gstate.cpp` | #23 | ASSERT / DBGMSG |
-| `source/fma/fma.cpp` | #24 | ASSERTs |
-| `source/game/game.cpp` | #28, #56 | ASSERTs, DBGMSGs |
-| `source/gfx/animtex.cpp` | #29 | ASSERTs |
-| `source/locale/textdbase.cpp` | #32 | ASSERTs (gated on `mips`) |
-| `source/memcard/saveload.cpp` | #57 | ASSERTs |
-| `source/pad/padicon.h` | #59 | line numbering only (no `__LINE__` user) |
-| `source/map/map.cpp` | #59 | MemAlloc |
-| `source/player/player.cpp` | #59 | ASSERT |
-
-To list the arms in the tree: `git grep -n "^#line" -- source tools/Data/include`.

@@ -422,6 +422,18 @@ EXTRA_OBJS :=			$(VLC_LIB_DIR)/vlc_bit.o
 #	---------------
 include $(BUILD_DIR)/ccopt.mak
 
+#	Comparison-only: port/tools/psx_identity.py builds DEBUG with PORT_LINE
+#	(source/system/dbg.h) as 0, so two builds compare without counting line
+#	shifts (port/docs/psx_byte_identity.md).  Taken from the make command
+#	line only, which port/build-psx.sh writes for its --identity-noline
+#	argument, never from the environment.  No shipped or normal build sets it.
+ifeq ($(origin SBSP_IDENTITY_NOLINE),command line)
+ifeq ($(SBSP_IDENTITY_NOLINE),1)
+COMMON_CCFLAGS +=	-DSBSP_IDENTITY_NOLINE
+$(info SBSP_IDENTITY_NOLINE: PORT_LINE is 0 in this build, for comparison only)
+endif
+endif
+
 $(OBJ_DIR)/%.o : $(SOURCE_DIR)/%.cpp
 	@$(ECHO) Compiling $<
 	@$(CC) -c $(COMMON_CCFLAGS) $< -o a.o

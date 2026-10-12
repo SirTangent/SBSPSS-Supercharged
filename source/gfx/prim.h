@@ -101,10 +101,11 @@
 #else	/* PSX_MIPS_ASM */
 
 /*	Portable equivalents of the swl/lwl tricks above.  A prim tag is 8 bits
-	of length over a 24-bit address; set3/get3 touch only the low 3 bytes of
-	the word, exactly like swl/lwl at offset 2 on little-endian MIPS.
-	NOTE: 24 bits reach 16MB, not 4GB - the OT and every prim linked into it
-	must share one 16MB-aligned window (any pointer width; PC: api/arena.cpp). */
+	of length over a 24-bit address; set3/get3 touch its low 3 bytes, like
+	swl/lwl at offset 2.  NOTE: port/psyq/gpu/gp0.cpp rebuilds each OT link as
+	(ot & ~0xFFFFFF) | addr24, so the OT and its prims must share one 16MB-
+	aligned window.  port/psyq/api/arena.cpp puts its heap in one if it can;
+	if 32-bit falls back to a heap across two, the first DrawOTag aborts.  */
 inline void	set3(void *r0,u32 r1)
 {
 u32	*w=(u32*)r0;

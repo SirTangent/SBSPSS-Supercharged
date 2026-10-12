@@ -30,6 +30,17 @@
 #define DBG_ACTIVE
 #endif
 
+/*	The line number ASSERT, the *_DBGMSG macros and MemAlloc (mem/memory.h)
+	bake into the code: __LINE__, except in the comparison-only PS1 builds
+	that port/tools/psx_identity.py makes with SBSP_IDENTITY_NOLINE.  There
+	it is 0, so two DEBUG builds compare without counting line shifts
+	(port/docs/psx_byte_identity.md).  No shipped or normal build sets it.  */
+#ifdef	SBSP_IDENTITY_NOLINE
+#define	PORT_LINE	0
+#else
+#define	PORT_LINE	__LINE__
+#endif
+
 
 // Available channels
 typedef enum
@@ -73,7 +84,7 @@ typedef enum
 	int					__getNumberOfDbgLinesInLog();
 	char				*__getDbgLineFromLog(int _line);
 
-	#define __DBGMSG(channel)	__setDbgChannels(channel);__setDbgFilenameAndLine(__FILE__,__LINE__);__writeDbgMessage
+	#define __DBGMSG(channel)	__setDbgChannels(channel);__setDbgFilenameAndLine(__FILE__,PORT_LINE);__writeDbgMessage
 #endif
 
 
@@ -113,7 +124,7 @@ typedef enum
 #if defined(__VERSION_DEBUG__)
 	void	DbgPollHost();
 	void	DoAssert(const char * Txt, const char * file, const int line);
-	#define	ASSERT(x)							if (!(x)) DoAssert(#x,__FILE__,__LINE__);
+	#define	ASSERT(x)							if (!(x)) DoAssert(#x,__FILE__,PORT_LINE);
 #else
 #define	DbgPollHost()							;
 	#define	ASSERT(x)							;
