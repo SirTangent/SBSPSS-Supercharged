@@ -112,8 +112,11 @@ If this folder has sbsp64.exe and sbsp64-debug.exe, they are the same game
 built as a 64-bit program (64-bit Windows only).  They use the same data,
 the same sbsp.ini and the same memory card as the 32-bit ones, so you can
 switch between them in the middle of a play-through, and they should look,
-sound and play exactly alike - any difference you notice between the two
-is worth a note.  Keep SDL3.dll beside them; the 32-bit exes do not use it.
+sound and play alike.  One difference is known: in sbsp.exe and sbsp64.exe
+(not the -debug ones) a skeletal fish near the start of Inside the Whale
+can swim at a different speed.  Any other difference you notice between
+the two is worth a note.  Keep SDL3.dll beside them; the 32-bit exes do
+not use it.
 
   run-test-session.cmd x64          a recorded session on sbsp64-debug.exe
   run-test-session.cmd x64 final    ... on sbsp64.exe
