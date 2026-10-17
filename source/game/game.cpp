@@ -285,8 +285,6 @@ void 	CGameScene::render()
 	// PC: once per Game frame, whether the pause menu (drawn by render_playing) is in it -
 	// DEBUG draws that menu with an extra line, so a cross-build replay skips crc under it (conv_pc.md #56)
 	Port_PauseMenuDrawn(m_pauseMenu->isActive()&&m_gamestate!=GAMESTATE_BOSS_INTRO&&m_gamestate!=GAMESTATE_SHOWING_LIVES_BUT_GOING_TO_BOSS_TEXT);
-#else
-#line 283	// keep the PS1 build's __LINE__ (ASSERTs below) byte-identical
 #endif
 }
 
@@ -571,8 +569,6 @@ void CGameScene::think_playing(int _frames)
 		s_levelFinished=false;
 		m_timer=Port_AutoplayFinish();
 	}
-#else
-#line 553	// keep the PS1 build's __LINE__ (DBGMSG below) byte-identical
 #endif
 
 	if(s_levelFinished)
@@ -617,8 +613,6 @@ void CGameScene::think_playing(int _frames)
 		{
 			gameSlot->setSpatulaCollectedCount(chapter-1,level-1,getTotalSpatCountForThisLevel(),getTotalSpatCountForThisLevel());
 		}
-#else
-#line 590	// keep the PS1 build's __LINE__ (DBGMSG below) byte-identical
 #endif
 
 		// Level finished - go to map or fma
@@ -885,8 +879,6 @@ void	CGameScene::initLevel()
 			CGameSlotManager::getSlotData()->m_continues=n;
 		}
 	}
-#else
-#line 837	// keep the PS1 build's __LINE__ (DBGMSG below) byte-identical
 #endif
 
 	CActorPool::SetUpCache();

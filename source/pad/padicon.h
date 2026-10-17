@@ -92,8 +92,6 @@ public:
 	static int		getFrameRowPitch(BANK *_sb,int _frame,int _glyphPitch)
 					{ int capPitch=_sb->getFrameHeight(_frame)+KEYCAP_ROW_GAP;
 					  return isKeyCap(_frame)&&capPitch>_glyphPitch?capPitch:_glyphPitch; }
-#else
-#line 78	// keep the PS1 build's line numbering (port/docs/psx_byte_identity.md)
 #endif
 
 	/*	Whether a frame getFrame() answered with is one of the key caps
