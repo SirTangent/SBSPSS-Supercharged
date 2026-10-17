@@ -27,13 +27,8 @@ set -e
 
 cd "$(dirname "$0")/.."
 
-if [ -z "$MSYSTEM" ] || [ ! -x /usr/bin/make ] || [ ! -x /usr/bin/flock ]; then
-    echo "port/build-psx.sh runs only in MSYS2's bash, as a login shell, with make installed" >&2
-    echo "(this shell: MSYSTEM=${MSYSTEM:-unset}, /usr/bin/make $([ -x /usr/bin/make ] && echo found || echo missing)).  Run:" >&2
-    echo "  port\\build-psx.cmd $*        (cmd, PowerShell; port/build-psx.cmd from Git Bash)" >&2
-    echo "  MSYSTEM=MSYS C:/msys64/usr/bin/bash -lc 'cd \"$PWD\" && port/build-psx.sh $*'" >&2
-    exit 1
-fi
+. port/require-msys2.sh
+require_msys2 build-psx "make flock" "$@"
 
 usage()
 {
@@ -50,6 +45,7 @@ POS=()
 for a in "$@"; do
     case "$a" in
         --identity-noline) NOLINE=(SBSP_IDENTITY_NOLINE=1) ;;
+        -*) usage ;;                # a mistyped option is never a territory (#89)
         *) POS+=("$a") ;;
     esac
 done

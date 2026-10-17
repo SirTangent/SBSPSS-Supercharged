@@ -146,15 +146,18 @@ export Path =		$(TOOL_DIR);$(CYG_BIN_DIR);$(PSYQ_BIN_DIR);$(PERL_BIN_DIR)
 #	The tool pins and the path above are the 1999 route: tools/make.exe
 #	(GNU make 3.79, a native Win32 build; MakeUSA.bat and friends) with the
 #	cygwin b20 utilities in tools/cygwin, which no longer start on Windows
-#	10/11.  MSYS2's make (4.x, built for cygwin, so MAKE_HOST is *-cygwin;
-#	3.79 has no MAKE_HOST) gets MSYS2's own utilities and a POSIX PATH:
+#	10/11.  MSYS2's make (4.x, built for cygwin, so MAKE_HOST is *-cygwin,
+#	or *-msys from MSYS2 releases before the triplet changed; 3.79 has no
+#	MAKE_HOST) gets MSYS2's own utilities and a POSIX PATH:
 #	port/tools first, so its lznp.exe shadows the 16-bit tools/lznp.exe,
 #	then every tool directory the data and PS1 builds use.  PATH only, no
 #	Path: MSYS2 folds Windows' Path into PATH already.  This is the one
 #	copy - port/build-data.sh, port/build-psx.sh and a bare make from an
-#	MSYS2 shell all get it (issue #16).  A native Windows make 4.x (Git
-#	Bash's, say) can run neither set of tools, so it stops here.
-ifneq ($(filter %-cygwin,$(MAKE_HOST)),)
+#	MSYS2 shell all get it (issue #16).  Any other make stops here: a native
+#	Windows make 4.x (Git Bash's, say) can run neither set of tools, and a
+#	make older than 4.0 that isn't 3.79 (GnuWin32's 3.81) has no MAKE_HOST
+#	either but would get the 1999 tools that no longer start.
+ifneq ($(filter %-cygwin %-msys,$(MAKE_HOST)),)
 ECHO :=					echo
 RMDIR :=				rmdir
 MKDIR :=				mkdir
@@ -168,6 +171,9 @@ export PATH :=			/usr/bin:$(CURDIR)/port/tools:$(CURDIR)/$(TOOL_DIR):$(CURDIR)/$
 else
 ifneq ($(MAKE_HOST),)
 $(error GNU make $(MAKE_VERSION) for $(MAKE_HOST) cannot run this build - use MSYS2's make: port\build-data.cmd / port\build-psx.cmd, or /usr/bin/make from an MSYS2 shell)
+endif
+ifeq ($(filter 3.79%,$(MAKE_VERSION)),)
+$(error GNU make $(MAKE_VERSION) is neither MSYS2's make nor tools/make.exe 3.79 - use MSYS2's make: port\build-data.cmd / port\build-psx.cmd, or /usr/bin/make from an MSYS2 shell)
 endif
 endif
 

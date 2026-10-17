@@ -27,13 +27,8 @@ set -e
 
 cd "$(dirname "$0")/.."
 
-if [ -z "$MSYSTEM" ] || [ ! -x /usr/bin/make ]; then
-    echo "port/build-data.sh runs only in MSYS2's bash, as a login shell, with make installed" >&2
-    echo "(this shell: MSYSTEM=${MSYSTEM:-unset}, /usr/bin/make $([ -x /usr/bin/make ] && echo found || echo missing)).  Run:" >&2
-    echo "  port\\build-data.cmd $*        (cmd, PowerShell; port/build-data.cmd from Git Bash)" >&2
-    echo "  MSYSTEM=MSYS C:/msys64/usr/bin/bash -lc 'cd \"$PWD\" && port/build-data.sh $*'" >&2
-    exit 1
-fi
+. port/require-msys2.sh
+require_msys2 build-data "make" "$@"
 
 usage()
 {

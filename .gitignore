@@ -5,6 +5,9 @@ out/
 data/Scripts/defs/trans.scr
 *.stackdump
 .idea/
+# a file literally named nul, from a `>nul` recipe under an msys sh (issue
+# #15); none is left in the makefiles, but older trees can still have one
+nul
 # the copy port/build-psx.sh drops at the root for ccpsx (the tracked
 # originals live under tools/psyq/bin/)
 /sn.ini
