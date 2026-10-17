@@ -12,6 +12,12 @@
 	                             those vblank numbers (sbsp_frame_<n>.bmp;
 	                             black while SetDispMask(0) is in force, as
 	                             on screen - host/framedump.cpp)
+	  SBSP_DUMP_ASPECT=1         also write sbsp_frame_<n>_4x3.bmp beside
+	                             each, the same frame at the window's 4:3
+	                             shape (1024x768 for the 512x256 mode, a
+	                             pixel 2 across by 3 down; issue #53).
+	                             Judge sprite art from that one, not from
+	                             the raw BMP (unchanged, still the default)
 	  SBSP_DUMP_DIR=<dir>        where to write them (default .)
 	  SBSP_EXIT_AFTER=<n>        clean exit(0) at vblank n (the game's
 	                             MainLoop has no exit path of its own)
@@ -47,6 +53,7 @@ static unsigned long g_exitAfter;		/* 0 = off */
 static unsigned long g_dumpAt[16];
 static int			g_dumpCount;
 static const char	*g_dumpDir = ".";
+static int			g_dumpAspect;		/* SBSP_DUMP_ASPECT=1: + a 4:3 copy (issue #53) */
 static int			g_frameCrc;			/* SBSP_FRAME_CRC=1: [frame] line per vblank */
 
 /*	Pause on focus loss (M8 shell).  SBSP_PAUSE_ON_FOCUS_LOSS (sbsp.ini
@@ -157,6 +164,9 @@ static void parseTooling(void)
 	if (dir && *dir)
 		g_dumpDir = _strdup(dir);
 
+	const char *da = getenv("SBSP_DUMP_ASPECT");
+	g_dumpAspect = da && *da && *da != '0';
+
 	const char *fc = getenv("SBSP_FRAME_CRC");
 	g_frameCrc = fc && *fc && *fc != '0';
 
@@ -170,12 +180,17 @@ static void parseTooling(void)
 }
 
 /*****************************************************************************/
-/*	the BMP writer itself (mask-aware) is host/framedump.cpp  */
+/*	the BMP writers themselves (mask-aware) are host/framedump.cpp  */
 static void dumpDisplayBMP(unsigned long vblank)
 {
 	char path[512];
 	snprintf(path, sizeof(path), "%s/sbsp_frame_%lu.bmp", g_dumpDir, vblank);
-	Host_WriteDisplayBMP(path);
+	Host_WriteDisplayBMP(path);			/* the raw framebuffer: always, and first */
+	if (g_dumpAspect)
+	{
+		snprintf(path, sizeof(path), "%s/sbsp_frame_%lu_4x3.bmp", g_dumpDir, vblank);
+		Host_WriteDisplayAspectBMP(path);
+	}
 }
 
 /*****************************************************************************/

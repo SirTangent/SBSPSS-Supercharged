@@ -1996,7 +1996,65 @@ all - and now call it; the numbers are unchanged, so no CRC moves.
 all-black file with the same header and size, and an uncreatable path
 returns 0 and leaves no file.  Its temp files carry the process id, so
 trees running ctest at once do not collide.  The window-shaped 4:3 dump
-is issue #53's, not part of this change.
+is issue #53's, not part of this change (next section).
+
+### Frame dumps at the window's shape (issue #53)
+
+`port/psyq/host/framedump.cpp` + `framedump.h`, `host/window.cpp`,
+`host/args.cpp`, `tests/framedump_test.cpp`.
+
+**Judge sprite art at the window's 4:3 shape, never at the raw dump's.**
+A `--dump-frames` BMP is the framebuffer pixel for pixel, and a viewer
+shows it at square pixels.  The game's 512x256 frame is scanned out into a
+4:3 box, so on screen each of its pixels is 2 wide by 3 tall.  Climax drew
+for that (`+butC.bmp` is 18x11 so the circle comes out round), so their art
+looks 1.5 times too wide in a raw dump, and art drawn for square pixels
+looks right in the dump and squashed in the game, which is how the #43 key
+caps shipped (entry 55).
+
+`--dump-aspect` / `SBSP_DUMP_ASPECT=1` also writes `sbsp_frame_<n>_4x3.bmp`
+beside each `sbsp_frame_<n>.bmp`: the same frame at the window's shape,
+black while `SetDispMask(0)` is in force like the raw one.  Review art from
+that file at 100%; the `+butC` circle must look round.
+
+The size comes from the display's line count: each line is repeated
+k = 768 / lines times (at least once) and the width is the rounded 4:3
+width of that height.  That is the picture the default 1024x768 window
+shows at `scale=integer`, and `framedump_test` checks the two agree for
+every line count from 1 to 512.  The display's width does not enter, since
+the box is 4:3 whatever it holds.
+
+| display | where | 4:3 dump | per source pixel |
+|---|---|---|---|
+| 512x256 | game and frontend | 1024x768 | 2 x 3 |
+| 320x240, 24bpp | FMV | 960x720 | 3 x 3 |
+| 256x240 | `ResetGraph(0)`'s mode, replaced by vblank 1 | 960x720 | 3.75 x 3 |
+| 640x480 / 512x480 | interlaced, not used by the game | 640x480 | 1 x 1 / 1.25 x 1 |
+
+Rows are whole repeats and columns nearest-neighbour: each output column
+shows the source column under its centre, from a table built once per dump.
+That gives exact blocks in both modes the game displays; only a width that
+does not divide (the reset mode) gets columns 3 or 4 wide.  Rows are kept
+whole because a resampled row draws a one-line feature one line thick here
+and two there, the same reason the presenter's `integer` mode exists.  There
+is no filtering, so every colour in the file is one the game drew and the
+pixel edges stay where the art put them.
+
+The raw dump is unchanged: still written first, still the default, and the
+same bytes.  Both shapes go through one writer, and the raw call reads
+source column x for output column x, as before.  #82's review took out the
+earlier 4:3 groundwork (an aspect argument to the raw writer, a size taken
+from `vk/viewport.cpp`, a 64-bit divide per pixel) to leave this issue its
+own design.  Here the 4:3 path is a function of its own, works out its size
+itself and maps columns through the per-dump table; the test, not the
+dumper, ties it to the presenter's arithmetic.
+
+`framedump_test` (unit) adds: the size for 240, 256, 480 and 512 lines and
+against `Port_ViewportRect` for every line count; 512x256 gives 1024x768
+with pixel (x,y) equal to raw pixel (x/2, y/3); an offset 24bpp 320x240
+frame gives 960x720 in 3x3 blocks; 256x240 gives columns 3 or 4 wide, in
+order, none missing; a masked 4:3 dump is black with the unmasked header;
+an unwritable path returns 0.
 
 ### Build scripts: one tool setup, MSYS2 only (issues #15, #16, #42, #51)
 
@@ -2189,9 +2247,9 @@ run time through `sbsp.ini`.
     review because the screenshots were `--dump-frames` BMPs blown up 2x,
     which is to say at square pixels, where the caps look right and the PS1
     glyphs look stretched.  **Judge sprite art at the window's 4:3 shape, not
-    at the dump's** - getting that out of the tooling rather than out of a
-    reviewer's memory is github issue #53.  The artist's cuts now live in
-    `port/art/keycaps/` and `stretch_keycaps.py` writes the `Graphics/UI`
+    at the dump's** - `--dump-aspect` now writes that shape beside each dump
+    (issue #53, "Frame dumps at the window's shape").  The artist's cuts now
+    live in `port/art/keycaps/` and `stretch_keycaps.py` writes the `Graphics/UI`
     copies the data build eats, every column resampled to the largest even
     width no wider than 1.5x the master: 14 -> 20, 16 -> 24.  Even, because
     the resample is mirror-symmetric about the centre line, which is what
