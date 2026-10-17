@@ -2345,7 +2345,9 @@ from those numbers, so the `#line` arms that pinned them go.
     prints which mode it used.  make tracks no `-D` flags, so the tool
     deletes a line-insensitive build's objects once it has its copy: the
     next normal DEBUG build recompiles everything rather than link objects
-    with line 0.  A base without the working plumbing in `dbg.h`,
+    with line 0.  For a hand run, `build-psx.sh` records the mode in
+    `out/<T>/<V>/identity-mode` and starts clean when it changes.  A base
+    without the working plumbing in `dbg.h`,
     `makefile.gaz` and `build-psx.sh` (matched with comments stripped, not
     just the name) gets the strict compare it had before, as does
     `--strict`.  No shipped, CI or PC build sets it.  The only `__LINE__` uses under

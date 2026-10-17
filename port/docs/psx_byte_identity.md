@@ -81,6 +81,9 @@ it used:
   does not track `-D` flags, so the tool deletes the objects of every
   line-insensitive build when it is done: the next normal DEBUG build then
   recompiles everything instead of linking in objects with line 0.
+  `build-psx.sh` guards a hand run too: it writes the mode to
+  `out/<T>/<V>/identity-mode` (no file means normal) and starts the tree
+  clean when a build's mode differs from the last one.
 - **DEBUG: strict**, line numbers included, in two cases:
   - **Either side lacks the plumbing.**  The tool reads both trees, with
     comments stripped: `system/dbg.h` must define `PORT_LINE` as 0 under
@@ -265,11 +268,12 @@ Before comparing it expands the two same-line patterns above, the way the
 PS1 preprocessor would:
 - **`PC_PS1(pc, ps1)`** becomes its `ps1` argument (`system/asmport.h`).
 - **A macro the file defines and the base did not** (one shared copy of
-  code that used to be written out) is expanded at each use, and its
-  `#define` and `#undef` lines drop out: a new macro makes code only where
-  it is used.  It must be defined once, outside any condition the tool
-  can't evaluate, and use neither `#` nor `##`; otherwise the file falls
-  back to the line compare.
+  code that used to be written out) is expanded at each use between its
+  `#define` and its `#undef`, and those two lines drop out: a new macro
+  makes code only where it is used.  A use outside them stays the bare name,
+  as it does for the compiler.  It must be defined once, outside any
+  condition the tool can't evaluate, and use neither `#` nor `##`;
+  otherwise the file falls back to the line compare.
 
 Every other macro is compared as written, not expanded.  It also reports,
 as `LINE`, every `#line` directive the PS1 compiles in those files.  On

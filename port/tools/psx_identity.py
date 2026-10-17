@@ -244,9 +244,11 @@ def ps1_view(text):
 # argument, and a macro the file defines that the base did not (one shared
 # copy of code that used to be written out).  A new macro produces no code
 # where it is defined, only where it is used, so its #define and #undef go
-# and its uses are expanded.  Every other macro is compared as written.
+# and its uses between them are expanded; a use outside them stays the bare
+# name, as it does for the compiler.  Every other macro is compared as written.
 
 SHARED_MACROS = {"PC_PS1": (["pc", "ps1"], ["ps1"])}
+SCOPE = "\0"                            # a new macro's #define or #undef, in the token stream
 
 TOKEN = re.compile(r"""
     [A-Za-z_]\w*                        # identifier or keyword
@@ -295,16 +297,18 @@ def parse_view(rows):
     return items, {n: d for n, d in defines.items() if seen[n] == 1}
 
 
-def view_tokens(items, drop):
-    """The token stream; a directive is one token, never expanded; the
-    #define/#undef lines of the macros in drop are left out."""
+def view_tokens(items, fresh):
+    """The token stream; a directive is one token, never expanded.  The
+    #define/#undef lines of the macros in fresh become SCOPE markers."""
     out = []
     for kind, s in items:
         if kind == "code":
             out += TOKEN.findall(s)
             continue
         m = DEFINE.match(s) or UNDEF.match(s)
-        if not (m and m.group(1) in drop):
+        if m and m.group(1) in fresh:
+            out.append(SCOPE + ("define " if DEFINE.match(s) else "undef ") + m.group(1))
+        else:
             out.append(" ".join(TOKEN.findall(s)))
     return out
 
@@ -366,16 +370,32 @@ def expand(tokens, macros, disabled=frozenset()):
     return out
 
 
+def expand_in_scope(tokens, shared, fresh):
+    """expand(), each macro of fresh in force only from its #define to its
+    #undef.  A call cut by a marker raises Unknown (unbalanced)."""
+    out, live, run = [], dict(shared), []
+    for t in tokens + [SCOPE + "end"]:
+        if not t.startswith(SCOPE):
+            run.append(t)
+            continue
+        out += expand(run, live)
+        run = []
+        word, _, name = t[1:].partition(" ")
+        if word == "define":
+            live[name] = fresh[name]
+        elif word == "undef":
+            live.pop(name, None)
+    return out
+
+
 def ps1_tokens(old, new):
     """The base's and the working tree's token streams, macros expanded as
     above.  Raises Unknown when a macro cannot be expanded."""
     old_items, old_defs = parse_view(old)
     new_items, new_defs = parse_view(new)
     fresh = {n: d for n, d in new_defs.items() if n not in old_defs}
-    old_macros = dict(SHARED_MACROS)
-    new_macros = dict(SHARED_MACROS, **fresh)
-    return (expand(view_tokens(old_items, set()), old_macros),
-            expand(view_tokens(new_items, set(fresh)), new_macros))
+    return (expand(view_tokens(old_items, {}), dict(SHARED_MACROS)),
+            expand_in_scope(view_tokens(new_items, fresh), SHARED_MACROS, fresh))
 
 
 def show_token_diff(old_tok, new_tok):

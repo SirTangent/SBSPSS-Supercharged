@@ -48,6 +48,20 @@ export MSYS2_ARG_CONV_EXCL='*'
 # checkout has this directory already, which is why it's gone unnoticed.
 mkdir -p "out/$TERRITORY/$VERSION/CD/temp"
 
+# make tracks no -D flags, so objects from the other mode would be linked
+# as up to date.  The tree records its mode (no record = normal, as every
+# tree before #81 was) and a switch starts it clean.
+MODE=normal
+[ ${#NOLINE[@]} -eq 0 ] || MODE=noline
+STAMP="out/$TERRITORY/$VERSION/identity-mode"
+LAST=$(cat "$STAMP" 2>/dev/null || echo normal)
+if [ "$LAST" != "$MODE" ]; then
+    echo "build-psx.sh: the tree was last built $LAST, this build is $MODE - starting clean"
+    rm -rf "out/$TERRITORY/$VERSION/CD/objs" "out/$TERRITORY/$VERSION/deps" \
+           "out/$TERRITORY/$VERSION/version/CD/Spongey.cpe"
+fi
+echo "$MODE" > "$STAMP"
+
 BUILD_PATH="/usr/bin:$PWD/port/tools:$PWD/tools:$PWD/tools/psyq/bin:$PWD/tools/psyq/bin/egcs"
 
 # Targets 'dirs link' only: the full 'all' also runs 'cddata' (CPE->BIN,
