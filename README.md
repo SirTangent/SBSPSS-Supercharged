@@ -110,6 +110,10 @@ territory only: one USA data build serves both the `debug` and `final`
 executables. EUR data (`port\build-data.cmd eur`) is only needed for the
 `eur-*` builds.
 
+The `.cmd` scripts start MSYS2's bash themselves, so they work from Git Bash
+too (`port/build-data.cmd usa`). The `.sh` scripts behind them run only in
+MSYS2's bash and say what to run instead if started anywhere else.
+
 ## 4. Build the game
 
 ```bat
@@ -215,7 +219,7 @@ builds (see `port/docs/psx_byte_identity.md`). A workflow run builds the USA dat
 bitmaps against their masters, builds and tests the MinGW `debug` and `final`
 trees and the clang-cl `clangcl-debug`, `clangcl-x64-debug` and
 `clangcl-x64-final` trees, and links the PlayStation executable. EUR is not
-covered yet; it waits on issue #42.
+covered yet; the `data-eur` job is the open follow-up in issue #42.
 
 ## 5. Run
 

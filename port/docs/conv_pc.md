@@ -1998,6 +1998,86 @@ returns 0 and leaves no file.  Its temp files carry the process id, so
 trees running ctest at once do not collide.  The window-shaped 4:3 dump
 is issue #53's, not part of this change.
 
+### Build scripts: one tool setup, MSYS2 only (issues #15, #16, #42, #51)
+
+`build/globals.mak`, `makefile.gfx`, `makefile.gaz` (`cddata` only),
+`port/build-data.sh` + `.cmd`, `port/build-psx.sh` + `.cmd`,
+`port/require-msys2.sh`, `port/clean.cmd`, `.gitignore`.  No game source
+changes, and `Spongey.cpe` does not move (`psx_identity.py build`, head
+and base: USA DEBUG-NOLINE `1084A321` and FINAL `367F237E`).
+
+**One tool setup (#16).**  `globals.mak` pins every utility to the 1999
+cygwin binaries in `tools/cygwin` and exports a `;`-separated `PATH` and
+`Path` for them.  Those binaries crash on Windows 10/11, and both wrappers
+used to override all of it on the make command line.  One guarded block
+in `globals.mak` now does it instead, keyed on `MAKE_HOST`:
+- **MSYS2's make** (4.x, built for cygwin: `x86_64-pc-cygwin`, or
+  `x86_64-pc-msys` from MSYS2 releases before the triplet changed) gets
+  MSYS2's own utilities and a POSIX `PATH`: `/usr/bin`, `port/tools`,
+  `tools`, `tools/data/bin`, `tools/psyq/bin`, `egcs`.  That is the two
+  wrappers' lists merged, in their order.  The order matters for one
+  name: `lznp.exe` is in both `port/tools` and `tools`, and the
+  `port/tools` build (from `tools/lznp-src`) must shadow the 16-bit one.
+  No other file name is in more than one of those directories.  `Path`
+  is not exported, since MSYS2 already folds Windows' `Path` into `PATH`.
+- **`tools/make.exe`** (GNU make 3.79, which has no `MAKE_HOST`) keeps
+  the original pins, so `MakeUSA.bat` and friends read as before.
+- **Any other make stops** with an error naming MSYS2's make: a native
+  Windows make 4.x (`MAKE_HOST` `Windows32`, e.g. Git Bash's WinGet make),
+  which can run neither set of tools, and a make before 4.0 that isn't
+  3.79 (GnuWin32's 3.81 has no `MAKE_HOST` either), which would get the
+  1999 tools that no longer start.
+
+A bare `make -r -f makefile.gfx VERSION=DEBUG TERRITORY=USA
+USER_NAME=CDBUILD` from an MSYS2 shell is now exactly what
+`build-data.sh` runs.  `build-psx.sh` still adds the PS1-only staging:
+`sn.ini`, the temp directory, `MSYS2_ARG_CONV_EXCL` and `PSYQ_PATH`.
+
+**MSYS2's bash only (#51).**  Both scripts source one check,
+`port/require-msys2.sh`.  It stops unless `MSYSTEM` is set, MSYS2's
+`/usr/bin/pacman` exists, and each tool the script runs is in `/usr/bin`
+(`make`; `make` and `flock` for `build-psx.sh`).  Git Bash sets
+`MSYSTEM=MINGW64`, but it has no pacman, and its `/tmp` is not MSYS2's.
+A non-login MSYS2 bash has no `MSYSTEM`.  The message names what this
+shell lacks and gives the `.cmd` and the MSYS2 command line.  make (and
+flock) run from `/usr/bin` by absolute path.  `build-psx.sh` also
+upper-cases `TERRITORY` and `VERSION`, accepts only `USA`/`EUR` and
+`DEBUG`/`FINAL` plus `--identity-noline` (entry 64), and rejects any other
+`-` word, so a mistyped option can't become a territory.  It runs make
+under `flock /tmp/sbsp-psx.lock`, MSYS2's `/tmp`, where ccpsx's fixed
+`PQ3` file lives, and says so when it has to wait.  The `.cmd` wrappers set
+`MSYSTEM=MSYS`, so they work from Git Bash too (it exports `MINGW64`).
+`build-pc.sh` was left alone: it puts `$MSYS2_ROOT/mingw32/bin` first on
+`PATH` before calling cmake, so its tools never come from a PATH lookup
+that could find something else.
+
+**Why EUR data failed (#42).**  It was not EUR, and not a flake.  From Git
+Bash, the old `build-data.sh` ran the WinGet make.  Git Bash converts the
+`PATH=/usr/bin:...` argument into a Windows list, so that make found Git's
+coreutils and perl and got as far as the sprite sheet.  A native make runs
+a recipe with glob characters as `sh.exe -c "..."` through CreateProcess,
+and an msys `sh` (Git's or MSYS2's) started by a native program keeps only
+about the first 8K of its command line.  The parkgrab line is about 9K, so
+the last sprites and `-t`/`-l`/`-o` never reached it.  parkgrab added the
+files it got, never saw `-o`, wrote nothing and exited 0, and the next
+line's `mv` failed.  The old script from Git Bash fails that way on an
+empty `out/EUR` and on an empty `out/USA`.  An 8191-character cut of the
+2026-09-19 sprite list (before the key caps) ends exactly at
+`graphics/sfx/+explosion0006.bmp`, the issue's last line.  Under MSYS2's
+make the whole line arrives (a probe exe in parkgrab's place got all
+9,434 characters).  The sprite rule now checks for `sprites.h` before the
+`mv`, names parkgrab, and deletes `Sprites.Spr` so the next run retries.
+
+**No `nul` file (#15).**  Three `makefile.gfx` recipes redirected `lznp` to
+`nul`, which MSYS2's `sh` creates as a real file at the root.  Explorer and
+`del` can't remove it.  They now use `/dev/null`, which the 1999 route's
+`tools/cygwin/sh.exe` takes too, and so does `makefile.gaz`'s `cddata`
+rule (its `rar` line), which `build-psx.sh` never runs but a hand `make`
+can.  Trees built before the fix can still have the file, so the
+safeguards stay: `.gitignore` keeps its `nul` entry, `clean.cmd` still
+deletes one through `\\?\`, and `build-data.sh` deletes a stray root
+`nul` before it builds (MSYS2's `rm` can).
+
 ## Game-source changes (keyboard prompt icons, issue #43)
 
 **The problem.**  Every "press this to do that" line in the game draws a pad

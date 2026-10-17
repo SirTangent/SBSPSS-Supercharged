@@ -3,15 +3,38 @@
 #
 # Same harness as build-data.sh: the MSYS2 runtime (make/sh/coreutils) drives
 # the vintage PSY-Q compilers, which still run on Win11 even though the 1999
-# cygwin utilities do not. PSYQ_PATH goes on the make command line because
-# globals.mak exports it empty; ccpsx looks for sn.ini in the cwd (its paths
-# are repo-root-relative), so stage a copy if missing.
+# cygwin utilities do not (build/globals.mak gives MSYS2's make its tools and
+# PATH). PSYQ_PATH goes on the make command line because globals.mak exports
+# it empty; ccpsx looks for sn.ini in the cwd (its paths are
+# repo-root-relative), so stage a copy if missing.
 #
-# Usage: port/build-psx.sh [TERRITORY] [VERSION] [--identity-noline]
+# Usage: port/build-psx.sh [USA|EUR] [DEBUG|FINAL] [--identity-noline]
 #        defaults: USA DEBUG; --identity-noline is comparison-only (below)
+#        port\build-psx.cmd [...]                     # from cmd, PowerShell, Git Bash
+#
+# Constraints (issue #51), all enforced below:
+# - MSYS2's bash only.  Git Bash finds a native Windows make, which cannot
+#   read the POSIX PATH (it dies on glecho), and its /tmp is not MSYS2's.
+#   make and flock are run from MSYS2's /usr/bin by absolute path.
+# - USA|EUR and DEBUG|FINAL, upper-cased here: `debug` would compile with
+#   -D__VERSION_debug__ and NTFS would file the result under out/USA/DEBUG.
+# - One PS1 build on the machine at a time: ccpsx writes its intermediate to
+#   the fixed C:/msys64/tmp/PQ3.  make runs under flock /tmp/sbsp-psx.lock,
+#   so a second build waits for the first.
+# - Every build overwrites Spongey.cpe; copy it aside before comparing two
+#   (port/tools/psx_identity.py build does).
 set -e
 
 cd "$(dirname "$0")/.."
+
+. port/require-msys2.sh
+require_msys2 build-psx "make flock" "$@"
+
+usage()
+{
+    echo "usage: port/build-psx.sh [USA|EUR] [DEBUG|FINAL] [--identity-noline]" >&2
+    exit 1
+}
 
 # Comparison-only, for port/tools/psx_identity.py: --identity-noline builds
 # with PORT_LINE (source/system/dbg.h) as 0, so two DEBUG builds compare
@@ -22,6 +45,7 @@ POS=()
 for a in "$@"; do
     case "$a" in
         --identity-noline) NOLINE=(SBSP_IDENTITY_NOLINE=1) ;;
+        -*) usage ;;                # a mistyped option is never a territory (#89)
         *) POS+=("$a") ;;
     esac
 done
@@ -30,8 +54,11 @@ if [ -n "${SBSP_IDENTITY_NOLINE:-}" ]; then
          "(psx_identity.py passes --identity-noline)" >&2
 fi
 
-TERRITORY="${POS[0]:-USA}"
-VERSION="${POS[1]:-DEBUG}"
+[ ${#POS[@]} -le 2 ] || usage
+TERRITORY=$(echo "${POS[0]:-USA}" | tr '[:lower:]' '[:upper:]')
+VERSION=$(echo "${POS[1]:-DEBUG}" | tr '[:lower:]' '[:upper:]')
+case "$TERRITORY" in USA|EUR) ;; *) usage ;; esac
+case "$VERSION" in DEBUG|FINAL) ;; *) usage ;; esac
 
 # Always refresh: the toolchain copy is authoritative.
 cp -f tools/psyq/bin/egcs/sn.ini sn.ini
@@ -62,17 +89,15 @@ if [ "$LAST" != "$MODE" ]; then
 fi
 echo "$MODE" > "$STAMP"
 
-BUILD_PATH="/usr/bin:$PWD/port/tools:$PWD/tools:$PWD/tools/psyq/bin:$PWD/tools/psyq/bin/egcs"
+LOCK=/tmp/sbsp-psx.lock
+/usr/bin/flock -n "$LOCK" true || echo "Another PS1 build holds $LOCK - waiting for it to finish..." >&2
 
 # Targets 'dirs link' only: the full 'all' also runs 'cddata' (CPE->BIN,
 # buildcd, ISO), which needs 16-bit tools (cpe2bin) and only matters for
 # pressing a physical disc - the port consumes the linked output directly.
-if ! make -r -f makefile.gaz \
+if ! /usr/bin/flock "$LOCK" /usr/bin/make -r -f makefile.gaz \
     VERSION="$VERSION" TERRITORY="$TERRITORY" USER_NAME=CDBUILD \
-    "PATH=$BUILD_PATH" "Path=$BUILD_PATH" \
     "PSYQ_PATH=$PWD/tools/psyq/bin/egcs" \
-    MKDIR=mkdir ECHO=echo MV=mv DATE=date SED=sed \
-    RMDIR=rmdir LS=ls "ATTRIB=chmod +w" \
     "${NOLINE[@]}" \
     dirs link
 then
