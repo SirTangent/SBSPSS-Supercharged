@@ -960,7 +960,7 @@ they are until the removal.
 
 | | DEBUG | FINAL |
 |---|---|---|
-| x64 = x86 `[scene]`/`[frame]`/`[audio]` streams (35 runs, 167,000 `[frame]` lines) | identical | identical |
+| x64 = x86 `[scene]`/`[frame]`/`[audio]` streams (35 runs, 128,500 `[frame]` lines) | identical | identical |
 | x64 replays the x86 recordings (10 routes): desyncs, streams, `card0.mcd` | none, identical, identical | none, identical, identical |
 | `build-pc.sh test clangcl eur` / `test clangcl64 eur` | 0 warnings, 25 unit + 3 playthrough on each tree | same |
 
@@ -1036,6 +1036,14 @@ What differs is two things, neither of them floating point:
    windows (285-337, 542-606, ...) on MinGW and clang-cl alike.
    Initialising `m_chargeTime` is a game-source change and a choice
    between the two speeds; not made here.
+
+Gate 2 ran on USA only; MinGW against clang-cl is not measured on EUR.  The
+tester zip pairs the two toolchains on both territories: `package.py`
+takes its 32-bit exes from the MinGW trees (`final`/`debug`,
+`eur-final`/`eur-debug`) and its `--x64` exes from the clang-cl ones, so
+in a zip's FINAL pair (`sbsp.exe`, `sbsp64.exe`) item 2's fish can swim at
+a different speed.  The DEBUG pair agrees (the `0x3d3d3d3d` fill), and
+the tester README says so.
 
 ### Replaying a tester session (issue #58)
 
