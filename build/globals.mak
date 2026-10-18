@@ -157,7 +157,12 @@ export Path =		$(TOOL_DIR);$(CYG_BIN_DIR);$(PSYQ_BIN_DIR);$(PERL_BIN_DIR)
 #	Windows make 4.x (Git Bash's, say) can run neither set of tools, and a
 #	make older than 4.0 that isn't 3.79 (GnuWin32's 3.81) has no MAKE_HOST
 #	either but would get the 1999 tools that no longer start.
+#	LOG_NAME is the one tool whose name means something else in MSYS2:
+#	getuser.mak runs it for the login name when no USER_NAME is given, and
+#	/usr/bin's uname, first on PATH, prints the system name (MSYS_NT-...).
+#	So it is tools/uname.exe by path, which still runs (issue #90).
 ifneq ($(filter %-cygwin %-msys,$(MAKE_HOST)),)
+LOG_NAME :=				"$(CURDIR)/$(TOOL_DIR)/uname"
 ECHO :=					echo
 RMDIR :=				rmdir
 MKDIR :=				mkdir
