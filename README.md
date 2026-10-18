@@ -204,9 +204,7 @@ MinGW `eur-*` builds they need the EUR data.
 
 The GitHub Actions workflow (`.github/workflows/build.yml`) runs only when
 someone starts it by hand: the *Actions* tab, *Build & test*, *Run
-workflow*, or `gh workflow run build.yml --ref <branch>`. The workflow is
-currently disabled on GitHub, so a maintainer has to enable it
-(`gh workflow enable build.yml`) before it can be started. It never runs by
+workflow*, or `gh workflow run build.yml --ref <branch>`. It never runs by
 itself on a push or a pull request, so check a pull request locally with the
 same builds and tests before opening it:
 
@@ -224,8 +222,10 @@ seconds, and `python port\tools\psx_identity.py build` proves it with clean
 builds (see `port/docs/psx_byte_identity.md`). A workflow run builds the USA data, checks the key-cap
 bitmaps against their masters, builds and tests the MinGW `debug` and `final`
 trees and the clang-cl `clangcl-debug`, `clangcl-x64-debug` and
-`clangcl-x64-final` trees, and links the PlayStation executable. EUR is not
-covered yet; the `data-eur` job is the open follow-up in issue #42.
+`clangcl-x64-final` trees, and links the PlayStation executable. It also
+builds the EUR data (`data-eur`) and builds and tests the MinGW `eur-debug`
+and `eur-final` trees on it (`pc-eur`, issue #42); locally that is
+`port\build-data.cmd eur` and `port\build-pc.cmd test eur`.
 
 ## 5. Run
 

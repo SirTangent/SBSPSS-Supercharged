@@ -4,13 +4,20 @@ name: Build & test
 # fires on a push or a pull request.  Start it from the Actions tab (Run
 # workflow, pick the branch) or `gh workflow run build.yml --ref <branch>`.
 # A run costs LFS bandwidth (the 133MB Track1.Ixa on a cold cache, see the
-# data job) and runner time, and pull requests are checked locally with the
+# lfs job) and runner time, and pull requests are checked locally with the
 # commands in README.md instead.  Running on every PR again means adding
 # pull_request / push triggers back here - a deliberate change, not a fix.
 #
-# Not covered yet: EUR.  The EUR data build is not reliably one-shot
-# (issue #42), so an EUR data artifact and eur-debug / eur-final legs wait
-# for that root cause.
+# EUR (issue #42): its own data job and PC legs, data-eur and pc-eur, which
+# reuse the USA jobs' steps through YAML anchors (&data-steps, &pc-steps)
+# so the two territories cannot drift apart.  They are separate jobs, not
+# matrix legs of data / pc-build-test, because `needs` waits for every leg:
+# an EUR failure must not hold up the USA jobs, nor the reverse.  Both data
+# jobs need only the lfs job, which fetches the LFS objects into the cache
+# once for both.  The EUR data failure #42
+# was filed for was Git Bash's native make cutting the parkgrab command
+# line short, which build/globals.mak now refuses (PR #87); the runner
+# uses MSYS2's make.
 on:
   workflow_dispatch:
 
@@ -26,37 +33,56 @@ env:
   VERSION: DEBUG
 
 jobs:
+  # data/CDData/Track1.Ixa is 133MB of Git LFS. checkout's lfs: true would
+  # re-fetch it every run and drain the account's LFS bandwidth quota (1GiB
+  # /month on the free tier); once that's gone, checkout AND plain cloning
+  # fail for everyone until a data pack is bought. Cache the objects keyed
+  # on their oids instead, so the 133MB is paid once and the key rotates
+  # by itself if the asset ever changes.  This job fills the cache (a
+  # minute or two); both data jobs need it and then restore a warm cache
+  # side by side, so a cold cache - GitHub evicts one unused for 7 days,
+  # and runs here are by hand - is still fetched once, not once per
+  # territory.  Its three LFS steps are anchored for the data jobs.
+  lfs:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - &lfs-ids
+        name: Resolve LFS object ids
+        shell: bash
+        run: git lfs ls-files -l | cut -d' ' -f1 | sort > .lfs-assets-id
+
+      - &lfs-cache
+        uses: actions/cache@v6
+        with:
+          path: .git/lfs/objects
+          key: lfs-${{ hashFiles('.lfs-assets-id') }}
+
+      - &lfs-pull
+        name: Fetch LFS objects
+        shell: bash
+        run: git lfs pull
+
   # M0 data pipeline: BigLump.Bin + generated headers (BigLump.h, Sprites.h,
   # trans.h, ...) that gate both the PC and PSX configure/build steps. Runs
   # the vintage Win32 converter EXEs (tools/Data/bin, tools/psyq/bin) via
   # MSYS2 make/perl - no MinGW compiler needed here, just the base runtime.
   data:
+    needs: lfs
     runs-on: windows-latest
     timeout-minutes: 20
-    defaults:
+    defaults: &msys2-defaults
       run:
         shell: msys2 {0}
-    steps:
+    steps: &data-steps
       - uses: actions/checkout@v7
 
-      # data/CDData/Track1.Ixa is 133MB of Git LFS. checkout's lfs: true would
-      # re-fetch it every run and drain the account's LFS bandwidth quota (1GiB
-      # /month on the free tier); once that's gone, checkout AND plain cloning
-      # fail for everyone until a data pack is bought. Cache the objects keyed
-      # on their oids instead, so the 133MB is paid once and the key rotates
-      # by itself if the asset ever changes.
-      - name: Resolve LFS object ids
-        shell: bash
-        run: git lfs ls-files -l | cut -d' ' -f1 | sort > .lfs-assets-id
-
-      - uses: actions/cache@v6
-        with:
-          path: .git/lfs/objects
-          key: lfs-${{ hashFiles('.lfs-assets-id') }}
-
-      - name: Fetch LFS objects
-        shell: bash
-        run: git lfs pull
+      # the lfs job's cache, restored: no download
+      - *lfs-ids
+      - *lfs-cache
+      - *lfs-pull
 
       # Graphics/UI/+key*.bmp (what the data build packs) are generated from
       # the square-pixel masters in port/art/keycaps (PR #54); a master
@@ -81,6 +107,18 @@ jobs:
           path: out/
           retention-days: 3
 
+  # The same steps for EUR (issue #42): the job's TERRITORY overrides the
+  # workflow's, so the build line and the artifact name follow it.  It runs
+  # beside data, so neither territory's data build can hold up the other's.
+  data-eur:
+    needs: lfs
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults: *msys2-defaults
+    env:
+      TERRITORY: EUR
+    steps: *data-steps
+
   # PC (Win32) port, the shipping MinGW build: configure+build via the
   # mingw32 CMake preset, then ctest's two labels - `unit` (the shim unit
   # exes + the headless link proof) and `playthrough` (the M8 harness:
@@ -92,6 +130,7 @@ jobs:
   # sbsp.exe, and __VERSION_FINAL__ compiles the asserts out, so a variable
   # used only inside an ASSERT breaks FINAL alone.  One USA data build
   # serves both legs (the data is per territory, not per variant, #35).
+  # pc-eur below runs these steps for EUR.
   pc-build-test:
     name: pc-build-test (${{ matrix.preset }})
     needs: data
@@ -101,13 +140,11 @@ jobs:
       fail-fast: false
       matrix:
         preset: [debug, final]
-    defaults:
-      run:
-        shell: msys2 {0}
+    defaults: *msys2-defaults
     env:
       SDL_VIDEODRIVER: dummy
       SDL_AUDIODRIVER: dummy
-    steps:
+    steps: &pc-steps
       - uses: actions/checkout@v7
 
       # the unit test lznp_exe_matches_source compares the committed
@@ -178,6 +215,25 @@ jobs:
           path: port/build/${{ matrix.preset }}/tier-logs/
           if-no-files-found: ignore
           retention-days: 7
+
+  # The EUR pair (issue #42), the same steps on data-eur's artifact.  The
+  # presets set SBSP_TERRITORY, so the tests and tiers run the EUR (PAL
+  # 50Hz) game.
+  pc-eur:
+    name: pc-eur (${{ matrix.preset }})
+    needs: data-eur
+    runs-on: windows-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [eur-debug, eur-final]
+    defaults: *msys2-defaults
+    env:
+      TERRITORY: EUR
+      SDL_VIDEODRIVER: dummy
+      SDL_AUDIODRIVER: dummy
+    steps: *pc-steps
 
   # The same port built by clang-cl (LLVM, i686-pc-windows-msvc) against the
   # MSVC CRT and Windows SDK - the toolchain that does not depend on MSYS2's

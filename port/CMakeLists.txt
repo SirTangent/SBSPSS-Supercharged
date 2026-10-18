@@ -470,6 +470,13 @@ if(Python3_Interpreter_FOUND)
                      ${SBSP_ROOT}/port/tests/str_frame1.bin
              WORKING_DIRECTORY ${SBSP_ROOT})
     set_tests_properties(lznp_exe_matches_source PROPERTIES LABELS unit)
+    # port/tools/psx_identity.py's rules (what `lines` passes as the same PS1
+    # tokens, the makefile.gaz pattern `build` keys on) on fixed cases, the
+    # PR #91 review's counterexamples included (tests/psx_identity_test.py).
+    add_test(NAME psx_identity_rules
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/psx_identity_test.py
+             WORKING_DIRECTORY ${SBSP_ROOT})
+    set_tests_properties(psx_identity_rules PROPERTIES LABELS unit)
 endif()
 
 # M8 playthrough harness (tests/run_tier.py): the exit-code self-test, the

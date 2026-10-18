@@ -19,8 +19,9 @@
 # - USA|EUR and DEBUG|FINAL, upper-cased here: `debug` would compile with
 #   -D__VERSION_debug__ and NTFS would file the result under out/USA/DEBUG.
 # - One PS1 build on the machine at a time: ccpsx writes its intermediate to
-#   the fixed C:/msys64/tmp/PQ3.  make runs under flock /tmp/sbsp-psx.lock,
-#   so a second build waits for the first.
+#   the fixed C:/msys64/tmp/PQ3.  The script holds flock /tmp/sbsp-psx.lock
+#   from its argument checks to its exit, so a second build waits for the
+#   first, and says so.
 # - Every build overwrites Spongey.cpe; copy it aside before comparing two
 #   (port/tools/psx_identity.py build does).
 set -e
@@ -60,6 +61,19 @@ VERSION=$(echo "${POS[1]:-DEBUG}" | tr '[:lower:]' '[:upper:]')
 case "$TERRITORY" in USA|EUR) ;; *) usage ;; esac
 case "$VERSION" in DEBUG|FINAL) ;; *) usage ;; esac
 
+# The lock is taken once, on fd 9, and held until the script exits, so the
+# tree's mode switch below runs under it as well as make.  The -n try fails
+# only while another build holds it, and only then does this one say so and
+# wait (issue #90: two separate flock calls could print the line with no
+# wait to follow, or wait without it).  make runs with fd 9 closed (9>&-),
+# so nothing it starts can keep the lock after this script exits.
+LOCK=/tmp/sbsp-psx.lock
+exec 9>"$LOCK"
+if ! /usr/bin/flock -n 9; then
+    echo "Another PS1 build holds $LOCK - waiting for it to finish..." >&2
+    /usr/bin/flock 9
+fi
+
 # Always refresh: the toolchain copy is authoritative.
 cp -f tools/psyq/bin/egcs/sn.ini sn.ini
 
@@ -89,17 +103,14 @@ if [ "$LAST" != "$MODE" ]; then
 fi
 echo "$MODE" > "$STAMP"
 
-LOCK=/tmp/sbsp-psx.lock
-/usr/bin/flock -n "$LOCK" true || echo "Another PS1 build holds $LOCK - waiting for it to finish..." >&2
-
 # Targets 'dirs link' only: the full 'all' also runs 'cddata' (CPE->BIN,
 # buildcd, ISO), which needs 16-bit tools (cpe2bin) and only matters for
 # pressing a physical disc - the port consumes the linked output directly.
-if ! /usr/bin/flock "$LOCK" /usr/bin/make -r -f makefile.gaz \
+if ! /usr/bin/make -r -f makefile.gaz \
     VERSION="$VERSION" TERRITORY="$TERRITORY" USER_NAME=CDBUILD \
     "PSYQ_PATH=$PWD/tools/psyq/bin/egcs" \
     "${NOLINE[@]}" \
-    dirs link
+    dirs link 9>&-
 then
     echo "PSX BUILD FAILED" >&2
     exit 1
