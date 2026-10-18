@@ -236,8 +236,8 @@ To check: `git grep -n "^#line" -- source tools/Data/include`.
 
 Changing a comment in PS1-visible code doesn't change the bytes.  Adding or
 removing comment lines moves the DEBUG line numbers below them, which the
-compare ignores.  `lines` reports comment edits in PS1-visible code as a
-`DIFF`, since it compares text.
+compare ignores.  `lines` passes a comment edit too, as "same tokens": it
+compares what the compiler reads, and comments aren't part of that.
 
 ## Checking
 
@@ -274,6 +274,13 @@ PS1 preprocessor would:
   as it does for the compiler.  It must be defined once, outside any
   condition the tool can't evaluate, and use neither `#` nor `##`;
   otherwise the file falls back to the line compare.
+- **A macro the file defines differently from the base**, with the same
+  conditions, is expanded the same way on both sides, each with its own
+  definition, but only if the file `#undef`s it in both revisions.  #89
+  gave `PROMPT_ICONS` a `Button` parameter: every use expands to the same
+  statements, so `lines` passes it.  A macro the file doesn't `#undef`
+  reaches files this check doesn't read, so its changed `#define` stays a
+  difference.
 
 Every other macro is compared as written, not expanded.  It also reports,
 as `LINE`, every `#line` directive the PS1 compiles in those files.  On
@@ -384,10 +391,10 @@ run, four builds, takes four to eight.
   intermediate to the fixed path `C:/msys64/tmp/PQ3`, shared by every build
   on the machine.  The loser fails on a random file.  The winner may have
   silently compiled the *other* tree's source.  After a collision, treat
-  both trees as dirty.  `build-psx.sh` runs make under
-  `flock /tmp/sbsp-psx.lock`, so a second build through the script waits
-  for the first; a bare make, or a build-psx.sh from before #51, takes no
-  lock.
+  both trees as dirty.  `build-psx.sh` holds `flock /tmp/sbsp-psx.lock`
+  from its argument checks to its exit, so a second build through the
+  script says it is waiting and waits for the first; a bare make, or a
+  build-psx.sh from before #51, takes no lock.
 - **Use a short checkout path.**  `asmpsx` records the source path in a
   fixed-size buffer.  Under a deep path such as `.claude/worktrees/<name>/`
   it overflows, and `slink` rejects `system/except_a.o` with "unknown record

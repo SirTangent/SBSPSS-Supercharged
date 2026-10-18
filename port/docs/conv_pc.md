@@ -292,29 +292,31 @@ PC-only block of `source/system/asmport.h`.
 DEBUG `ASSERT`/`DBGMSG` macros bake `__LINE__` into the code, so a PC-only
 block that adds lines *above* one of them shifts those immediates (M8
 found 14 such bytes, all `+3`, after the first two hooks).  Where that
-happens the block carries an `#else` / `#line <n>` arm that restores the
-original numbering for the PlayStation preprocessor only: `<n>` is the
+happened the block carried an `#else` / `#line <n>` arm that restored the
+original numbering for the PlayStation preprocessor only: `<n>` was the
 pristine line number of the block's `#endif` (i.e. one less than the line
 after it).  The guard is `port/build-psx.cmd` + a SHA-256 compare of
 `Spongey.cpe` against a build of the base revision (the commit before the
 change, not `master`; issue #56) - since #50 both
 are `port/tools/psx_identity.py` (`lines`, a static check; `build`, the
-clean-build hash compare), and the patterns, traps and the list of `#line`
-arms are in `port/docs/psx_byte_identity.md`.  Since entries 64-65 (issue
-#81) DEBUG is compared without its line numbers and the `#line` arms below
-are gone.
+clean-build hash compare), and the patterns and traps are in
+`port/docs/psx_byte_identity.md`.  Since entries 64-65 (issue #81) DEBUG is
+compared without its line numbers, and every `#line` arm the entries below
+mention was retired in entry 65.
 
 23. **`source/system/gstate.cpp` (scene epochs)** - `GameState::think()`
     calls `Port_SceneEvent(getSceneName())` right before a new scene's
     `init()`, *outside* the `__VERSION_DEBUG__` block, so FINAL emits
     `[scene] <name> vblank=<n>` lines too.  The Tier-1 oracle matches a
-    run's exact `[scene]` sequence.
+    run's exact `[scene]` sequence.  (Its `#line` arm was retired in entry
+    65.)
 
 24. **`source/fma/fma.cpp` (FMA script identity)** -
     `CFmaScene::getSceneName()` returns `"FMA"` for every script, so
     `CFmaScene::init()` additionally calls `Port_FmaEvent(s_chosenScript)`
     at the point the chosen script is bound, giving a second
     `[scene] FMA:CH3FINISHED`-style line.  `getSceneName()` is unchanged.
+    (Its `#line` arm was retired in entry 65.)
 
 25. **`source/system/dbg.cpp` (`DoAssert` -> `Port_Assert`)** - the DEBUG
     `DoAssert` (on-screen dump, then `PSYQpause()` = `__builtin_trap()` via
@@ -366,7 +368,8 @@ are gone.
     PlayStation build skips.
 
 28. **`source/game/game.cpp` (`SBSP_AUTOPLAY` hooks)** - three arms, each
-    with a `#line` re-sync (two `SYSTEM_DBGMSG` sites follow them):
+    with a `#line` re-sync (two `SYSTEM_DBGMSG` sites follow them; the
+    re-syncs were retired in entry 65):
     - `initLevel()`, after the retail bonus-level timer block: `finish=N`
       arms that same `m_levelHasTimer`/`m_timer` path for *every* level,
       so the unmodified countdown in `think_playing()` (beeps, then
@@ -414,7 +417,8 @@ are gone.
     the scene opens).  Both accessors now return early on a NULL list in a
     `!PSX_MIPS_ASM` arm; `hcswitch.cpp:116` (`SetSpeed(-GetSpeed())`) is
     the other caller and gets the same protection.  `#line` re-synced
-    (ASSERTs follow in the same file).
+    (ASSERTs follow in the same file); both re-syncs were retired in entry
+    65.
 
 30. **`source/system/main.cpp` (`--language` / `SBSP_LANGUAGE`)** -
     `InitSystem()`'s `TranslationDatabase::loadLanguage(ENGLISH)` gains a
@@ -450,7 +454,7 @@ The x64 PC build (`SBSP_PC64`, clang-cl `x86_64-pc-windows-msvc`).  Same
 rule as ever - the PlayStation build stays hash-identical - met here
 mostly by *same-line* edits through macros whose non-x64 expansion is the
 original token sequence, so no line moves and only one `#line` arm was
-needed (#32).  The 32-bit PC builds are unchanged too: their
+needed (#32, retired in entry 65).  The 32-bit PC builds are unchanged too: their
 `[scene]`/`[frame]` streams before and after this batch are identical.
 
 31. **`tools/Data/include/dstructs.h`, new `tools/Data/include/fptr.h`,
@@ -487,6 +491,7 @@ needed (#32).  The 32-bit PC builds are unchanged too: their
     line numbers in their ASSERT messages and PDBs.  The file's
     `ABI_CHECK` on `TransHeader` (`abi_check.h`, shared with
     `port/abi/abi_check.cpp`) sits at the very end for the same reason.
+    Entry 65 retired the `#line`; the `ABI_CHECK` stayed where it is.
 33. **`source/system/vsprintf.h`, `vsprintf.cpp` (varargs)** - the
     hand-rolled `__va_start` / `__va_arg` ("stdarg defs from MSVC", 1999)
     walk the stack from `&v`, the i386 convention; x64 passes the first
@@ -1110,7 +1115,7 @@ against a constant picture and RamUsed and requires the desync.
 Shim-side: `cd/cd.cpp`, `cd/xa_stream.cpp`, `host/args.cpp`,
 `host/input.cpp`, `host/pump.cpp`, the tests and the docs.  Game source:
 entries #56 (the pause-menu report) and #57 (the zeroed save buffer), both
-inside `!PSX_MIPS_ASM` arms with a `#line` re-sync.
+inside `!PSX_MIPS_ASM` arms with a `#line` re-sync (retired in entry 65).
 
 **Loads cost emulated vblanks.**  `CdRead` still copies its sectors at
 once; what changed is how long `CdReadSync` then reports "still reading".
@@ -2311,7 +2316,8 @@ upper-cases `TERRITORY` and `VERSION`, accepts only `USA`/`EUR` and
 `DEBUG`/`FINAL` plus `--identity-noline` (entry 64), and rejects any other
 `-` word, so a mistyped option can't become a territory.  It runs make
 under `flock /tmp/sbsp-psx.lock`, MSYS2's `/tmp`, where ccpsx's fixed
-`PQ3` file lives, and says so when it has to wait.  The `.cmd` wrappers set
+`PQ3` file lives, and says so when it has to wait (taken once since #90,
+below).  The `.cmd` wrappers set
 `MSYSTEM=MSYS`, so they work from Git Bash too (it exports `MINGW64`).
 `build-pc.sh` was left alone: it puts `$MSYS2_ROOT/mingw32/bin` first on
 `PATH` before calling cmake, so its tools never come from a PATH lookup
@@ -2485,9 +2491,10 @@ larger change than an icon swap and is left for its own issue.
 
 ## Game-source changes (replay judging, issue #67)
 
-Both inside `#if !defined(PSX_MIPS_ASM)` arms whose `#else` re-syncs the
-PS1 build's `__LINE__` with `#line`, so `Spongey.cpe` is unchanged; see
-"Replay judging (issue #67)" for the evidence.
+Both inside `#if !defined(PSX_MIPS_ASM)` arms whose `#else` re-synced the
+PS1 build's `__LINE__` with `#line`, so `Spongey.cpe` was unchanged; see
+"Replay judging (issue #67)" for the evidence.  Entry 65 retired those
+`#else` arms.
 
 56. **`source/game/game.cpp` (`CGameScene::render`), `source/system/asmport.h`** -
     at the end of `render()`, `Port_PauseMenuDrawn(...)` tells the shim, once
@@ -2559,11 +2566,12 @@ unaffected.  The one game-source change:
 
 ## Game-source changes (key cap row pitch, issue #50)
 
-Inside `#if !defined(PSX_MIPS_ASM)` arms whose `#else` keeps the original
-code and re-syncs `__LINE__` with `#line`, as #67 did, so `Spongey.cpe` is
-unchanged: USA DEBUG and FINAL hash the same before and after from clean
+Inside `#if !defined(PSX_MIPS_ASM)` arms whose `#else` kept the original
+code and re-synced `__LINE__` with `#line`, as #67 did, so `Spongey.cpe` was
+unchanged: USA DEBUG and FINAL hashed the same before and after from clean
 builds (`port/tools/psx_identity.py build`, new with this change, as is
-`port/docs/psx_byte_identity.md`).
+`port/docs/psx_byte_identity.md`).  Entry 65 retired those arms, the
+`#line`s and the frozen PS1 copies with them.
 
 59. **`source/pad/padicon.h`, `source/player/player.cpp`, `source/map/map.cpp`** -
     #43 measured the icons horizontally but left two sites stacking rows by
@@ -2582,8 +2590,9 @@ builds (`port/tools/psx_identity.py build`, new with this change, as is
     the prompt grows upward (3px a row, 9px for the net).  The map steps
     from Start to Save by the Start icon's pitch.  The button -> icon
     switch moved into a static `promptIcons()` so the measuring pass and
-    the drawing pass cannot disagree; the PS1 arm keeps it inline, where
-    its `ASSERT` sits on its original line.  Glyph frames
+    the drawing pass cannot disagree; the PS1 arm kept it inline, where
+    its `ASSERT` sat on its original line.  (Entry 65 replaced both with
+    one `PROMPT_ICONS` macro and retired the arms.)  Glyph frames
     (`prompt_icons = pad`) are byte-identical before and after on both
     screens.  Before and after: `docs/assets/issues/50-key-caps-pitch.png`.
 
@@ -2660,8 +2669,8 @@ change the PS1 game on purpose.  Three fixes came from the same review:
     called it, though its comment said the in-game prompt table and the
     Options readout did.  An uncalled inline member emits no code and the
     header has no `__LINE__` user, so `Spongey.cpe` does not change; the
-    existing `#line 78` still re-syncs the numbering after the PC-only
-    block.
+    `#line 78` that re-synced the numbering after the PC-only block went
+    in entry 65.
 
 Checked with `port/tools/psx_identity.py build` (USA, clean DEBUG and
 FINAL builds, one data build).  Entries 62 and 63 alone hash identical to
@@ -2719,7 +2728,8 @@ from those numbers, so the `#line` arms that pinned them go.
     - `player.cpp`'s button-to-icon switch lived twice, as the PC's
       `promptIcons()` and the PS1 arm's inline copy.  It is one macro,
       `PROMPT_ICONS(_cfg,Icon)`, which declares `Button` and `Icon` and
-      expands to the original statements.  The cast to `PAD_CFG` is at the
+      expands to the original statements (entry 67 makes `Button` a
+      parameter too).  The cast to `PAD_CFG` is at the
       call, so `_cfg` stands alone as `getButton`'s argument and needs no
       parentheses the PS1 never saw; the macro is `#undef`'d after
       `promptRender()`.  The PC measuring pass and the
@@ -2750,6 +2760,53 @@ from those numbers, so the `#line` arms that pinned them go.
     aborts if the arena straddles two windows.  The x64 build has no
     fallback.  M9's entry 35 had already corrected the old "32-bit address
     space" wording.
+
+## Review follow-ups to #87 and #88 (issues #89, #90, #42)
+
+The deferred findings of the #87 and #88 reviews, and the EUR CI jobs #42
+was left open for.  One game-source change:
+
+67. **`source/player/player.cpp` (`PROMPT_ICONS`)** - the macro declared
+    `int Button` itself while `Icon` was a parameter, so a `Button` already
+    in scope at a call would have been shadowed without a word.  It is
+    `PROMPT_ICONS(_cfg,Button,Icon)` now, and both calls pass `Button`, so
+    every use expands to the tokens it did before.  `psx_identity.py lines`
+    passes it, which takes the new redefined-macro rule below, and `build`
+    finds USA DEBUG (line-insensitive) and FINAL identical to the base.
+
+The rest touches no game source:
+- **`psx_identity.py`.**  `lines` also expands a macro the file defines
+  differently from the base, on both sides, when the file `#undef`s it in
+  both; one that outlives the file is still compared as written, since
+  its uses elsewhere aren't read.  `lines` has one "ok" path: the raw text
+  compare stays first, since it also passes a file whose macros the token
+  compare couldn't expand.  `knows_noline`'s `makefile.gaz` pattern takes
+  any spelling of the `ifeq` (parentheses or quotes, either order, any
+  spacing), so a reformatted line can't quietly drop DEBUG back to the
+  strict compare.
+- **`globals.mak` (`LOG_NAME`).**  `getuser.mak` runs `$(LOG_NAME)` for
+  the login name when no `USER_NAME` is given, to read
+  `users/<name>/makefile`.  Under MSYS2's make, `/usr/bin` comes first on
+  `PATH` and its `uname` printed `MSYS_NT-10.0-26200`.  The MSYS2 block
+  now runs `tools/uname.exe` (the 1999 one, `GetUserName`; it still runs)
+  by path.  Both scripts pass `USER_NAME=CDBUILD`, so only a bare `make`
+  sees it; without a `users/<login>/makefile` that still fails, as it
+  always did, but naming the login.
+- **`build-psx.sh` (the lock).**  It took `/tmp/sbsp-psx.lock` twice, once
+  to test it and once around make, so the "waiting" line could print with
+  no wait to follow or be missing when one did.  It now takes the lock
+  once, on a file descriptor, right after its argument checks, and holds
+  it until it exits; the line prints only when the first try finds the
+  lock held.  The mode check (entry 64's `identity-mode` stamp and clean
+  start) now runs under it too.  make runs with the descriptor closed.
+- **CI (#42).**  `build.yml` gains `data-eur` and `pc-eur`
+  (`eur-debug`, `eur-final`): the `data` and `pc-build-test` steps,
+  reused through YAML anchors, with `TERRITORY: EUR`.  `pc-eur` needs only
+  `data-eur`, and `data-eur` needs `data` only so it restores the LFS
+  cache `data` saved: an EUR failure can't hold up the USA jobs.
+- **Not done here:** #90's parkgrab response file (a sprite list cut inside
+  the file list would still write `sprites.h`).  It belongs with
+  rebuilding parkgrab from source, #48.
 
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 
