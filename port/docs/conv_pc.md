@@ -2833,6 +2833,24 @@ The rest touches no game source:
   so it passed the patterns through.  The sprite outputs are byte-identical
   with and without the response file.
 
+## Game-source changes (issue #92)
+
+68. **`source/level/layertile.cpp` (mid tile layer rows)** - user-visible
+    on PC: the mid tile layer, the 2D scenery behind the playfield,
+    stopped 1-3 lines short of the bottom of the view.  The USA arm's
+    `SCREEN_TILE_ADJ_H=1` draws `256/12+1` = 22 rows of 12-px tiles,
+    264 lines, from `-ShiftY` (`YPos%12`, 0-11), so at `ShiftY` 9, 10
+    and 11 rows 255, 254-255 and 253-255 showed the `CLayerBack` shade
+    band underneath.  An NTSC TV never showed those lines.  Same class
+    as entry 18, and the same fix the original devs made for PAL: the
+    EUR arm's `SCREEN_TILE_ADJ_H=2` (23 rows, 276 lines, enough at every
+    phase), now also taken when `!defined(PSX_MIPS_ASM)`.  The condition
+    is extended on its own line, so the PS1 compiles the same tokens on
+    the same lines.  It costs 2 x 33 `TSPRT`s more in the mid layer's
+    prim banks, as EUR already does.  `RenderH` still clamps to the
+    map's height.  Before and after in level 4-4 at vblank 3520:
+    `docs/assets/issues/92-mid-tile-bottom-row.png`.
+
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 
 - String-literal → `char*` conversions (pervasive; `-Wno-write-strings`).

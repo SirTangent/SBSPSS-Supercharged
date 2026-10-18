@@ -16,7 +16,7 @@ const u32	YInc=16<<16;
 /*****************************************************************************/
 static const int	TILE2D_WIDTH=16;
 static const int	TILE2D_HEIGHT=12;
-#if defined(__TERRITORY_EUR__)
+#if defined(__TERRITORY_EUR__) || !defined(PSX_MIPS_ASM)	// PC: no overscan hides 12-px tile rows' 1-3 line shortfall
 static const int	SCREEN_TILE_ADJ_W		=1;
 static const int	SCREEN_TILE_ADJ_H		=2; 	// Extra line needed :o(
 #else
