@@ -8,9 +8,14 @@ name: Build & test
 # commands in README.md instead.  Running on every PR again means adding
 # pull_request / push triggers back here - a deliberate change, not a fix.
 #
-# Not covered yet: EUR.  The EUR data build is not reliably one-shot
-# (issue #42), so an EUR data artifact and eur-debug / eur-final legs wait
-# for that root cause.
+# EUR (issue #42): its own data job and PC legs, data-eur and pc-eur, which
+# reuse the USA jobs' steps through YAML anchors (&data-steps, &pc-steps)
+# so the two territories cannot drift apart.  They are separate jobs, not
+# matrix legs of data / pc-build-test, because `needs` waits for every leg:
+# an EUR failure must not hold up the USA jobs.  The EUR data failure #42
+# was filed for was Git Bash's native make cutting the parkgrab command
+# line short, which build/globals.mak now refuses (PR #87); the runner
+# uses MSYS2's make.
 on:
   workflow_dispatch:
 
@@ -33,10 +38,10 @@ jobs:
   data:
     runs-on: windows-latest
     timeout-minutes: 20
-    defaults:
+    defaults: &msys2-defaults
       run:
         shell: msys2 {0}
-    steps:
+    steps: &data-steps
       - uses: actions/checkout@v7
 
       # data/CDData/Track1.Ixa is 133MB of Git LFS. checkout's lfs: true would
@@ -81,6 +86,21 @@ jobs:
           path: out/
           retention-days: 3
 
+  # The same steps for EUR (issue #42): the job's TERRITORY overrides the
+  # workflow's, so the build line and the artifact name follow it.  It waits
+  # for data only for the LFS cache: same key, and data has saved it by the
+  # time it ends, so the 133MB track is paid once even on a cold cache
+  # (GitHub evicts one unused for 7 days, and runs here are by hand).  That
+  # way round, USA can hold up EUR but never the reverse.
+  data-eur:
+    needs: data
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults: *msys2-defaults
+    env:
+      TERRITORY: EUR
+    steps: *data-steps
+
   # PC (Win32) port, the shipping MinGW build: configure+build via the
   # mingw32 CMake preset, then ctest's two labels - `unit` (the shim unit
   # exes + the headless link proof) and `playthrough` (the M8 harness:
@@ -92,6 +112,7 @@ jobs:
   # sbsp.exe, and __VERSION_FINAL__ compiles the asserts out, so a variable
   # used only inside an ASSERT breaks FINAL alone.  One USA data build
   # serves both legs (the data is per territory, not per variant, #35).
+  # pc-eur below runs these steps for EUR.
   pc-build-test:
     name: pc-build-test (${{ matrix.preset }})
     needs: data
@@ -101,13 +122,11 @@ jobs:
       fail-fast: false
       matrix:
         preset: [debug, final]
-    defaults:
-      run:
-        shell: msys2 {0}
+    defaults: *msys2-defaults
     env:
       SDL_VIDEODRIVER: dummy
       SDL_AUDIODRIVER: dummy
-    steps:
+    steps: &pc-steps
       - uses: actions/checkout@v7
 
       # the unit test lznp_exe_matches_source compares the committed
@@ -178,6 +197,25 @@ jobs:
           path: port/build/${{ matrix.preset }}/tier-logs/
           if-no-files-found: ignore
           retention-days: 7
+
+  # The EUR pair (issue #42), the same steps on data-eur's artifact.  The
+  # presets set SBSP_TERRITORY, so the tests and tiers run the EUR (PAL
+  # 50Hz) game.
+  pc-eur:
+    name: pc-eur (${{ matrix.preset }})
+    needs: data-eur
+    runs-on: windows-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [eur-debug, eur-final]
+    defaults: *msys2-defaults
+    env:
+      TERRITORY: EUR
+      SDL_VIDEODRIVER: dummy
+      SDL_AUDIODRIVER: dummy
+    steps: *pc-steps
 
   # The same port built by clang-cl (LLVM, i686-pc-windows-msvc) against the
   # MSVC CRT and Windows SDK - the toolchain that does not depend on MSYS2's
