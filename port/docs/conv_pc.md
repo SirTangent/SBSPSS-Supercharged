@@ -2869,11 +2869,21 @@ binaries in `tools/` under WOW64.  Done so far:
 - **lznp**: the M0 rewrite in `port/tools/lznp-src`, now built for x64 too.
   The 16-bit original can't run, so the 32-bit `port/tools/lznp.exe` stays
   as the `--vintage-tools` copy.
+- **MkActor** (`.SBK` sprite banks + `ACTOR_*_Anim.h`) and **MkLevel**
+  (`.Lvl`, `.tex`, `.Lbm`, the level headers), over the shared libraries in
+  `Utils/Libs` (GLib, GinLib, DaveLib, Maths, TexGrab).  These build with
+  clang-cl only (`port/cmake/datatools.cmake` returns before them under
+  MinGW, where g++ rejects much more of the 1999 code).  globals.mak runs
+  them by path, not through the PATH, so `MKLEVEL`/`MKACTOR` follow
+  `SBSP_VINTAGE_TOOLS` too.  MkLevel reads `MkLevel.ini` from beside its
+  exe, so it gained `-c:<dir>`: the x64 one reads the same
+  `tools/data/bin/MkLevel.ini` as the 1999 one.
 
 - **Where they live.** `port/build-pc.sh clangcl-x64-final --target
-  mkdata_tool tga2gfx_tool scripter_tool lznp_tool` builds them (every
-  preset builds them, as `MkData.exe`, `Tga2Gfx.exe`, `scripter.exe` and
-  `lznp_tool.exe` in its tree).  The clang-cl x64 copies are committed as
+  mkdata_tool tga2gfx_tool scripter_tool lznp_tool mkactor_tool
+  mklevel_tool` builds them (every preset builds them - MkActor and MkLevel
+  the clang-cl ones - as `MkData.exe`, `Tga2Gfx.exe`, `scripter.exe`,
+  `lznp_tool.exe`, `MkActor.exe` and `MkLevel.exe` in its tree).  The clang-cl x64 copies are committed as
   LFS objects in `port/tools/x64/` (lznp_tool's as `lznp.exe`).
   `build/globals.mak` puts that directory first on the MSYS2 make's PATH,
   so each name resolves there, and so does MkActor's `system("lznp ...")`
@@ -2891,10 +2901,74 @@ binaries in `tools/` under WOW64.  Done so far:
   every statement form and built-in calls - the game's scripts include the
   generated `trans.scr`, which a test job lacks) and requires byte-identical
   output.  Under MinGW i686 it also checks that the output doesn't depend
-  on the ABI.  `lznp_x64_exe_matches_source` does the same for
+  on the ABI.  On the clang-cl presets it also runs MkActor on a small
+  actor (Anenome) and MkLevel on the smallest level (FMA_CONTROLROOM), from
+  the repo, and compares every file they write.
+  `lznp_x64_exe_matches_source` does the same for
   `port/tools/x64/lznp.exe` as `lznp_exe_matches_source` does for the
   32-bit copy.  After a source change, rebuild the x64 copies and commit
   them again.
+- **MkActor and MkLevel on x64.**
+  - **The file structs keep their 32-bit layout.**  `dstructs.h`'s `DPTR`
+    fields are the game's 4-byte `FPTR<T>` in an x64 tool build too
+    (`SBSP_DATATOOL` plus `_WIN64`; the tools store file offsets in them, and
+    `Port_FptrRangeFail` is the tools' own in
+    `port/tools/datatool-src/datatool_abi.cpp`).  MapEdit's `sExpTile`
+    keeps its unused `RGB` pointer as a `u32`, because the `.MEX` holds 4
+    bytes there.  `datatool_abi.cpp` `static_assert`s the size of every
+    struct the tools write or read: the sizes `port/abi/abi_check.cpp`
+    holds the game to, plus the export structs.
+  - **Values that went through 32-bit integers:**
+    - `_findfirst` handles kept in `int`/`long` (MkActor, DaveLib, and
+      GLib's `MISC.CPP` twice), which crashed the first `_findnext`;
+    - a map pointer computed as `(int)LayerHdr+sizeof(...)` (tile and
+      collision layers);
+    - the depacker's end address `u32(From)+size` (both `pak.cpp` copies).
+
+    A one-off `-Wshorten-64-to-32` pass found nothing else that is a handle
+    or an address, only sizes and pointer differences.
+  - **`GString` through varargs.**  VC6 copied the object, whose only member
+    is its `char *`, into the argument list, so `%s` printed it.  MSVC x64
+    passes such an object by a pointer to a copy, and clang traps it.  About
+    30 calls (`sprintf` of texture names, `fprintf` of the generated
+    headers) get a `(char const *)` cast, which is what VC6 passed in
+    effect.
+  - **VC6-isms:**
+    - `for` scope (`Frame.cpp`, `facestore.cpp`, `Gstring.cpp`,
+      `mapread.cpp`);
+    - implicit `int` (`IFF.HPP`, `gintex.h`, `MkLevelLayerThing.h`);
+    - references to temporaries (`gintex.cpp`, `MkLevel.cpp`);
+    - a copy-initialisation needing two user conversions;
+    - DaveLib's `int round(float)`, now `iround`: the C++ library's
+      `float round(float)` differs from it only in the return type;
+    - `IniClass.h`'s unsequenced `*Name++=*(Name+1)`, written out as VC6
+      ran it;
+    - `<iostream.h>`/`<fstream.h>` from a two-line shim in
+      `port/tools/datatool-src/compat`;
+    - CMake takes an upper-case `.C` for C++, so `GSYS.C`, `GTIMSYS.C` and
+      `REGEX.C` are set to C.
+
+    `GSYS.C`'s stack switch rewrites an x86 `jmp_buf`; only GLib's tasker
+    calls it, so other targets abort there.
+  - **VC6's sort order.**  `std::sort` is not stable, and TexGrab sorts
+    palettes by colour count and texture rectangles by size, while GLib's
+    `Frame` sorts colours by use.  There are ties everywhere, so the order
+    of equal elements decides where every palette and texture lands in
+    VRAM, and with it every byte of a level.  `compat/vc6_sort.h`
+    reimplements VC6's algorithm (median-of-three quicksort down to 16
+    elements, then insertion), and those three calls use it.  With
+    today's `std::sort` every level's textures came out in a different
+    layout.
+  - **Zeroed, not uninitialised.**  Every struct the two tools write starts
+    zeroed (`={0}` locals, `{}` members).  The 1999 tools left the `Pad`
+    members, struct padding, `sVtx.rgb`, `sThingActor.Angle`, hazard
+    `Health`/`AttackStrength` and the blank 2D element to whatever the stack
+    or heap held.  The game reads none of them: of a hazard it reads `Gfx`,
+    `Type`, `PointCount` and `Respawn`, and `layertile.cpp` skips tile 0.
+  - **A crash report.**  `datatool_crash.cpp` prints the exception and the
+    stack as exe offsets (`llvm-symbolizer --obj=<exe>
+    --relative-address <offset>` turns them into lines), where make
+    otherwise says only "Segmentation fault".
 - **scripter's runtime.** `lexer.cpp`/`parser.cpp` are the committed
   ALex/AYACC output, linked against Parser Generator's C++ runtime: the
   `yyc*.cpp` files of `Utils/Parser Generator/SOURCE`, built as the `pg_yl`
@@ -2936,6 +3010,11 @@ binaries in `tools/` under WOW64.  Done so far:
   repo, and identical messages and exit codes for the 7 that don't compile
   (none of them is in `SCRIPTS_LIST`).  The x64 lznp compresses all 306
   files of a USA data build (21 MB) to the same bytes as the 32-bit one.
+  MkActor's actor headers are identical, and its `.SBK`s differ only in
+  `sSpriteAnim.Pad` and the unset fields of blank frames.  For all 27
+  levels, MkLevel writes identical `.tex`, `.Lbm`, `.h` and `_INF.h`
+  files.  Its `.Lvl`s differ only in the zeroed fields above, every byte
+  checked by struct field against two vintage runs.
 - **Full data builds**, compared with `PERL_HASH_SEED=0 PERL_PERTURB_KEYS=0`
   (otherwise `lang.pl`'s hash order changes `trans.h`, the translations
   and every script, on every build).  What's left is the vintage

@@ -189,7 +189,7 @@ GString	Filename=TexName;
 		}
 // Does file exist
 		if (!FindFile(TexName))
-			GObject::Error(ERR_FATAL,"Texture not found %s!!\n",TexName);
+			GObject::Error(ERR_FATAL,"Texture not found %s!!\n",(char const *)TexName);
 
 		TexGrab->AddFile(Filename);
 		LastIdx=ListSize;
@@ -226,12 +226,12 @@ int		H = ThisTex.h - 1;
 
 		if (ThisTex.Rotated)
 		{
-			Out.uv0[0] = (ThisTex.u + H) - round(In.uvs[0].v * H);
-			Out.uv0[1] = (ThisTex.v + W) - round(In.uvs[0].u * W);
-			Out.uv1[0] = (ThisTex.u + H) - round(In.uvs[1].v * H);
-			Out.uv1[1] = (ThisTex.v + W) - round(In.uvs[1].u * W);
-			Out.uv2[0] = (ThisTex.u + H) - round(In.uvs[2].v * H);
-			Out.uv2[1] = (ThisTex.v + W) - round(In.uvs[2].u * W);
+			Out.uv0[0] = (ThisTex.u + H) - iround(In.uvs[0].v * H);
+			Out.uv0[1] = (ThisTex.v + W) - iround(In.uvs[0].u * W);
+			Out.uv1[0] = (ThisTex.u + H) - iround(In.uvs[1].v * H);
+			Out.uv1[1] = (ThisTex.v + W) - iround(In.uvs[1].u * W);
+			Out.uv2[0] = (ThisTex.u + H) - iround(In.uvs[2].v * H);
+			Out.uv2[1] = (ThisTex.v + W) - iround(In.uvs[2].u * W);
 			ASSERT(0==1);
 		} 
 		else
@@ -241,12 +241,12 @@ int		H = ThisTex.h - 1;
 int			U=ThisTex.u;
 int			V=ThisTex.v+H;
 
-			uv0[0] = U +	round(In.uvs[0].u * W);
-			uv0[1] = V -	round(In.uvs[0].v * H);
-			uv1[0] = U +	round(In.uvs[1].u * W);
-			uv1[1] = V -	round(In.uvs[1].v * H);
-			uv2[0] = U +	round(In.uvs[2].u * W);
-			uv2[1] = V -	round(In.uvs[2].v * H);
+			uv0[0] = U +	iround(In.uvs[0].u * W);
+			uv0[1] = V -	iround(In.uvs[0].v * H);
+			uv1[0] = U +	iround(In.uvs[1].u * W);
+			uv1[1] = V -	iround(In.uvs[1].v * H);
+			uv2[0] = U +	iround(In.uvs[2].u * W);
+			uv2[1] = V -	iround(In.uvs[2].v * H);
 
 		}
 		
@@ -287,12 +287,12 @@ int		H = ThisTex.h - 1;
 
 		if (ThisTex.Rotated)
 		{
-			Out.uv0[0] = (ThisTex.u + H) - round(In.uvs[0].v * H);
-			Out.uv0[1] = (ThisTex.v + W) - round(In.uvs[0].u * W);
-			Out.uv1[0] = (ThisTex.u + H) - round(In.uvs[1].v * H);
-			Out.uv1[1] = (ThisTex.v + W) - round(In.uvs[1].u * W);
-			Out.uv2[0] = (ThisTex.u + H) - round(In.uvs[2].v * H);
-			Out.uv2[1] = (ThisTex.v + W) - round(In.uvs[2].u * W);
+			Out.uv0[0] = (ThisTex.u + H) - iround(In.uvs[0].v * H);
+			Out.uv0[1] = (ThisTex.v + W) - iround(In.uvs[0].u * W);
+			Out.uv1[0] = (ThisTex.u + H) - iround(In.uvs[1].v * H);
+			Out.uv1[1] = (ThisTex.v + W) - iround(In.uvs[1].u * W);
+			Out.uv2[0] = (ThisTex.u + H) - iround(In.uvs[2].v * H);
+			Out.uv2[1] = (ThisTex.v + W) - iround(In.uvs[2].u * W);
 			ASSERT(0==1);
 		} 
 		else
@@ -302,14 +302,14 @@ int		H = ThisTex.h - 1;
 int			U=ThisTex.u;
 int			V=ThisTex.v+H;
 
-			uv0[0] = U +	round(In.uvs[0].u * W);
-			uv0[1] = V -	round(In.uvs[0].v * H);
-			uv1[0] = U +	round(In.uvs[1].u * W);
-			uv1[1] = V -	round(In.uvs[1].v * H);
-			uv2[0] = U +	round(In.uvs[2].u * W);
-			uv2[1] = V -	round(In.uvs[2].v * H);
-			uv3[0] = U +	round(In.uvs[3].u * W);
-			uv3[1] = V -	round(In.uvs[3].v * H);
+			uv0[0] = U +	iround(In.uvs[0].u * W);
+			uv0[1] = V -	iround(In.uvs[0].v * H);
+			uv1[0] = U +	iround(In.uvs[1].u * W);
+			uv1[1] = V -	iround(In.uvs[1].v * H);
+			uv2[0] = U +	iround(In.uvs[2].u * W);
+			uv2[1] = V -	iround(In.uvs[2].v * H);
+			uv3[0] = U +	iround(In.uvs[3].u * W);
+			uv3[1] = V -	iround(In.uvs[3].v * H);
 
 		}
 		
@@ -341,9 +341,9 @@ int		CFaceStore::AddVtx(vector<sVtx> &OutVtxList,Vector3 &InVtx)
 int		ListSize=OutVtxList.size();
 sVtx	ThisVtx;
 
-		ThisVtx.vx=round(InVtx.x*Scale);
-		ThisVtx.vy=round(InVtx.y*Scale);
-		ThisVtx.vz=round(InVtx.z*Scale);
+		ThisVtx.vx=iround(InVtx.x*Scale);
+		ThisVtx.vy=iround(InVtx.y*Scale);
+		ThisVtx.vz=iround(InVtx.z*Scale);
 
 		for (int i=0; i<ListSize; i++)
 		{
@@ -635,7 +635,8 @@ void CFaceStore::FollowFace( int id, CFace &F )
 	int v0, v1;
 	int unc = GetUnconnectedPoint( id, minF, v0, v1);
 
-	for (int j=0; j<ptc; j++) if (F.pts[j] == v1) break;
+	int j;
+	for (j=0; j<ptc; j++) if (F.pts[j] == v1) break;
 
 	
 	if (j != (ptc-1))

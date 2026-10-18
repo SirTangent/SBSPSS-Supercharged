@@ -31,7 +31,7 @@
 /*----------------------------------------------------------------------
 	Tyepdefs && Defines
 	------------------- */
-const MAXIFFNESTING = 16;
+const int MAXIFFNESTING = 16;
 
 enum Masking
 {

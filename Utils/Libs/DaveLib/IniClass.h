@@ -257,7 +257,7 @@ void	StripGroupName(char *Name)
 // Remove Last Bracket
 	if (Name[strlen(Name)-1]==']') Name[strlen(Name)-1]=0;
 // Remove First bracket
-	if (*Name=='[') while (*Name) *Name++=*(Name+1);
+	if (*Name=='[') while (*Name) {*Name=*(Name+1); Name++;}
 }
 
 /*----------------------------------------------------------------------------*/

@@ -467,52 +467,8 @@ set_tests_properties(lznp_roundtrip PROPERTIES LABELS unit)
 add_executable(lznp_tool tools/lznp-src/lznp_cli.cpp tools/lznp-src/lznp_encode.cpp)
 target_compile_options(lznp_tool PRIVATE ${SBSP_DEBUG_FLAGS})
 sbsp_plain_exe_link(lznp_tool)
-# Data-pipeline converters rebuilt from Utils/ (issue #48): the clang-cl x64
-# copies are committed to port/tools/x64/, beside lznp_tool's (as
-# lznp.exe).  1999 sources, built as they are - the old CRT names (strupr),
-# char* string literals, and
-# MkData's `if(*StrPtr=':')` (intended: it skips the colon) - plus the raw
-# 0xA3 byte in MkData's illegal-character list, which must stay one byte.
-set(SBSP_DATATOOL_OPTS ${SBSP_DEBUG_FLAGS} ${SBSP_OPT_FLAGS}
-    -Wno-parentheses -Wno-writable-strings -Wno-invalid-source-encoding
-    -Wno-nonportable-include-path)
-if(NOT SBSP_MSVC)
-    # g++ spells clang's -Wwritable-strings this way; it ignores the clang-only -Wno-
-    list(APPEND SBSP_DATATOOL_OPTS -Wno-write-strings)
-endif()
-add_executable(mkdata_tool ${SBSP_ROOT}/Utils/MkData/MkData.cpp)
-add_executable(tga2gfx_tool ${SBSP_ROOT}/Utils/Tga2Gfx/Tga2Gfx.cpp)
-set_target_properties(mkdata_tool PROPERTIES OUTPUT_NAME MkData)
-set_target_properties(tga2gfx_tool PROPERTIES OUTPUT_NAME Tga2Gfx)
-# scripter compiles the game's .scr scripts; its lexer.cpp/parser.cpp are the
-# committed ALex/AYACC output of lexer.l/parser.y, over Parser Generator's
-# C++ runtime (the yyc*.cpp half of its SOURCE, in place of the prebuilt
-# VC6 yl.lib).  myparser.cpp also prints to yyparseerr, a global of the C
-# half (yyspvars.c): built as C++, because `= stderr` is no constant
-# initializer for C under the UCRT, and the reference is a C++ one.
-set(SBSP_PG_DIR "${SBSP_ROOT}/Utils/Parser Generator")
-file(GLOB SBSP_PG_YL_SOURCES "${SBSP_PG_DIR}/SOURCE/yyc*.cpp")
-set_source_files_properties("${SBSP_PG_DIR}/SOURCE/yyspvars.c" PROPERTIES LANGUAGE CXX)
-add_library(pg_yl STATIC ${SBSP_PG_YL_SOURCES} "${SBSP_PG_DIR}/SOURCE/yyspvars.c")
-target_include_directories(pg_yl PUBLIC "${SBSP_PG_DIR}/INCLUDE")
-set(SBSP_SCRIPTER_SOURCES codegen function lexer main mylexer myparser parser pfile prepro var)
-list(TRANSFORM SBSP_SCRIPTER_SOURCES PREPEND ${SBSP_ROOT}/Utils/Scripter/)
-list(TRANSFORM SBSP_SCRIPTER_SOURCES APPEND .cpp)
-add_executable(scripter_tool ${SBSP_SCRIPTER_SOURCES})
-set_target_properties(scripter_tool PROPERTIES OUTPUT_NAME scripter)
-target_link_libraries(scripter_tool PRIVATE pg_yl)
-# Parser Generator's headers open a #pragma pack in one header and close it
-# in another
-foreach(_tool scripter_tool pg_yl)
-    target_compile_options(${_tool} PRIVATE -Wno-pragma-pack)
-endforeach()
-foreach(_tool mkdata_tool tga2gfx_tool scripter_tool pg_yl)
-    target_compile_definitions(${_tool} PRIVATE _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_DEPRECATE)
-    target_compile_options(${_tool} PRIVATE ${SBSP_DATATOOL_OPTS})
-endforeach()
-foreach(_tool mkdata_tool tga2gfx_tool scripter_tool)
-    sbsp_plain_exe_link(${_tool})
-endforeach()
+# The data-pipeline converters rebuilt from Utils/ (issue #48)
+include(cmake/datatools.cmake)
 if(Python3_Interpreter_FOUND)
     add_test(NAME lznp_exe_matches_source
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/lznp_exe_check.py
@@ -528,17 +484,25 @@ if(Python3_Interpreter_FOUND)
                      ${SBSP_ROOT}/port/tests/str_frame1.bin
              WORKING_DIRECTORY ${SBSP_ROOT})
     set_tests_properties(lznp_x64_exe_matches_source PROPERTIES LABELS unit)
-    # The committed port/tools/x64/MkData.exe, Tga2Gfx.exe and scripter.exe
-    # (LFS, issue #48: build-data runs them in place of the 1999 tools/ exes)
-    # must be what the Utils/ sources build.  This tree's copies, built by
-    # whichever toolchain, and the committed x64 ones convert the same inputs
-    # to the same bytes (tests/datatools_exe_check.py), so a 32/64-bit
-    # difference in the output shows up here too.
+    # The committed port/tools/x64 converters (LFS, issue #48: build-data runs
+    # them in place of the 1999 tools/ exes) must be what the Utils/ sources
+    # build.  This tree's copies, built by whichever toolchain, and the
+    # committed x64 ones convert the same inputs to the same bytes
+    # (tests/datatools_exe_check.py), so a 32/64-bit difference in the output
+    # shows up here too.  MkActor and MkLevel build with clang-cl only
+    # (cmake/datatools.cmake).
+    set(SBSP_DATATOOL_CHECK_ARGS)
+    if(TARGET mkactor_tool)
+        list(APPEND SBSP_DATATOOL_CHECK_ARGS
+             --mkactor $<TARGET_FILE:mkactor_tool> ${SBSP_ROOT}/port/tools/x64/MkActor.exe
+             --mklevel $<TARGET_FILE:mklevel_tool> ${SBSP_ROOT}/port/tools/x64/MkLevel.exe)
+    endif()
     add_test(NAME datatools_exe_matches_source
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/datatools_exe_check.py
                      $<TARGET_FILE:mkdata_tool> ${SBSP_ROOT}/port/tools/x64/MkData.exe
                      $<TARGET_FILE:tga2gfx_tool> ${SBSP_ROOT}/port/tools/x64/Tga2Gfx.exe
                      $<TARGET_FILE:scripter_tool> ${SBSP_ROOT}/port/tools/x64/scripter.exe
+                     ${SBSP_DATATOOL_CHECK_ARGS}
              WORKING_DIRECTORY ${SBSP_ROOT})
     set_tests_properties(datatools_exe_matches_source PROPERTIES LABELS unit)
     # port/tools/psx_identity.py's rules (what `lines` passes as the same PS1

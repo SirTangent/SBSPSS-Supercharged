@@ -191,6 +191,13 @@ SED :=					sed
 ATTRIB :=				chmod +w
 unexport Path
 export PATH :=			/usr/bin:$(SBSP_X64_TOOLS)$(CURDIR)/port/tools:$(CURDIR)/$(TOOL_DIR):$(CURDIR)/$(DATA_BIN_DIR):$(CURDIR)/$(PSYQ_BIN_DIR):$(CURDIR)/$(PSYQ_BIN_DIR)/egcs
+#	MkLevel and MkActor are run by path, not found on the PATH.  MkLevel
+#	reads MkLevel.ini from beside its exe unless -c: names the directory:
+#	the x64 one reads the same tools/data/bin/MkLevel.ini as the 1999 one.
+ifneq ($(SBSP_VINTAGE_TOOLS),1)
+MKLEVEL :=				port/tools/x64/MkLevel -c:$(DATA_BIN_DIR)
+MKACTOR :=				port/tools/x64/MkActor
+endif
 else
 ifneq ($(MAKE_HOST),)
 $(error GNU make $(MAKE_VERSION) for $(MAKE_HOST) cannot run this build - use MSYS2's make: port\build-data.cmd / port\build-psx.cmd, or /usr/bin/make from an MSYS2 shell)

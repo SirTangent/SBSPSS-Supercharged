@@ -82,7 +82,7 @@ bool copyFile(char const * Dest,char const * Source,bool Overwrite)
 int FileCycler::DoCycle(char const *Spec,bool Recurse)
 {
 	int 	FileNum=0;
-	int 	Handle;
+	intptr_t	Handle;		// _findfirst's handle: 64 bits on x64 (issue #48)
 	GFName  InName(Spec);
 	char *	Speccy;
 
@@ -171,7 +171,7 @@ int FileCycler::DoCycle(char const *Spec,bool Recurse)
 int	CycleFiles(char const *Spec,void (*Func)(char const *Fname,int Num),BOOL Recurse)
 {
 	int 	FileNum=0;
-	int 	Handle;
+	intptr_t	Handle;		// _findfirst's handle: 64 bits on x64 (issue #48)
 	GFName  InName(Spec);
 	char *	Speccy;
 

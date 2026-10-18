@@ -32,7 +32,7 @@ protected:
 
 		CList2d<sExpLayerTile>		InMap;
 		CList2d<sMkLevelElem>		OutMap;
-		sLayerHdr					Hdr;
+		sLayerHdr					Hdr{};
 
 // Pak Stuff
 		int				BuildPakChunk(int X,int Y,int &PakW,int &PakH);

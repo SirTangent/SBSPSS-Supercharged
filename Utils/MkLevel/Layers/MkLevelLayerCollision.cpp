@@ -28,7 +28,7 @@ CMkLevelLayerCollision::CMkLevelLayerCollision(sExpLayerHdr *LayerHdr)
 		Width=LayerHdr->Width;
 		Height=LayerHdr->Height;
 
-sExpColTile	*MapPtr=(sExpColTile*)((int)LayerHdr+sizeof(sExpLayerHdr));
+sExpColTile	*MapPtr=(sExpColTile*)((u8*)LayerHdr+sizeof(sExpLayerHdr));
 
 		Map.SetSize(Width,Height);
 		
@@ -89,7 +89,7 @@ static const u8		s_collisionTileRemapTable[17]=
 
 int		CMkLevelLayerCollision::Write(CMkLevel *Core,FILE *File,const char *LayerName)
 {
-sLayerHdr	Hdr;
+sLayerHdr	Hdr={0};
 int			ThisPos=ftell(File);
 int			Width=Map.GetWidth();
 int			Height=Map.GetHeight();

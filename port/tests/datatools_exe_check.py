@@ -1,6 +1,6 @@
 """The committed port/tools/x64 converters must be what Utils/ builds.
 
-build-data runs the committed x64 MkData, Tga2Gfx and scripter (issue #48),
+build-data runs the committed x64 converters (issue #48),
 but nothing else rebuilds them from Utils/ or compares the two: an
 edit to the sources with a hand-rebuilt exe, or an LFS pointer standing in for
 one, would only show as a changed BigLump.Bin.  This tree's copies - built by
@@ -12,6 +12,10 @@ once counted into a bank's size) shows up as a mismatch here too.
     datatools_exe_check.py <built MkData> <committed MkData.exe>
                            <built Tga2Gfx> <committed Tga2Gfx.exe>
                            <built scripter> <committed scripter.exe>
+                           [--mkactor <built> <committed>] [--mklevel <built> <committed>]
+
+MkActor and MkLevel (clang-cl builds only) convert a small actor and the
+smallest level from the repo, run from the repo root.
 """
 import os
 import shutil
@@ -85,15 +89,39 @@ def run(cmd, cwd, wants):
     return out
 
 
+def run_dir(cmd, cwd, outdir, env=None):
+    """Run a tool that writes into outdir; return {file name: bytes} and empty the dir."""
+    r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, errors="replace", env=env)
+    if r.returncode != 0:
+        raise SystemExit(f"FAIL: {os.path.basename(cmd[0])} exited {r.returncode}: "
+                         f"{(r.stdout + r.stderr).strip()[-300:]}")
+    out = {}
+    for f in sorted(os.listdir(outdir)):
+        p = os.path.join(outdir, f)
+        out[f] = open(p, "rb").read()
+        os.remove(p)
+    if not out:
+        raise SystemExit(f"FAIL: {os.path.basename(cmd[0])} exited 0 but wrote nothing")
+    return out
+
+
 def main():
-    if len(sys.argv) != 7:
+    argv = sys.argv[1:]
+    # MkActor and MkLevel build with clang-cl only: optional pairs after the six
+    pairs = {}
+    for opt in ("--mkactor", "--mklevel"):
+        if opt in argv:
+            i = argv.index(opt)
+            pairs[opt] = [os.path.abspath(a) for a in argv[i + 1:i + 3]]
+            del argv[i:i + 3]
+    if len(argv) != 6 or any(len(p) != 2 for p in pairs.values()):
         print(__doc__)
         return 2
     # absolute: CreateProcess does not resolve a relative tool path with
     # forward slashes against the working directory
     (mk_built, mk_committed, tg_built, tg_committed,
-     sc_built, sc_committed) = (os.path.abspath(a) for a in sys.argv[1:])
-    for exe in (mk_committed, tg_committed, sc_committed):
+     sc_built, sc_committed) = (os.path.abspath(a) for a in argv)
+    for exe in [mk_committed, tg_committed, sc_committed] + [p[1] for p in pairs.values()]:
         size = os.path.getsize(exe)
         if size < 4096:
             print(f"FAIL: {exe} is {size} bytes - an LFS pointer, not the tool (git lfs pull)")
@@ -143,6 +171,34 @@ def main():
         (a,) = run([sc_built, "t.scr", "t.dat"], tmp, ["t.dat"])
         (b,) = run([sc_committed, "t.scr", "t.dat"], tmp, ["t.dat"])
         check("scripter t.scr", a, b)
+
+        root = os.getcwd()          # the repo root (the test's working directory)
+        # MkActor: one small actor from the repo.  It packs through
+        # system("lznp ..."), so the committed x64 lznp goes first on the
+        # PATH, and it leaves Actor.Tmp / Actor.Pak in its working directory.
+        if "--mkactor" in pairs:
+            outdir = os.path.join(tmp, "actor")
+            os.mkdir(outdir)
+            env = dict(os.environ)
+            env["PATH"] = os.path.join(root, "port", "tools", "x64") + os.pathsep + env.get("PATH", "")
+            args = ["-r:" + os.path.join(root, "graphics", "Characters"), "-s:Render/Psx",
+                    "-o:" + outdir, "-i:" + outdir, "Anenome", "-c:16"]
+            a = run_dir([pairs["--mkactor"][0]] + args, tmp, outdir, env)
+            b = run_dir([pairs["--mkactor"][1]] + args, tmp, outdir, env)
+            for f in sorted(set(a) | set(b)):
+                check("MkActor " + f, a.get(f, b""), b.get(f, b""))
+        # MkLevel: the smallest level, from the repo root (MkLevel.ini's
+        # BackGfxDir is relative to it), with makefile.gfx's options
+        if "--mklevel" in pairs:
+            outdir = os.path.join(tmp, "level")
+            os.mkdir(outdir)
+            args = ["-c:tools/data/bin", "graphics/levels/FMA/CONTROLROOM/CONTROLROOM.mex",
+                    "-o:" + os.path.join(outdir, "FMA_CONTROLROOM.lvl"), "-i:" + outdir,
+                    "-t:8,3,1", "-s:16", "-l", "-q"]
+            a = run_dir([pairs["--mklevel"][0]] + args, root, outdir)
+            b = run_dir([pairs["--mklevel"][1]] + args, root, outdir)
+            for f in sorted(set(a) | set(b)):
+                check("MkLevel " + f, a.get(f, b""), b.get(f, b""))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("datatools_exe_check: " + ("the committed x64 converters match their sources" if ok else "FAILURES"))

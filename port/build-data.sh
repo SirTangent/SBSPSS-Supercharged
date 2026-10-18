@@ -3,10 +3,11 @@
 #
 # Runs the original makefile.gfx with the MSYS2 runtime (make/sh/coreutils/perl)
 # driving the converter EXEs: the ones rebuilt from source as x64 exes in
-# port/tools/x64 (issue #48: MkData, Tga2Gfx, scripter, lznp so far), the
-# repo's original Win32 ones for the rest.  --vintage-tools runs the
-# originals for every converter, for an A/B of the outputs (lznp's original
-# is 16-bit, so that one is the 32-bit port/tools/lznp.exe).
+# port/tools/x64 (issue #48: MkData, Tga2Gfx, scripter, lznp, MkActor and
+# MkLevel so far), the repo's original Win32 ones for the rest.
+# --vintage-tools runs the originals for every converter, for an A/B of the
+# outputs (lznp's original is 16-bit, so that one is the 32-bit
+# port/tools/lznp.exe).
 #
 # build/globals.mak gives MSYS2's make the MSYS2 utilities and PATH in place
 # of the 1999 cygwin ones, which crash on Windows 10/11 (issue #16), so the
@@ -26,9 +27,10 @@
 #   ... --vintage-tools                           # with any of the above: the 1999 converters
 #
 # The x64 converters are LFS objects; an unmaterialised pointer stops the
-# build rather than falling back to the 1999 exes.  BIGLUMP.BIN from the
-# rebuilt MkData differs from the vintage one in one byte, a bank size the
-# 1999 MkData left uninitialised (port/docs/conv_pc.md, "x64 data tools").
+# build rather than falling back to the 1999 exes.  The rebuilt tools zero
+# what the 1999 ones left uninitialised (a bank size in BIGLUMP.BIN, pad
+# and unused fields in the .Lvl and .SBK files); everything else matches
+# (port/docs/conv_pc.md, "x64 data tools").
 #
 # The PC data is per TERRITORY only (issue #35): makefile.gfx has no VERSION
 # conditional, so a DEBUG and a FINAL data build are byte-identical.  The CD
@@ -80,7 +82,7 @@ echo "Data build: TERRITORY=$TERRITORY (vintage make VERSION=$VERSION) -> out/$T
 if [ "$VINTAGE" = 1 ]; then
     echo "Converters: the 1999 Win32 exes (--vintage-tools)"
 else
-    for tool in MkData Tga2Gfx scripter lznp; do
+    for tool in MkData Tga2Gfx scripter lznp MkActor MkLevel; do
         exe="port/tools/x64/$tool.exe"
         if [ ! -f "$exe" ] || [ "$(stat -c%s "$exe")" -lt 4096 ]; then
             echo "ERROR: $exe is missing or an unmaterialised Git-LFS pointer." >&2
@@ -89,7 +91,7 @@ else
             exit 1
         fi
     done
-    echo "Converters: port/tools/x64 (MkData, Tga2Gfx, scripter, lznp), the 1999 Win32 exes for the rest"
+    echo "Converters: port/tools/x64 (MkData, Tga2Gfx, scripter, lznp, MkActor, MkLevel), the 1999 Win32 exes for the rest"
 fi
 
 # Until issue #15 three makefile.gfx recipes redirected to `nul`, which
