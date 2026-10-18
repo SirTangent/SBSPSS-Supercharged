@@ -2842,15 +2842,20 @@ The rest touches no game source:
     264 lines, from `-ShiftY` (`YPos%12`, 0-11), so at `ShiftY` 9, 10
     and 11 rows 255, 254-255 and 253-255 showed the `CLayerBack` shade
     band underneath.  An NTSC TV never showed those lines.  Same class
-    as entry 18, and the same fix the original devs made for PAL: the
-    EUR arm's `SCREEN_TILE_ADJ_H=2` (23 rows, 276 lines, enough at every
-    phase), now also taken when `!defined(PSX_MIPS_ASM)`.  The condition
-    is extended on its own line, so the PS1 compiles the same tokens on
-    the same lines.  It costs 2 x 33 `TSPRT`s more in the mid layer's
-    prim banks, as EUR already does.  `RenderH` still clamps to the
-    map's height.  It moves displayed pixels, so `GPU_RENDER_REVISION`
-    goes to 3 and older recordings skip their display CRCs.  Before and
-    after in level 4-4 at vblank 3520:
+    as entry 18.  The original devs fixed it for PAL with a 23rd row
+    (the EUR arm's `SCREEN_TILE_ADJ_H=2`, 276 lines), but taking that
+    arm on PC grows both prim banks by 33 `TSPRT`s, and the banks are
+    `MemAlloc`'d: `RamUsed`, which replay epochs compare, rose by 1,584
+    bytes in every level, so every older recording desynced on `ram`
+    (PR #93's review).  So the banks keep the console size, and a
+    `!defined(PSX_MIPS_ASM) && !defined(__TERRITORY_EUR__)` arm at the
+    end of `render()` draws the 23rd row from the frame's prim pool
+    (`GetPrim`, allocated once at `PrimInit`), only when that row is on
+    screen (`TileY<INGAME_SCREENH`) and in the map.  The frames are
+    pixel-identical to the bigger-bank version; `RamUsed` is the
+    console's.  It moves displayed pixels, so `GPU_RENDER_REVISION`
+    goes to 3: a revision-2 recording replays with crc skipped and rng
+    and ram compared.  Before and after in level 4-4 at vblank 3520:
     `docs/assets/issues/92-mid-tile-bottom-row.png`.
 
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)

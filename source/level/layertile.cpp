@@ -16,7 +16,7 @@ const u32	YInc=16<<16;
 /*****************************************************************************/
 static const int	TILE2D_WIDTH=16;
 static const int	TILE2D_HEIGHT=12;
-#if defined(__TERRITORY_EUR__) || !defined(PSX_MIPS_ASM)	// PC: no overscan hides 12-px tile rows' 1-3 line shortfall
+#if defined(__TERRITORY_EUR__)
 static const int	SCREEN_TILE_ADJ_W		=1;
 static const int	SCREEN_TILE_ADJ_H		=2; 	// Extra line needed :o(
 #else
@@ -182,4 +182,36 @@ u32				T0,T1;
 			TileY+=TILE2D_HEIGHT;
 		}
 
+#if !defined(PSX_MIPS_ASM) && !defined(__TERRITORY_EUR__)
+// PC port (issue #92): 22 rows of 12-px tiles end 264-ShiftY lines down, so at
+// ShiftY 9-11 the bottom 1-3 lines of the frame - under NTSC overscan on a TV,
+// in plain view in a window - showed the layer beneath.  EUR draws a 23rd row
+// from a bigger bank; the PC takes it from the frame's prim pool instead, so
+// the banks, and with them RamUsed (which replay epochs compare), keep the
+// console size.
+		if (TileY<INGAME_SCREENH && MapXY.vy+RenderH<MapHeight)
+		{
+			TileX=-ShiftX;
+			for (int X=0; X<RenderW; X++)
+			{
+				int	ThisTile=MapPtr->Tile;
+				if (ThisTile)
+				{
+					sElem2d		*Tile=(sElem2d*)(TileBank+ThisTile);
+					TSPRT		*Prim=GetPrim(TSPRT);
+					setTSprt(Prim);
+					setTShadeTex(Prim,1);
+					Prim->w=TILE2D_WIDTH;
+					Prim->h=TILE2D_HEIGHT;
+					Prim->x0=TileX;
+					Prim->y0=TileY;
+					Prim->t_code=Tile->TPage;
+					*(u32*)&Prim->u0=*(u32*)&Tile->u0;	// uv AND clut
+					addPrim(ThisOT,Prim);
+				}
+				MapPtr++;
+				TileX+=TILE2D_WIDTH;
+			}
+		}
+#endif
 }
