@@ -202,11 +202,11 @@ MinGW `eur-*` builds they need the EUR data.
 
 ### Continuous integration
 
-The GitHub Actions workflow (`.github/workflows/build.yml`) runs only when
-someone starts it by hand: the *Actions* tab, *Build & test*, *Run
-workflow*, or `gh workflow run build.yml --ref <branch>`. It never runs by
-itself on a push or a pull request, so check a pull request locally with the
-same builds and tests before opening it:
+The GitHub Actions workflow (`.github/workflows/build.yml`) runs on every
+pull request into `SBSP-Win11`, and by hand from the *Actions* tab (*Build &
+test*, *Run workflow*) or `gh workflow run build.yml --ref <branch>`. A push
+by itself triggers nothing. The same builds and tests run locally, so check
+a pull request with them before opening it:
 
 ```bat
 port\build-pc.cmd test usa

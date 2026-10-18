@@ -1,12 +1,12 @@
 name: Build & test
 
-# Manual runs only, by the maintainer's decision (issue #64): nothing here
-# fires on a push or a pull request.  Start it from the Actions tab (Run
-# workflow, pick the branch) or `gh workflow run build.yml --ref <branch>`.
-# A run costs LFS bandwidth (the 133MB Track1.Ixa on a cold cache, see the
-# lfs job) and runner time, and pull requests are checked locally with the
-# commands in README.md instead.  Running on every PR again means adding
-# pull_request / push triggers back here - a deliberate change, not a fix.
+# Runs on every pull request into SBSP-Win11, and by hand from the Actions
+# tab (Run workflow, pick the branch) or `gh workflow run build.yml --ref
+# <branch>`.  Issue #64 made it manual-only; the maintainer turned the
+# pull request check back on.  Pushes still trigger nothing.  A run costs
+# LFS bandwidth (the 133MB Track1.Ixa on a cold cache, see the lfs job) and
+# runner time: a pull request's cache is its own, so its first run fetches
+# the LFS objects unless a run on SBSP-Win11 left a cache it can restore.
 #
 # EUR (issue #42): its own data job and PC legs, data-eur and pc-eur, which
 # reuse the USA jobs' steps through YAML anchors (&data-steps, &pc-steps)
@@ -19,6 +19,8 @@ name: Build & test
 # line short, which build/globals.mak now refuses (PR #87); the runner
 # uses MSYS2's make.
 on:
+  pull_request:
+    branches: [SBSP-Win11]
   workflow_dispatch:
 
 permissions:
