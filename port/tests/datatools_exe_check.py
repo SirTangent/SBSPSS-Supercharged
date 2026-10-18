@@ -1,0 +1,132 @@
+"""The committed port/tools/x64/MkData.exe and Tga2Gfx.exe must be what Utils/ builds.
+
+build-data runs the committed x64 converters (issue #48), but nothing else
+rebuilds them from Utils/MkData and Utils/Tga2Gfx or compares the two: an
+edit to the sources with a hand-rebuilt exe, or an LFS pointer standing in for
+one, would only show as a changed BigLump.Bin.  This tree's copies - built by
+whichever toolchain configured it, MinGW i686 included - and the committed
+ones convert the same synthetic inputs, and every output must match byte for
+byte.  A difference that depends on the compiler (the sizeof(std::vector) MkData
+once counted into a bank's size) shows up as a mismatch here too.
+
+    datatools_exe_check.py <built MkData> <committed MkData.exe>
+                           <built Tga2Gfx> <committed Tga2Gfx.exe>
+"""
+import os
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+
+
+def noise(n, seed):
+    s, out = seed, bytearray()
+    for _ in range(n):
+        s = (s * 1103515245 + 12345) & 0xFFFFFFFF
+        out.append((s >> 16) & 0xFF)
+    return bytes(out)
+
+
+def tga(width, height, depth, seed):
+    """An uncompressed true-colour TGA: Tga2Gfx reads the 18-byte header and
+    then 3 bytes a pixel, bottom row first, whatever the depth says."""
+    hdr = struct.pack("<BBB2s2sBhhhhBB", 0, 0, 2, b"\0\0", b"\0\0", 0,
+                      0, 0, width, height, depth, 0)
+    return hdr + noise(width * height * 3, seed)
+
+
+# MkData's script: lines end in CRLF (it skips two bytes at each CR), a
+# `{ NAME align` line opens a bank, `}` closes it, `#` is a comment and a
+# leading `-` lists a file outside the current bank.
+SCRIPT_A = (b"{ CACHE_A 4\r\n"
+            b"\tfirst.bin\r\n"
+            b"\tsecond.dat\r\n"
+            b"}\r\n"
+            b"# a comment line\r\n"
+            b"third.bin\r\n"
+            b"{ CACHE_B 2048\r\n"
+            b"\t-fourth.bin\r\n"
+            b"\tfirst.bin\r\n"
+            b"\tfifth.raw\r\n"
+            b"}\r\n")
+SCRIPT_B = (b"sixth.bin\r\n"
+            b"{ EMPTY 4\r\n"
+            b"}\r\n")
+FILES = {"first.bin": 3001, "second.dat": 1, "third.bin": 4096,
+         "fourth.bin": 777, "fifth.raw": 20000, "sixth.bin": 2049}
+
+
+def run(cmd, cwd, wants):
+    r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise SystemExit(f"FAIL: {os.path.basename(cmd[0])} exited {r.returncode}: "
+                         f"{(r.stdout + r.stderr).strip()[-300:]}")
+    out = []
+    for w in wants:
+        p = os.path.join(cwd, w)
+        if not os.path.exists(p):
+            raise SystemExit(f"FAIL: {os.path.basename(cmd[0])} exited 0 but wrote no {w}")
+        out.append(open(p, "rb").read())
+        os.remove(p)
+    return out
+
+
+def main():
+    if len(sys.argv) != 5:
+        print(__doc__)
+        return 2
+    # absolute: CreateProcess does not resolve a relative tool path with
+    # forward slashes against the working directory
+    mk_built, mk_committed, tg_built, tg_committed = (os.path.abspath(a) for a in sys.argv[1:])
+    for exe in (mk_committed, tg_committed):
+        size = os.path.getsize(exe)
+        if size < 4096:
+            print(f"FAIL: {exe} is {size} bytes - an LFS pointer, not the tool (git lfs pull)")
+            return 1
+
+    tmp = tempfile.mkdtemp(prefix="sbsp_datatools_")
+    ok = True
+
+    def check(name, a, b):
+        nonlocal ok
+        same = a == b and len(a) > 0
+        print(f"{name:28s} built={len(a):8d} committed={len(b):8d}  {'OK' if same else 'MISMATCH'}")
+        ok = ok and same
+
+    try:
+        # Tga2Gfx <in.tga> <out>: odd sizes, one pixel, the depth-24 shift
+        # and its no-shift branch, and the real legal screen
+        tgas = {"odd_37x23_d24": tga(37, 23, 24, 1), "one_pixel_d24": tga(1, 1, 24, 2),
+                "noshift_64x8_d16": tga(64, 8, 16, 3)}
+        legal = "graphics/screens/legal.tga"
+        if os.path.exists(legal):
+            tgas["legal.tga"] = open(legal, "rb").read()
+        for name, data in tgas.items():
+            src = os.path.join(tmp, "in.tga")
+            open(src, "wb").write(data)
+            (a,) = run([tg_built, "in.tga", "out.gfx"], tmp, ["out.gfx"])
+            (b,) = run([tg_committed, "in.tga", "out.gfx"], tmp, ["out.gfx"])
+            check("Tga2Gfx " + name, a, b)
+
+        # MkData -b:<base> -s:<script>.. -o:<lump> -i:<header> [-a:<align>]
+        base = os.path.join(tmp, "base")
+        os.mkdir(base)
+        for i, (name, size) in enumerate(FILES.items()):
+            open(os.path.join(base, name.upper()), "wb").write(noise(size, 100 + i))
+        open(os.path.join(tmp, "a.scr"), "wb").write(SCRIPT_A)
+        open(os.path.join(tmp, "b.scr"), "wb").write(SCRIPT_B)
+        for label, extra in (("default align", []), ("-a:512", ["-a:512"])):
+            args = ["-b:base", "-s:a.scr", "-s:b.scr", "-o:LUMP.BIN", "-i:lump.h"] + extra
+            a = run([mk_built] + args, tmp, ["LUMP.BIN", "lump.h"])
+            b = run([mk_committed] + args, tmp, ["LUMP.BIN", "lump.h"])
+            check(f"MkData lump ({label})", a[0], b[0])
+            check(f"MkData header ({label})", a[1], b[1])
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print("datatools_exe_check: " + ("the committed x64 converters match their sources" if ok else "FAILURES"))
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

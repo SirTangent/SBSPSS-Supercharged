@@ -467,6 +467,27 @@ set_tests_properties(lznp_roundtrip PROPERTIES LABELS unit)
 add_executable(lznp_tool tools/lznp-src/lznp_cli.cpp tools/lznp-src/lznp_encode.cpp)
 target_compile_options(lznp_tool PRIVATE ${SBSP_DEBUG_FLAGS})
 sbsp_plain_exe_link(lznp_tool)
+# Two of the data-pipeline converters, rebuilt from Utils/ (issue #48): the
+# clang-cl x64 copies are committed to port/tools/x64/.  1999 sources, built
+# as they are - the old CRT names (strupr), char* string literals, and
+# MkData's `if(*StrPtr=':')` (intended: it skips the colon) - plus the raw
+# 0xA3 byte in MkData's illegal-character list, which must stay one byte.
+set(SBSP_DATATOOL_OPTS ${SBSP_DEBUG_FLAGS} ${SBSP_OPT_FLAGS}
+    -Wno-parentheses -Wno-writable-strings -Wno-invalid-source-encoding
+    -Wno-nonportable-include-path)
+if(NOT SBSP_MSVC)
+    # g++ spells clang's -Wwritable-strings this way; it ignores the clang-only -Wno-
+    list(APPEND SBSP_DATATOOL_OPTS -Wno-write-strings)
+endif()
+add_executable(mkdata_tool ${SBSP_ROOT}/Utils/MkData/MkData.cpp)
+add_executable(tga2gfx_tool ${SBSP_ROOT}/Utils/Tga2Gfx/Tga2Gfx.cpp)
+set_target_properties(mkdata_tool PROPERTIES OUTPUT_NAME MkData)
+set_target_properties(tga2gfx_tool PROPERTIES OUTPUT_NAME Tga2Gfx)
+foreach(_tool mkdata_tool tga2gfx_tool)
+    target_compile_definitions(${_tool} PRIVATE _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_DEPRECATE)
+    target_compile_options(${_tool} PRIVATE ${SBSP_DATATOOL_OPTS})
+    sbsp_plain_exe_link(${_tool})
+endforeach()
 if(Python3_Interpreter_FOUND)
     add_test(NAME lznp_exe_matches_source
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/lznp_exe_check.py
@@ -474,6 +495,18 @@ if(Python3_Interpreter_FOUND)
                      ${SBSP_ROOT}/port/tests/str_frame1.bin
              WORKING_DIRECTORY ${SBSP_ROOT})
     set_tests_properties(lznp_exe_matches_source PROPERTIES LABELS unit)
+    # The committed port/tools/x64/MkData.exe and Tga2Gfx.exe (LFS, issue #48:
+    # build-data runs them in place of the 1999 tools/ exes) must be what the
+    # Utils/ sources build.  This tree's copies, built by whichever toolchain,
+    # and the committed x64 ones convert the same inputs to the same bytes
+    # (tests/datatools_exe_check.py), so a 32/64-bit difference in the output
+    # shows up here too.
+    add_test(NAME datatools_exe_matches_source
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/datatools_exe_check.py
+                     $<TARGET_FILE:mkdata_tool> ${SBSP_ROOT}/port/tools/x64/MkData.exe
+                     $<TARGET_FILE:tga2gfx_tool> ${SBSP_ROOT}/port/tools/x64/Tga2Gfx.exe
+             WORKING_DIRECTORY ${SBSP_ROOT})
+    set_tests_properties(datatools_exe_matches_source PROPERTIES LABELS unit)
     # port/tools/psx_identity.py's rules (what `lines` passes as the same PS1
     # tokens, the makefile.gaz pattern `build` keys on) on fixed cases, the
     # PR #91 review's counterexamples included (tests/psx_identity_test.py).

@@ -2858,6 +2858,59 @@ The rest touches no game source:
     and ram compared.  Before and after in level 4-4 at vblank 3520:
     `docs/assets/issues/92-mid-tile-bottom-row.png`.
 
+## x64 data tools (issue #48)
+
+The data build's converters are being rebuilt from their sources in
+`Utils/` as native x64 exes, one by one, instead of running the 1999 VC6
+binaries in `tools/` under WOW64.  Done so far: **MkData** (BigLump.Bin +
+BigLump.h) and **Tga2Gfx** (the `.gfx` screens, and `LEGAL.GFX` in
+makefile.gaz's `cddata`).
+
+- **Where they live.** `port/build-pc.sh clangcl-x64-final --target
+  mkdata_tool tga2gfx_tool` builds them (every preset builds them, as
+  `MkData.exe`/`Tga2Gfx.exe` in its tree), and the clang-cl x64 copies are
+  committed as LFS objects in `port/tools/x64/`.  `build/globals.mak` puts
+  that directory first on the MSYS2 make's PATH, so `MkData` and `Tga2Gfx`
+  resolve there.  `port/build-data.sh --vintage-tools` (make
+  `SBSP_VINTAGE_TOOLS=1`) leaves it off, for an A/B against the old exes.
+  `port/tools/lznp.exe` stays on the PATH either way.  A missing exe, or an
+  LFS pointer, stops build-data instead of falling back.  Make doesn't
+  rebuild outputs that are already up to date, so an A/B starts from an
+  empty `out/<T>`.
+- **`datatools_exe_matches_source`** (unit) runs the tree's build and the
+  committed exes on synthetic inputs (odd-sized and one-pixel TGAs, both
+  depth branches, `legal.tga`; a two-script lump with banks of different
+  alignments, a `-` entry, a file listed twice, an empty bank, and `-a:512`)
+  and requires byte-identical output.  Under MinGW i686 it also checks that
+  the output doesn't depend on the ABI.  After a source change, rebuild the
+  x64 copies and commit them again.
+- **What the sources needed:**
+  - Both: `<fstream.h>` is gone (neither used it).
+  - Tga2Gfx: `Usage` takes a `const char *`.
+  - MkData: `static int Count` (it was an implicit int); a cast for the size_t `printf`; a
+  `static_assert` that `sFAT` is 8 bytes (`long` is 4 bytes on Win64 too).
+  The 0xA3 byte in its illegal-character list is kept as one byte:
+  `-Wno-invalid-source-encoding`, and the file is edited as bytes.
+- **The 16 in every bank size.**  MkData adds `FATSize*sizeof(FAT)` to a
+  bank's size, and `FAT` is a `std::vector<sFAT>`: the size of the vector
+  object, which is 16 under VC6, not the size of an entry.  The 1999 BigLump's
+  SYSTEM_CACHE entry is 3920 = 245 files × 16.  Today's vector is 24 bytes on x64 and 12 on
+  i686, so the source names the constant (`VC6_SIZEOF_VECTOR`).
+- **Two old bugs fixed:**
+  - `sFile` was not initialised for a bank, and `ResetFAT` wrote that
+    `Size` into the bank's own FAT. In the 1999 tool's output it's a
+    stable `2`; it's zeroed now.
+  - `AlignData` padded from the `AlignSize`-byte zero buffer even when a
+    bank's alignment was larger, so it read past the end of the buffer
+    (heap bytes in the output). It now pads in chunks. The game's
+    `DataCache.Scr` (alignment 2048, one bank aligned to 4) never takes
+    that path.
+- **Oracle.**  On the same inputs, the x64 MkData writes a byte-identical
+  BigLump.h and a BIGLUMP.BIN with one differing byte: offset 2052, the
+  SYSTEM_CACHE bank's own size, 2 → 0.  The 1999 tool writes the same
+  bytes run after run.  Tga2Gfx is byte-identical on all 46 TGAs in the
+  repo.
+
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 
 - String-literal → `char*` conversions (pervasive; `-Wno-write-strings`).
