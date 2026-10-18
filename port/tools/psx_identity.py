@@ -15,7 +15,7 @@ this is the tooling that goes with it.
       count, and the two same-line patterns of psx_byte_identity.md are
       expanded before comparing: PC_PS1(pc, ps1) as its PS1 argument, and
       a macro the file newly defines (one shared copy), or redefines and
-      #undefs, at each use.  A
+      #undefs, at each use, when all its uses are code it reads.  A
       #line directive the PS1 compiles is reported too: none is needed any
       more.  Default files: every file under source/ and tools/Data/include
       the working tree changes against the base, untracked ones included.
@@ -81,17 +81,25 @@ PS1_MACROS = {
 # if all three carry the working plumbing - these patterns, matched with the
 # file's comments stripped, so a comment naming the define is not enough.
 # Against an older base, DEBUG is compared strictly.  The makefile.gaz test
-# is any ifeq on one line that compares the variable's origin with "command
-# line", in any of make's spellings: (a,b) or quoted, either order, any
-# spacing, $(...) or ${...}.  A missed spelling would make a
-# line shift a false DIFFERENT, so it errs wide; the NOLINE_MARKER check of
-# every build log proves the define took.
+# is the ifeq that compares the variable's origin with "command line", in
+# any of make's spellings: ifeq or else ifeq, (a,b) or "a" "b" / 'a' 'b',
+# either order, any spacing within the line, $(...) or ${...}.  Only the
+# comparison itself counts, so "command line" in a comment after a
+# different test doesn't.  A missed spelling would make a line shift a false
+# DIFFERENT; a wrong match exits 2 ("did not take") when the build log lacks
+# NOLINE_MARKER.
+_SP = r"[ \t]"
+_ORIGIN = r"\$[({]origin%s+SBSP_IDENTITY_NOLINE%s*[)}]" % (_SP, _SP)
+_CMDLINE = r"command%s+line" % _SP
+NOLINE_IFEQ = (r"^{sp}*(?:else{sp}+)?ifeq{sp}*(?:"
+               r"\({sp}*(?:{o}{sp}*,{sp}*{c}|{c}{sp}*,{sp}*{o}){sp}*\)"
+               r"|([\"'])(?:{o}\1{sp}+([\"']){c}\2|{c}\1{sp}+([\"']){o}\3))"
+               ).format(sp=_SP, o=_ORIGIN, c=_CMDLINE)
 NOLINE_DEFINE = "SBSP_IDENTITY_NOLINE"
 NOLINE_PLUMBING = {
     "source/system/dbg.h": [r"#\s*ifdef\s+SBSP_IDENTITY_NOLINE\b",
                             r"#\s*define\s+PORT_LINE\s+0\b"],
-    "makefile.gaz": [r"^[ \t]*ifeq\b(?=[^\n]*\$[({]\s*origin\s+SBSP_IDENTITY_NOLINE\s*[)}])"
-                     r"(?=[^\n]*\bcommand\s+line\b)",
+    "makefile.gaz": [NOLINE_IFEQ,
                      r"-DSBSP_IDENTITY_NOLINE\b"],
     "port/build-psx.sh": [r"--identity-noline\)",
                           r"SBSP_IDENTITY_NOLINE=1"],
@@ -254,10 +262,13 @@ def ps1_view(text):
 # and its uses between them are expanded; a use outside them stays the bare
 # name, as it does for the compiler.  A macro the file defines differently
 # from the base (a parameter added, say) is expanded the same way on both
-# sides, each with its own definition, if the file #undefs it in both: one
-# that outlives the file is used where this compare can't see, so its
-# changed #define stays a difference.  Every other macro is compared as
-# written.
+# sides, each with its own definition, if the file #undefs it in both.
+# Either kind is expanded only when every use of it is one this compare
+# reads as code: none in another macro's body or an #if, no #include
+# between its #define and #undef (an X-macro's uses are in the included
+# file), and every #undef unconditional and after the #define.  Otherwise
+# its #define line stays in the stream and a changed one is a DIFF.  Every
+# other macro is compared as written.
 
 SHARED_MACROS = {"PC_PS1": (["pc", "ps1"], ["ps1"])}
 SCOPE = "\0"                            # a new macro's #define or #undef, in the token stream
@@ -274,6 +285,7 @@ COMMENT_OR_LITERAL = re.compile(
     r"""//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'""", re.S)
 DEFINE = re.compile(r"#\s*define\s+([A-Za-z_]\w*)(\(([^)]*)\))?\s*(.*)$", re.S)
 UNDEF = re.compile(r"#\s*undef\s+([A-Za-z_]\w*)")
+INCLUDE = re.compile(r"#\s*include\b")
 COND_OPEN = re.compile(r"#\s*if(n?def)?\b")
 COND_CLOSE = re.compile(r"#\s*endif\b")
 
@@ -281,11 +293,15 @@ COND_CLOSE = re.compile(r"#\s*endif\b")
 def parse_view(rows):
     """([(kind, text)] logical lines with comments gone, {name: (params or
     None, body tokens)} for each macro defined once and unconditionally,
-    {names the file #undefs})."""
+    {those whose every use is a code token}, {those also #undef'd})."""
     text = COMMENT_OR_LITERAL.sub(
         lambda m: " " if m.group(0)[0] == "/" else m.group(0), "\n".join(t for _, t in rows))
     text = text.replace("\\\n", "")         # continued lines, as the preprocessor splices them
-    items, defines, seen, undefs = [], {}, {}, set()
+    items, defines, seen = [], {}, {}
+    where = {}                              # name: index of its #define
+    undefs = {}                             # name: [(index, depth)] of each #undef
+    refs = set()                            # names any other directive mentions
+    includes = []                           # index of each #include
     depth = 0                               # open conditions ps1_view could not evaluate
     for line in text.split("\n"):
         s = line.strip()
@@ -294,23 +310,43 @@ def parse_view(rows):
         if not s.startswith("#"):
             items.append(("code", s))
             continue
+        i = len(items)
         items.append(("dir", s))
         if COND_OPEN.match(s):
             depth += 1
         elif COND_CLOSE.match(s):
             depth = max(depth - 1, 0)
+        if INCLUDE.match(s):
+            includes.append(i)
         m = DEFINE.match(s)
+        u = UNDEF.match(s)
         if m:
             name = m.group(1)
             seen[name] = seen.get(name, 0) + 1
             if depth == 0:
                 params = [p.strip() for p in m.group(3).split(",")] if m.group(2) is not None else None
                 defines[name] = ([] if params == [""] else params, TOKEN.findall(m.group(4)))
-        m = UNDEF.match(s)
-        if m:
-            undefs.add(m.group(1))
+                where[name] = i
+            refs.update(t for t in TOKEN.findall(m.group(4)) if t != name)
+        elif u:
+            undefs.setdefault(u.group(1), []).append((i, depth))
+        else:
+            refs.update(TOKEN.findall(s[1:]))  # #if, #elif, #include, ...: every name in it
     # defined twice, or only under a condition: not known to apply everywhere
-    return items, {n: d for n, d in defines.items() if seen[n] == 1}, undefs
+    defines = {n: d for n, d in defines.items() if seen[n] == 1}
+
+    def plain(n):
+        """Every use of n is a code token, between its #define and its
+        #undef if it has one: what expand_in_scope sees is all there is."""
+        if n in refs:
+            return False                    # in another macro's body, or an #if
+        ends = undefs.get(n, [])
+        if any(d or i < where[n] for i, d in ends):
+            return False                    # a conditional #undef, or one before the #define
+        end = ends[0][0] if ends else len(items)
+        return not any(where[n] < i < end for i in includes)   # an X-macro's uses are elsewhere
+    clean = {n for n in defines if plain(n)}
+    return items, defines, clean, {n for n in clean if n in undefs}
 
 
 def view_tokens(items, fresh):
@@ -407,14 +443,15 @@ def expand_in_scope(tokens, shared, fresh):
 def ps1_tokens(old, new):
     """The base's and the working tree's token streams, macros expanded as
     above.  Raises Unknown when a macro cannot be expanded."""
-    old_items, old_defs, old_undefs = parse_view(old)
-    new_items, new_defs, new_undefs = parse_view(new)
-    # Redefined only if the file #undefs it on both sides: a macro that
-    # outlives the file reaches code this compare never sees.
-    local = old_undefs & new_undefs
+    old_items, old_defs, _, old_local = parse_view(old)
+    new_items, new_defs, new_clean, new_local = parse_view(new)
+    # Expanded only where every use is a code token this compare reads
+    # (parse_view's plain()).  A redefined macro must also be #undef'd on
+    # both sides: one that outlives the file reaches code never read here.
     redefined = {n: d for n, d in old_defs.items()
-                 if n in local and n in new_defs and new_defs[n] != d}
-    fresh = {n: d for n, d in new_defs.items() if n not in old_defs or n in redefined}
+                 if n in old_local and n in new_local and new_defs[n] != d}
+    fresh = {n: d for n, d in new_defs.items()
+             if n in redefined or (n not in old_defs and n in new_clean)}
     return (expand_in_scope(view_tokens(old_items, redefined), SHARED_MACROS, redefined),
             expand_in_scope(view_tokens(new_items, fresh), SHARED_MACROS, fresh))
 

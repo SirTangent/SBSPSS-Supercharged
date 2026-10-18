@@ -2777,21 +2777,30 @@ was left open for.  One game-source change:
 The rest touches no game source:
 - **`psx_identity.py`.**  `lines` also expands a macro the file defines
   differently from the base, on both sides, when the file `#undef`s it in
-  both; one that outlives the file is still compared as written, since
-  its uses elsewhere aren't read.  `lines` has one "ok" path: the raw text
-  compare stays first, since it also passes a file whose macros the token
-  compare couldn't expand.  `knows_noline`'s `makefile.gaz` pattern takes
-  any spelling of the `ifeq` (parentheses or quotes, either order, any
-  spacing), so a reformatted line can't quietly drop DEBUG back to the
-  strict compare.
+  both.  A new or redefined macro is expanded only when every use of it is
+  code `lines` reads (no other `#define` body, `#if` or `#include` names
+  it, no `#include` inside its scope, every `#undef` unconditional and
+  after the `#define`); otherwise its `#define` is compared as written.
+  `lines` has one "ok" path: the raw text compare stays first, since it
+  also passes a file whose macros the token compare couldn't expand.
+  `knows_noline`'s `makefile.gaz` pattern is the comparison's own grammar
+  (`ifeq` or `else ifeq`, parentheses or quotes, either order, spaces and
+  tabs only), so a reformatted line can't quietly drop DEBUG back to the
+  strict compare, and "command line" in a comment can't pass for it.
+  `port/tests/psx_identity_test.py` (ctest `psx_identity_rules`, `unit`)
+  holds these rules to 41 fixed cases, the PR #91 review's
+  counterexamples among them.
 - **`globals.mak` (`LOG_NAME`).**  `getuser.mak` runs `$(LOG_NAME)` for
   the login name when no `USER_NAME` is given, to read
   `users/<name>/makefile`.  Under MSYS2's make, `/usr/bin` comes first on
   `PATH` and its `uname` printed `MSYS_NT-10.0-26200`.  The MSYS2 block
-  now runs `tools/uname.exe` (the 1999 one, `GetUserName`; it still runs)
-  by path.  Both scripts pass `USER_NAME=CDBUILD`, so only a bare `make`
-  sees it; without a `users/<login>/makefile` that still fails, as it
-  always did, but naming the login.
+  now takes the name from the environment: `USERNAME` (Windows sets it,
+  but a shell started without the Windows environment can lack it), then
+  `USER` (MSYS2's login shell sets it), and only with neither runs
+  `tools/uname.exe` (the 1999 one, `GetUserName`) by path.  Both scripts
+  pass `USER_NAME=CDBUILD`, so only a bare `make` sees it; without a
+  `users/<login>/makefile` that still fails, as it always did, but naming
+  the login.
 - **`build-psx.sh` (the lock).**  It took `/tmp/sbsp-psx.lock` twice, once
   to test it and once around make, so the "waiting" line could print with
   no wait to follow or be missing when one did.  It now takes the lock
@@ -2802,8 +2811,10 @@ The rest touches no game source:
 - **CI (#42).**  `build.yml` gains `data-eur` and `pc-eur`
   (`eur-debug`, `eur-final`): the `data` and `pc-build-test` steps,
   reused through YAML anchors, with `TERRITORY: EUR`.  `pc-eur` needs only
-  `data-eur`, and `data-eur` needs `data` only so it restores the LFS
-  cache `data` saved: an EUR failure can't hold up the USA jobs.
+  `data-eur`.  A new `lfs` job fetches the LFS objects into the cache, and
+  both data jobs need only it and run side by side on a warm cache: the
+  133MB track is fetched once, and neither territory can hold up the
+  other.
 - **`makefile.gfx` (the sprite list).**  The #42 check catches a parkgrab
   command line cut before `-o`, but a cut inside the file list would drop
   sprites and still write `sprites.h`.  parkgrab already takes a response
@@ -2811,8 +2822,11 @@ The rest touches no game source:
   as that file's whitespace-separated words, switches included, and it
   expands `*.bmp` globs itself with `_findfirst`.  So MSYS2's make writes
   the list to `out/<T>/data/sprites/sprites.rsp` with `$(file)` and passes
-  `@` that, and no command line carries the list.  `tools/make.exe` (3.79,
-  no `$(file)`) keeps the command line.  The five globs in the list
+  `@` that, and no command line carries the list.  `$(file)` writes while
+  make expands the recipe, before any of it runs, so the same expansion
+  makes the directory (`$(shell mkdir -p)`): the target named alone, a
+  `-j` run or `make -n` can get there before `gdirs`.  `tools/make.exe`
+  (3.79, no `$(file)`) keeps the command line.  The five globs in the list
   (`graphics/Characters/Jellyfish1/.../Jellyfish1_*.bmp` and four more)
   already reached parkgrab unexpanded: the directories on disk are
   `Graphics/...` and `JellyFish1_...`, and MSYS2's sh matches case-sensitively,

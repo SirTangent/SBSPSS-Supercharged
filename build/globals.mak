@@ -160,9 +160,13 @@ export Path =		$(TOOL_DIR);$(CYG_BIN_DIR);$(PSYQ_BIN_DIR);$(PERL_BIN_DIR)
 #	LOG_NAME is the one tool whose name means something else in MSYS2:
 #	getuser.mak runs it for the login name when no USER_NAME is given, and
 #	/usr/bin's uname, first on PATH, prints the system name (MSYS_NT-...).
-#	So it is tools/uname.exe by path, which still runs (issue #90).
+#	So the name comes from the environment (issue #90): USERNAME, which
+#	Windows sets but a shell started without the Windows environment can
+#	lack, then USER, which MSYS2's login shell sets.  Only with neither
+#	does the shell run tools/uname.exe (GetUserName) by path; the $$( is
+#	the shell's command substitution, kept as text by the := here.
 ifneq ($(filter %-cygwin %-msys,$(MAKE_HOST)),)
-LOG_NAME :=				"$(CURDIR)/$(TOOL_DIR)/uname"
+LOG_NAME :=				echo $(or $(USERNAME),$(USER),$$("$(CURDIR)/$(TOOL_DIR)/uname"))
 ECHO :=					echo
 RMDIR :=				rmdir
 MKDIR :=				mkdir

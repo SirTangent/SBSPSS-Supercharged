@@ -278,9 +278,22 @@ PS1 preprocessor would:
   conditions, is expanded the same way on both sides, each with its own
   definition, but only if the file `#undef`s it in both revisions.  #89
   gave `PROMPT_ICONS` a `Button` parameter: every use expands to the same
-  statements, so `lines` passes it.  A macro the file doesn't `#undef`
-  reaches files this check doesn't read, so its changed `#define` stays a
-  difference.
+  statements, so `lines` passes it.
+
+Either kind is expanded only when every use of it is code `lines` reads:
+- no other `#define` uses it in its body, and no `#if`, `#elif` or
+  `#include` line names it;
+- no `#include` sits between its `#define` and its `#undef` (an X-macro's
+  uses are in the included file);
+- every `#undef` of it is outside any condition the tool can't evaluate,
+  and comes after the `#define`.
+
+Otherwise the `#define` line stays in the comparison as written, so a
+changed macro is a `DIFF`.  A redefined macro that the file doesn't
+`#undef` reaches files this check doesn't read, so it isn't expanded
+either.  `port/tests/psx_identity_test.py` (ctest `psx_identity_rules`,
+label `unit`) runs these rules on fixed cases, the PR #91 review's
+counterexamples among them.
 
 Every other macro is compared as written, not expanded.  It also reports,
 as `LINE`, every `#line` directive the PS1 compiles in those files.  On
