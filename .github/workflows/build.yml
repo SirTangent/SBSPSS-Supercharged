@@ -1,12 +1,24 @@
-name: Build & test
+name: Build & test (release)
 
-# Manual runs only, by the maintainer's decision (issue #64): nothing here
-# fires on a push or a pull request.  Start it from the Actions tab (Run
-# workflow, pick the branch) or `gh workflow run build.yml --ref <branch>`.
-# A run costs LFS bandwidth (the 133MB Track1.Ixa on a cold cache, see the
-# lfs job) and runner time, and pull requests are checked locally with the
-# commands in README.md instead.  Running on every PR again means adding
-# pull_request / push triggers back here - a deliberate change, not a fix.
+# Every job the port has, in two profiles:
+#
+#   release  the full set, started by hand before a release: the Actions
+#            tab (Run workflow, pick the branch) or `gh workflow run
+#            build.yml --ref <branch>`.  Eleven jobs: USA and EUR data, the
+#            MinGW debug/final and eur-debug/eur-final legs, the three
+#            clang-cl legs, the PlayStation link.
+#   pr       what pr.yml calls on every pull request into SBSP-Win11: five
+#            jobs - lfs, USA data, MinGW debug (asserts on), clang-cl x64
+#            FINAL (the sbsp64.exe port/package.py --x64 ships: 64-bit,
+#            asserts out, the other toolchain) and the PlayStation link.
+#            EUR, MinGW final and the clang-cl debug legs wait for a
+#            release run.
+#
+# One file for both so the two cannot drift apart (the YAML anchors below
+# only reach within a file).  Pushes trigger nothing.  A run costs LFS
+# bandwidth (the 133MB Track1.Ixa on a cold cache, see the lfs job) and
+# runner time.  A pull request's run can restore its base branch's cache,
+# so a release run on SBSP-Win11 spares each new pull request that fetch.
 #
 # EUR (issue #42): its own data job and PC legs, data-eur and pc-eur, which
 # reuse the USA jobs' steps through YAML anchors (&data-steps, &pc-steps)
@@ -20,12 +32,25 @@ name: Build & test
 # uses MSYS2's make.
 on:
   workflow_dispatch:
+    inputs:
+      profile:
+        description: Which jobs to run
+        type: choice
+        options: [release, pr]
+        default: release
+  workflow_call:
+    inputs:
+      profile:
+        type: string
+        default: release
 
 permissions:
   contents: read
 
+# Called from pr.yml, github.workflow here is pr.yml's name, so sharing its
+# group would cancel this run; the event name keeps the two apart.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: build-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -111,6 +136,7 @@ jobs:
   # workflow's, so the build line and the artifact name follow it.  It runs
   # beside data, so neither territory's data build can hold up the other's.
   data-eur:
+    if: inputs.profile != 'pr'
     needs: lfs
     runs-on: windows-latest
     timeout-minutes: 20
@@ -130,6 +156,7 @@ jobs:
   # sbsp.exe, and __VERSION_FINAL__ compiles the asserts out, so a variable
   # used only inside an ASSERT breaks FINAL alone.  One USA data build
   # serves both legs (the data is per territory, not per variant, #35).
+  # The pr profile runs debug only; clang-cl's x64 FINAL leg covers FINAL.
   # pc-eur below runs these steps for EUR.
   pc-build-test:
     name: pc-build-test (${{ matrix.preset }})
@@ -139,7 +166,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        preset: [debug, final]
+        preset: ${{ fromJSON(inputs.profile == 'pr' && '["debug"]' || '["debug", "final"]') }}
     defaults: *msys2-defaults
     env:
       SDL_VIDEODRIVER: dummy
@@ -221,6 +248,7 @@ jobs:
   # 50Hz) game.
   pc-eur:
     name: pc-eur (${{ matrix.preset }})
+    if: inputs.profile != 'pr'
     needs: data-eur
     runs-on: windows-latest
     timeout-minutes: 40
@@ -253,7 +281,9 @@ jobs:
   # two copies, so a change to the steps cannot land in one and miss the
   # other.  The x64 FINAL leg is the sbsp64.exe `port/package.py --x64`
   # ships (issue #64); `suffix` keeps the two older legs' check names as
-  # they were.
+  # they were.  The pr profile runs that x64 FINAL leg alone.  The legs are
+  # picked whole by profile: an `exclude` would not do, because a matrix
+  # adds back any `include` entry that matches no remaining leg.
   clangcl:
     name: clangcl (${{ matrix.triple }}${{ matrix.suffix }})
     needs: data
@@ -262,16 +292,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - preset: clangcl-debug
-            triple: i686-pc-windows-msvc
-            suffix: ''
-          - preset: clangcl-x64-debug
-            triple: x86_64-pc-windows-msvc
-            suffix: ''
-          - preset: clangcl-x64-final
-            triple: x86_64-pc-windows-msvc
-            suffix: ', final'
+        include: >-
+          ${{ fromJSON(inputs.profile == 'pr' && '[
+            {"preset": "clangcl-x64-final", "triple": "x86_64-pc-windows-msvc", "suffix": ", final"}
+          ]' || '[
+            {"preset": "clangcl-debug", "triple": "i686-pc-windows-msvc", "suffix": ""},
+            {"preset": "clangcl-x64-debug", "triple": "x86_64-pc-windows-msvc", "suffix": ""},
+            {"preset": "clangcl-x64-final", "triple": "x86_64-pc-windows-msvc", "suffix": ", final"}
+          ]') }}
     defaults:
       run:
         shell: pwsh

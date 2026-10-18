@@ -157,8 +157,10 @@ endif()
 # there too) so the exes are standalone, plus the PDB when SBSP_CODEVIEW.
 # clang-cl: /MT already carries the CRT; /DEBUG makes lld-link write
 # <exe>.pdb from the /Z7 objects; SDL3 is a DLL in the official VC package
-# (it ships no static lib), so it is copied beside each exe to keep "runs
-# from its build dir" true on both toolchains.
+# (it ships no static lib), so it is copied beside the exes to keep "runs
+# from its build dir" true on both toolchains.  One target copies it, ahead
+# of every exe: a POST_BUILD copy per exe raced when ninja linked two at
+# once, the second failing on the DLL the first held open (PR #94's run).
 #
 # And one application manifest for all of them, psyq/host/sbsp.rc ->
 # sbsp.manifest (issue #62): activeCodePage UTF-8, so narrow paths carry any
@@ -173,10 +175,12 @@ function(sbsp_exe_link target)
     if(SBSP_MSVC)
         target_link_options(${target} PRIVATE /DEBUG /MANIFEST:NO)
         if(TARGET SDL3::SDL3-shared)
-            add_custom_command(TARGET ${target} POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        $<TARGET_RUNTIME_DLLS:${target}> $<TARGET_FILE_DIR:${target}>
-                COMMAND_EXPAND_LISTS)
+            if(NOT TARGET sbsp_runtime_dlls)
+                add_custom_target(sbsp_runtime_dlls
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                            $<TARGET_FILE:SDL3::SDL3-shared> ${CMAKE_CURRENT_BINARY_DIR})
+            endif()
+            add_dependencies(${target} sbsp_runtime_dlls)
         endif()
     else()
         target_link_options(${target} PRIVATE -static)

@@ -202,11 +202,23 @@ MinGW `eur-*` builds they need the EUR data.
 
 ### Continuous integration
 
-The GitHub Actions workflow (`.github/workflows/build.yml`) runs only when
-someone starts it by hand: the *Actions* tab, *Build & test*, *Run
-workflow*, or `gh workflow run build.yml --ref <branch>`. It never runs by
-itself on a push or a pull request, so check a pull request locally with the
-same builds and tests before opening it:
+Two GitHub Actions workflows share one set of jobs
+(`.github/workflows/build.yml`):
+
+- **PR check** (`pr.yml`) runs on every pull request into `SBSP-Win11`
+  that changes more than documentation (`*.md`, `Dox/`, `port/docs/`). It
+  builds the USA data, then builds and tests the MinGW `debug` tree and the
+  clang-cl `clangcl-x64-final` tree (the `sbsp64.exe` that `port/package.py
+  --x64` ships), and links the PlayStation executable.
+- **Build & test (release)** (`build.yml`) runs everything, listed below.
+  Nobody's push or pull request starts it: run it before a release from the
+  *Actions* tab (*Build & test (release)*, *Run workflow*) or with
+  `gh workflow run build.yml --ref SBSP-Win11`. A release run on
+  `SBSP-Win11` also leaves the LFS cache that pull requests restore, so
+  they need not each fetch the 133 MB `Track1.Ixa`.
+
+The same builds and tests run locally, so check a pull request with them
+before opening it:
 
 ```bat
 port\build-pc.cmd test usa
@@ -219,7 +231,7 @@ and, if the change touches the game sources, the PlayStation link:
 `port\build-psx.cmd`. The PlayStation executable must also stay
 byte-identical: `python port\tools\psx_identity.py lines` checks that in
 seconds, and `python port\tools\psx_identity.py build` proves it with clean
-builds (see `port/docs/psx_byte_identity.md`). A workflow run builds the USA data, checks the key-cap
+builds (see `port/docs/psx_byte_identity.md`). A release run builds the USA data, checks the key-cap
 bitmaps against their masters, builds and tests the MinGW `debug` and `final`
 trees and the clang-cl `clangcl-debug`, `clangcl-x64-debug` and
 `clangcl-x64-final` trees, and links the PlayStation executable. It also
