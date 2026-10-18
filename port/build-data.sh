@@ -2,16 +2,19 @@
 # Build the SBSPSS game data (BigLump.Bin + generated headers) on modern Windows.
 #
 # Runs the original makefile.gfx with the MSYS2 runtime (make/sh/coreutils/perl)
-# driving the converter EXEs: the ones rebuilt from Utils/ as x64 exes in
-# port/tools/x64 (issue #48: MkData, Tga2Gfx so far), the repo's original
-# Win32 ones for the rest.  --vintage-tools runs the originals for every
-# converter, for an A/B of the outputs.  build/globals.mak gives
-# MSYS2's make the MSYS2 utilities and PATH in place of the 1999 cygwin ones,
-# which crash on Windows 10/11 (issue #16), so the make line below is the
-# same one a bare make from an MSYS2 shell would take.  MSYS2's bash only, as
-# for build-psx.sh (issue #51): Git Bash finds a native Windows make, whose
-# `sh -c` cuts the ~9K sprite-sheet command at ~8K, so parkgrab writes
-# nothing (issue #42).  make is run from MSYS2's /usr/bin by absolute path.
+# driving the converter EXEs: the ones rebuilt from source as x64 exes in
+# port/tools/x64 (issue #48: MkData, Tga2Gfx, scripter, lznp so far), the
+# repo's original Win32 ones for the rest.  --vintage-tools runs the
+# originals for every converter, for an A/B of the outputs (lznp's original
+# is 16-bit, so that one is the 32-bit port/tools/lznp.exe).
+#
+# build/globals.mak gives MSYS2's make the MSYS2 utilities and PATH in place
+# of the 1999 cygwin ones, which crash on Windows 10/11 (issue #16), so the
+# make line below is the same one a bare make from an MSYS2 shell would
+# take.  MSYS2's bash only, as for build-psx.sh (issue #51): Git Bash finds a
+# native Windows make, whose `sh -c` cuts the ~9K sprite-sheet command at
+# ~8K, so parkgrab writes nothing (issue #42).  make is run from MSYS2's
+# /usr/bin by absolute path.
 #
 # Usage (from an MSYS2 shell, or port\build-data.cmd from cmd, PowerShell or
 # Git Bash):
@@ -77,7 +80,7 @@ echo "Data build: TERRITORY=$TERRITORY (vintage make VERSION=$VERSION) -> out/$T
 if [ "$VINTAGE" = 1 ]; then
     echo "Converters: the 1999 Win32 exes (--vintage-tools)"
 else
-    for tool in MkData Tga2Gfx; do
+    for tool in MkData Tga2Gfx scripter lznp; do
         exe="port/tools/x64/$tool.exe"
         if [ ! -f "$exe" ] || [ "$(stat -c%s "$exe")" -lt 4096 ]; then
             echo "ERROR: $exe is missing or an unmaterialised Git-LFS pointer." >&2
@@ -86,7 +89,7 @@ else
             exit 1
         fi
     done
-    echo "Converters: port/tools/x64 (MkData, Tga2Gfx), the 1999 Win32 exes for the rest"
+    echo "Converters: port/tools/x64 (MkData, Tga2Gfx, scripter, lznp), the 1999 Win32 exes for the rest"
 fi
 
 # Until issue #15 three makefile.gfx recipes redirected to `nul`, which

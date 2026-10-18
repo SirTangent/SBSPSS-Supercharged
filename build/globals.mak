@@ -165,12 +165,12 @@ export Path =		$(TOOL_DIR);$(CYG_BIN_DIR);$(PSYQ_BIN_DIR);$(PERL_BIN_DIR)
 #	lack, then USER, which MSYS2's login shell sets.  Only with neither
 #	does the shell run tools/uname.exe (GetUserName) by path; the $$( is
 #	the shell's command substitution, kept as text by the := here.
-#	The data converters rebuilt from Utils/ as x64 exes (issue #48) sit in
+#	The data converters rebuilt from source as x64 exes (issue #48) sit in
 #	port/tools/x64, ahead of the other tool directories, so they shadow
-#	their 1999 namesakes in tools/ and tools/data/bin.
-#	SBSP_VINTAGE_TOOLS=1 (port/build-data.sh --vintage-tools) leaves that
-#	directory off the PATH for an A/B against the old exes; port/tools
-#	stays, as the 16-bit lznp.exe cannot run at all.
+#	their 1999 namesakes in tools/ and tools/data/bin, and port/tools'
+#	32-bit lznp.exe.  SBSP_VINTAGE_TOOLS=1 (port/build-data.sh
+#	--vintage-tools) leaves that directory off the PATH for an A/B against
+#	the old exes; port/tools stays, as the 16-bit lznp.exe cannot run at all.
 ifneq ($(filter-out 0 1,$(SBSP_VINTAGE_TOOLS)),)
 $(error SBSP_VINTAGE_TOOLS is '$(SBSP_VINTAGE_TOOLS)' - 1 runs the 1999 data converters, 0 or unset the rebuilt port/tools/x64 ones)
 endif

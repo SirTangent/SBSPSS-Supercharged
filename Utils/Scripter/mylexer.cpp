@@ -251,7 +251,7 @@ void mylexer::unexpectedChar()
   ---------------------------------------------------------------------- */
 void mylexer::comment()
 {
-	typedef enum CommentState	{	INCOMMENT,FOUNDASTERISK,OUTOFCOMMENT	};
+	enum CommentState	{	INCOMMENT,FOUNDASTERISK,OUTOFCOMMENT	};
 	int				nextChar;
 	CommentState	commentState=INCOMMENT;
 

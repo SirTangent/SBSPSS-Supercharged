@@ -1,7 +1,7 @@
-"""The committed port/tools/x64/MkData.exe and Tga2Gfx.exe must be what Utils/ builds.
+"""The committed port/tools/x64 converters must be what Utils/ builds.
 
-build-data runs the committed x64 converters (issue #48), but nothing else
-rebuilds them from Utils/MkData and Utils/Tga2Gfx or compares the two: an
+build-data runs the committed x64 MkData, Tga2Gfx and scripter (issue #48),
+but nothing else rebuilds them from Utils/ or compares the two: an
 edit to the sources with a hand-rebuilt exe, or an LFS pointer standing in for
 one, would only show as a changed BigLump.Bin.  This tree's copies - built by
 whichever toolchain configured it, MinGW i686 included - and the committed
@@ -11,6 +11,7 @@ once counted into a bank's size) shows up as a mismatch here too.
 
     datatools_exe_check.py <built MkData> <committed MkData.exe>
                            <built Tga2Gfx> <committed Tga2Gfx.exe>
+                           <built scripter> <committed scripter.exe>
 """
 import os
 import shutil
@@ -56,6 +57,18 @@ SCRIPT_B = (b"sixth.bin\r\n"
 FILES = {"first.bin": 3001, "second.dat": 1, "third.bin": 4096,
          "fourth.bin": 777, "fifth.raw": 20000, "sixth.bin": 2049}
 
+# scripter: an #include and #defines, the one global and the tmp locals,
+# arithmetic, every statement form and two built-in calls.  The game's own
+# scripts include the generated trans.scr, which a test job does not have.
+SCR_DEFS = b"// test defs\r\n#define\tCHAR_X\t3\r\n#define TEXT_A\t\t41\r\n"
+SCR_MAIN = (b"#include\tdefs.scr\r\n#define\tTWELVE\t12\r\n\r\n"
+            b"$tmp0=TWELVE*3+4/2-1;\r\n$lives=$lives+1;\r\n"
+            b"if($tmp0==37)\r\n{\r\n\t_setText(CHAR_X,TEXT_A);\r\n\tprint($tmp0);\r\n}\r\n"
+            b"else\r\n{\r\n\t_setAmmoCount(2,$tmp1);\r\n}\r\n"
+            b"$tmp2=0;\r\nwhile($tmp2<5)\r\n{\r\n\t$tmp2=$tmp2+1;\r\n\tpause;\r\n}\r\n"
+            b"do\r\n{\r\n\tpause;\r\n}\r\nwhile(_getResponse()!=0);\r\n"
+            b"if($tmp9>TWELVE)\r\n\t$tmp9=$tmp9-TWELVE;\r\nstop;\r\n")
+
 
 def run(cmd, cwd, wants):
     r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
@@ -73,13 +86,14 @@ def run(cmd, cwd, wants):
 
 
 def main():
-    if len(sys.argv) != 5:
+    if len(sys.argv) != 7:
         print(__doc__)
         return 2
     # absolute: CreateProcess does not resolve a relative tool path with
     # forward slashes against the working directory
-    mk_built, mk_committed, tg_built, tg_committed = (os.path.abspath(a) for a in sys.argv[1:])
-    for exe in (mk_committed, tg_committed):
+    (mk_built, mk_committed, tg_built, tg_committed,
+     sc_built, sc_committed) = (os.path.abspath(a) for a in sys.argv[1:])
+    for exe in (mk_committed, tg_committed, sc_committed):
         size = os.path.getsize(exe)
         if size < 4096:
             print(f"FAIL: {exe} is {size} bytes - an LFS pointer, not the tool (git lfs pull)")
@@ -122,6 +136,13 @@ def main():
             b = run([mk_committed] + args, tmp, ["LUMP.BIN", "lump.h"])
             check(f"MkData lump ({label})", a[0], b[0])
             check(f"MkData header ({label})", a[1], b[1])
+
+        # scripter <in.scr> <out.dat>
+        open(os.path.join(tmp, "defs.scr"), "wb").write(SCR_DEFS)
+        open(os.path.join(tmp, "t.scr"), "wb").write(SCR_MAIN)
+        (a,) = run([sc_built, "t.scr", "t.dat"], tmp, ["t.dat"])
+        (b,) = run([sc_committed, "t.scr", "t.dat"], tmp, ["t.dat"])
+        check("scripter t.scr", a, b)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("datatools_exe_check: " + ("the committed x64 converters match their sources" if ok else "FAILURES"))

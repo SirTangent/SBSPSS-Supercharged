@@ -2862,28 +2862,51 @@ The rest touches no game source:
 
 The data build's converters are being rebuilt from their sources in
 `Utils/` as native x64 exes, one by one, instead of running the 1999 VC6
-binaries in `tools/` under WOW64.  Done so far: **MkData** (BigLump.Bin +
-BigLump.h) and **Tga2Gfx** (the `.gfx` screens, and `LEGAL.GFX` in
-makefile.gaz's `cddata`).
+binaries in `tools/` under WOW64.  Done so far:
+- **MkData**: BigLump.Bin + BigLump.h.
+- **Tga2Gfx**: the `.gfx` screens, and `LEGAL.GFX` in makefile.gaz's `cddata`.
+- **scripter**: the `.scr` → `.dat` scripts.
+- **lznp**: the M0 rewrite in `port/tools/lznp-src`, now built for x64 too.
+  The 16-bit original can't run, so the 32-bit `port/tools/lznp.exe` stays
+  as the `--vintage-tools` copy.
 
 - **Where they live.** `port/build-pc.sh clangcl-x64-final --target
-  mkdata_tool tga2gfx_tool` builds them (every preset builds them, as
-  `MkData.exe`/`Tga2Gfx.exe` in its tree), and the clang-cl x64 copies are
-  committed as LFS objects in `port/tools/x64/`.  `build/globals.mak` puts
-  that directory first on the MSYS2 make's PATH, so `MkData` and `Tga2Gfx`
-  resolve there.  `port/build-data.sh --vintage-tools` (make
+  mkdata_tool tga2gfx_tool scripter_tool lznp_tool` builds them (every
+  preset builds them, as `MkData.exe`, `Tga2Gfx.exe`, `scripter.exe` and
+  `lznp_tool.exe` in its tree).  The clang-cl x64 copies are committed as
+  LFS objects in `port/tools/x64/` (lznp_tool's as `lznp.exe`).
+  `build/globals.mak` puts that directory first on the MSYS2 make's PATH,
+  so each name resolves there, and so does MkActor's `system("lznp ...")`
+  through `cmd`.  `port/build-data.sh --vintage-tools` (make
   `SBSP_VINTAGE_TOOLS=1`) leaves it off, for an A/B against the old exes.
-  `port/tools/lznp.exe` stays on the PATH either way.  A missing exe, or an
+  `port/tools` stays on the PATH either way.  A missing exe, or an
   LFS pointer, stops build-data instead of falling back.  Make doesn't
   rebuild outputs that are already up to date, so an A/B starts from an
   empty `out/<T>`.
 - **`datatools_exe_matches_source`** (unit) runs the tree's build and the
   committed exes on synthetic inputs (odd-sized and one-pixel TGAs, both
   depth branches, `legal.tga`; a two-script lump with banks of different
-  alignments, a `-` entry, a file listed twice, an empty bank, and `-a:512`)
-  and requires byte-identical output.  Under MinGW i686 it also checks that
-  the output doesn't depend on the ABI.  After a source change, rebuild the
-  x64 copies and commit them again.
+  alignments, a `-` entry, a file listed twice, an empty bank, and `-a:512`;
+  a script with an `#include`, defines, the global and local variables,
+  every statement form and built-in calls - the game's scripts include the
+  generated `trans.scr`, which a test job lacks) and requires byte-identical
+  output.  Under MinGW i686 it also checks that the output doesn't depend
+  on the ABI.  `lznp_x64_exe_matches_source` does the same for
+  `port/tools/x64/lznp.exe` as `lznp_exe_matches_source` does for the
+  32-bit copy.  After a source change, rebuild the x64 copies and commit
+  them again.
+- **scripter's runtime.** `lexer.cpp`/`parser.cpp` are the committed
+  ALex/AYACC output, linked against Parser Generator's C++ runtime: the
+  `yyc*.cpp` files of `Utils/Parser Generator/SOURCE`, built as the `pg_yl`
+  library in place of the prebuilt VC6 `yl.lib`, plus `yyspvars.c` for the
+  `yyparseerr` global that `myparser.cpp` prints to.  That file is built as
+  C++: `= stderr` isn't a constant initializer in C under the UCRT, and the
+  reference to it is a C++ one.  The headers open a `#pragma pack` in one
+  file and close it in another (`-Wno-pragma-pack`).  `mylexer.cpp` lost
+  the `typedef` of a nameless `typedef enum CommentState {...};`, which g++
+  warns about with no flag to silence it.  The committed exe was a Debug
+  build (`YYDEBUG`, `yld.lib`); the rebuild is a release build, and its
+  output is the same.
 - **What the sources needed:**
   - Both: `<fstream.h>` is gone (neither used it).
   - Tga2Gfx: `Usage` takes a `const char *`.
@@ -2909,7 +2932,17 @@ makefile.gaz's `cddata`).
   BigLump.h and a BIGLUMP.BIN with one differing byte: offset 2052, the
   SYSTEM_CACHE bank's own size, 2 → 0.  The 1999 tool writes the same
   bytes run after run.  Tga2Gfx is byte-identical on all 46 TGAs in the
-  repo.
+  repo.  scripter writes identical `.dat` files for every script in the
+  repo, and identical messages and exit codes for the 7 that don't compile
+  (none of them is in `SCRIPTS_LIST`).  The x64 lznp compresses all 306
+  files of a USA data build (21 MB) to the same bytes as the 32-bit one.
+- **Full data builds**, compared with `PERL_HASH_SEED=0 PERL_PERTURB_KEYS=0`
+  (otherwise `lang.pl`'s hash order changes `trans.h`, the translations
+  and every script, on every build).  What's left is the vintage
+  MkLevel/MkActor's 1-2 uninitialised bytes in 32 `.Lvl`/`.SBK` files.
+  They differ between two vintage builds as well (#2), so the lump is
+  checked by running the vintage MkData on the x64 build's `Data/`: only
+  byte 2052 differs.
 
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 
