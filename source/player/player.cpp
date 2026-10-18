@@ -3412,12 +3412,13 @@ int		NewPrompt=m_currentMode;
 /*****************************************************************************/
 /*	The icon(s) beside one prompt row, in Icon[2]: one per button, two for
 	the coral blower's up+down aim line, -1 in an unused slot.  It declares
-	Button and Icon in the block it is used in.  One definition, so
-	promptRender()'s measuring pass (PC) and drawing pass cannot disagree.
-	A macro, not a function: EGCS compiles even an inline function's
-	stores through a pointer, and the PS1 build must compile the drawing
-	pass exactly as it did before #50 (conv_pc.md #65).  */
-#define	PROMPT_ICONS(_cfg,Icon)												\
+	the two names it is given, Button and Icon, in the block it is used in,
+	so neither can shadow a name already in scope unseen.  One definition,
+	so promptRender()'s measuring pass (PC) and drawing pass cannot
+	disagree.  A macro, not a function: EGCS compiles even an inline
+	function's stores through a pointer, and the PS1 build must compile the
+	drawing pass exactly as it did before #50 (conv_pc.md #65, #67).  */
+#define	PROMPT_ICONS(_cfg,Button,Icon)										\
 			int	Button=CPadConfig::getButton(_cfg);							\
 			int	Icon[2]={-1,-1};											\
 			switch(Button)													\
@@ -3457,7 +3458,7 @@ int			RowPitch=PromptYGap;
 			this prompt asks for, so the rows stay evenly spaced.  */
 		for (sPromptData *P=Ptr; (CPadConfig::PAD_CFG)P->m_input!=CPadConfig::PAD_CFG_NONE; P++)
 		{
-			PROMPT_ICONS((CPadConfig::PAD_CFG)P->m_input,Icon)
+			PROMPT_ICONS((CPadConfig::PAD_CFG)P->m_input,Button,Icon)
 			for (int i=0; i<2; i++)
 			{
 				if (Icon[i]!=-1)
@@ -3481,7 +3482,7 @@ int			RowPitch=PromptYGap;
 				actually pressing on PC (github issue #43), so the icons
 				are no longer a fixed width - the gap between them, and
 				the text that follows, come off the frame header now.  */
-			PROMPT_ICONS((CPadConfig::PAD_CFG)Ptr->m_input,Icon)
+			PROMPT_ICONS((CPadConfig::PAD_CFG)Ptr->m_input,Button,Icon)
 			for (int i=0; i<2; i++)
 			{
 				if (Icon[i]!=-1)

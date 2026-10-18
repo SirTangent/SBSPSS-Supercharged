@@ -14,7 +14,8 @@ this is the tooling that goes with it.
       in the same order.  Line numbers, comments and whitespace don't
       count, and the two same-line patterns of psx_byte_identity.md are
       expanded before comparing: PC_PS1(pc, ps1) as its PS1 argument, and
-      a macro the file newly defines (one shared copy) at each use.  A
+      a macro the file newly defines (one shared copy), or redefines and
+      #undefs, at each use.  A
       #line directive the PS1 compiles is reported too: none is needed any
       more.  Default files: every file under source/ and tools/Data/include
       the working tree changes against the base, untracked ones included.
@@ -79,12 +80,18 @@ PS1_MACROS = {
 # -D, and the wrapper that hands it to make.  A revision has the compare only
 # if all three carry the working plumbing - these patterns, matched with the
 # file's comments stripped, so a comment naming the define is not enough.
-# Against an older base, DEBUG is compared strictly.
+# Against an older base, DEBUG is compared strictly.  The makefile.gaz test
+# is any ifeq on one line that compares the variable's origin with "command
+# line", in any of make's spellings: (a,b) or quoted, either order, any
+# spacing, $(...) or ${...}.  A missed spelling would make a
+# line shift a false DIFFERENT, so it errs wide; the NOLINE_MARKER check of
+# every build log proves the define took.
 NOLINE_DEFINE = "SBSP_IDENTITY_NOLINE"
 NOLINE_PLUMBING = {
     "source/system/dbg.h": [r"#\s*ifdef\s+SBSP_IDENTITY_NOLINE\b",
                             r"#\s*define\s+PORT_LINE\s+0\b"],
-    "makefile.gaz": [r"^ifeq \(\$\(origin SBSP_IDENTITY_NOLINE\),command line\)",
+    "makefile.gaz": [r"^[ \t]*ifeq\b(?=[^\n]*\$[({]\s*origin\s+SBSP_IDENTITY_NOLINE\s*[)}])"
+                     r"(?=[^\n]*\bcommand\s+line\b)",
                      r"-DSBSP_IDENTITY_NOLINE\b"],
     "port/build-psx.sh": [r"--identity-noline\)",
                           r"SBSP_IDENTITY_NOLINE=1"],
@@ -245,7 +252,12 @@ def ps1_view(text):
 # copy of code that used to be written out).  A new macro produces no code
 # where it is defined, only where it is used, so its #define and #undef go
 # and its uses between them are expanded; a use outside them stays the bare
-# name, as it does for the compiler.  Every other macro is compared as written.
+# name, as it does for the compiler.  A macro the file defines differently
+# from the base (a parameter added, say) is expanded the same way on both
+# sides, each with its own definition, if the file #undefs it in both: one
+# that outlives the file is used where this compare can't see, so its
+# changed #define stays a difference.  Every other macro is compared as
+# written.
 
 SHARED_MACROS = {"PC_PS1": (["pc", "ps1"], ["ps1"])}
 SCOPE = "\0"                            # a new macro's #define or #undef, in the token stream
@@ -268,11 +280,12 @@ COND_CLOSE = re.compile(r"#\s*endif\b")
 
 def parse_view(rows):
     """([(kind, text)] logical lines with comments gone, {name: (params or
-    None, body tokens)} for each macro defined once and unconditionally)."""
+    None, body tokens)} for each macro defined once and unconditionally,
+    {names the file #undefs})."""
     text = COMMENT_OR_LITERAL.sub(
         lambda m: " " if m.group(0)[0] == "/" else m.group(0), "\n".join(t for _, t in rows))
     text = text.replace("\\\n", "")         # continued lines, as the preprocessor splices them
-    items, defines, seen = [], {}, {}
+    items, defines, seen, undefs = [], {}, {}, set()
     depth = 0                               # open conditions ps1_view could not evaluate
     for line in text.split("\n"):
         s = line.strip()
@@ -293,8 +306,11 @@ def parse_view(rows):
             if depth == 0:
                 params = [p.strip() for p in m.group(3).split(",")] if m.group(2) is not None else None
                 defines[name] = ([] if params == [""] else params, TOKEN.findall(m.group(4)))
+        m = UNDEF.match(s)
+        if m:
+            undefs.add(m.group(1))
     # defined twice, or only under a condition: not known to apply everywhere
-    return items, {n: d for n, d in defines.items() if seen[n] == 1}
+    return items, {n: d for n, d in defines.items() if seen[n] == 1}, undefs
 
 
 def view_tokens(items, fresh):
@@ -391,10 +407,15 @@ def expand_in_scope(tokens, shared, fresh):
 def ps1_tokens(old, new):
     """The base's and the working tree's token streams, macros expanded as
     above.  Raises Unknown when a macro cannot be expanded."""
-    old_items, old_defs = parse_view(old)
-    new_items, new_defs = parse_view(new)
-    fresh = {n: d for n, d in new_defs.items() if n not in old_defs}
-    return (expand(view_tokens(old_items, {}), dict(SHARED_MACROS)),
+    old_items, old_defs, old_undefs = parse_view(old)
+    new_items, new_defs, new_undefs = parse_view(new)
+    # Redefined only if the file #undefs it on both sides: a macro that
+    # outlives the file reaches code this compare never sees.
+    local = old_undefs & new_undefs
+    redefined = {n: d for n, d in old_defs.items()
+                 if n in local and n in new_defs and new_defs[n] != d}
+    fresh = {n: d for n, d in new_defs.items() if n not in old_defs or n in redefined}
+    return (expand_in_scope(view_tokens(old_items, redefined), SHARED_MACROS, redefined),
             expand_in_scope(view_tokens(new_items, fresh), SHARED_MACROS, fresh))
 
 
@@ -462,18 +483,21 @@ def cmd_lines(args):
             print("LINE  %s:%d - a #line the PS1 compiles; none is needed since #81: %s"
                   % (f, n, t.strip()[:60]))
             bad += 1
-        if [t for _, t in old] == [t for _, t in new]:
+        # The same text is the same tokens.  Checked first, and not only for
+        # speed: a file whose PC-only arms alone changed passes here even
+        # when ps1_tokens could not expand one of its macros.
+        same, note = [t for _, t in old] == [t for _, t in new], ""
+        if not same:
+            try:
+                old_tok, new_tok = ps1_tokens(old, new)
+                same = old_tok == new_tok
+                note = " - same tokens (comments, layout or the macro patterns differ)"
+            except Unknown as e:
+                old_tok = new_tok = None
+                why = str(e)
+        if same:
             if not pinned:
-                print("ok    %s" % f)
-            continue
-        try:
-            old_tok, new_tok = ps1_tokens(old, new)
-        except Unknown as e:
-            old_tok = new_tok = None
-            why = str(e)
-        if old_tok is not None and old_tok == new_tok:
-            if not pinned:
-                print("ok    %s - same tokens (comments, layout or the macro patterns differ)" % f)
+                print("ok    %s%s" % (f, note))
             continue
         bad += 1
         if old_tok is None:
