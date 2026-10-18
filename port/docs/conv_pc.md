@@ -1801,7 +1801,7 @@ desync, #55's human sessions included, although the game itself replays
 exactly.
 - `GPU_RENDER_REVISION` (gpu_core.h) names the renderer's pixel
   revision, and --record-pad writes it as `# render N` after `# build`.
-  It is 2 now (issue #76, below); a recording without the line is
+  It is 3 now (issue #92, entry 68); a recording without the line is
   revision 0.
 - When a recording's revision differs from the exe's, no epoch's crc is
   compared (the reason reads "renderer revision").  rng still is when the
@@ -2832,6 +2832,31 @@ The rest touches no game source:
   `Graphics/...` and `JellyFish1_...`, and MSYS2's sh matches case-sensitively,
   so it passed the patterns through.  The sprite outputs are byte-identical
   with and without the response file.
+
+## Game-source changes (issue #92)
+
+68. **`source/level/layertile.cpp` (mid tile layer rows)** - user-visible
+    on PC: the mid tile layer, the 2D scenery behind the playfield,
+    stopped 1-3 lines short of the bottom of the view.  The USA arm's
+    `SCREEN_TILE_ADJ_H=1` draws `256/12+1` = 22 rows of 12-px tiles,
+    264 lines, from `-ShiftY` (`YPos%12`, 0-11), so at `ShiftY` 9, 10
+    and 11 rows 255, 254-255 and 253-255 showed the `CLayerBack` shade
+    band underneath.  An NTSC TV never showed those lines.  Same class
+    as entry 18.  The original devs fixed it for PAL with a 23rd row
+    (the EUR arm's `SCREEN_TILE_ADJ_H=2`, 276 lines), but taking that
+    arm on PC grows both prim banks by 33 `TSPRT`s, and the banks are
+    `MemAlloc`'d: `RamUsed`, which replay epochs compare, rose by 1,584
+    bytes in every level, so every older recording desynced on `ram`
+    (PR #93's review).  So the banks keep the console size, and a
+    `!defined(PSX_MIPS_ASM) && !defined(__TERRITORY_EUR__)` arm at the
+    end of `render()` draws the 23rd row from the frame's prim pool
+    (`GetPrim`, allocated once at `PrimInit`), only when that row is on
+    screen (`TileY<INGAME_SCREENH`) and in the map.  The frames are
+    pixel-identical to the bigger-bank version; `RamUsed` is the
+    console's.  It moves displayed pixels, so `GPU_RENDER_REVISION`
+    goes to 3: a revision-2 recording replays with crc skipped and rng
+    and ram compared.  Before and after in level 4-4 at vblank 3520:
+    `docs/assets/issues/92-mid-tile-bottom-row.png`.
 
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 
