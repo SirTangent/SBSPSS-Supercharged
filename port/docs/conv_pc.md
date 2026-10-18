@@ -1801,7 +1801,7 @@ desync, #55's human sessions included, although the game itself replays
 exactly.
 - `GPU_RENDER_REVISION` (gpu_core.h) names the renderer's pixel
   revision, and --record-pad writes it as `# render N` after `# build`.
-  It is 2 now (issue #76, below); a recording without the line is
+  It is 3 now (issue #92, entry 68); a recording without the line is
   revision 0.
 - When a recording's revision differs from the exe's, no epoch's crc is
   compared (the reason reads "renderer revision").  rng still is when the
@@ -2848,7 +2848,9 @@ The rest touches no game source:
     is extended on its own line, so the PS1 compiles the same tokens on
     the same lines.  It costs 2 x 33 `TSPRT`s more in the mid layer's
     prim banks, as EUR already does.  `RenderH` still clamps to the
-    map's height.  Before and after in level 4-4 at vblank 3520:
+    map's height.  It moves displayed pixels, so `GPU_RENDER_REVISION`
+    goes to 3 and older recordings skip their display CRCs.  Before and
+    after in level 4-4 at vblank 3520:
     `docs/assets/issues/92-mid-tile-bottom-row.png`.
 
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)

@@ -77,8 +77,11 @@ static inline int GPU_DisplayHeight(void)
 	  0  the implicit revision of recordings without the line
 	  1  issue #60: polygon tpage attributes keep the E1 dither bit; the
 	     MDEC IDCT saturates to signed 8 bits
-	  2  issue #76: flat lines dither like gouraud ones  */
-#define GPU_RENDER_REVISION	2
+	  2  issue #76: flat lines dither like gouraud ones
+	  3  issue #92: the mid tile layer reaches the bottom line - a
+	     game-source change (layertile.cpp), but the same game state
+	     draws a different picture all the same  */
+#define GPU_RENDER_REVISION	3
 
 /* gp0.cpp: execute `count` GP0 words at `words` against g_gpu/g_vram */
 void GPU_ExecWords(const uint32_t *words, int count);
