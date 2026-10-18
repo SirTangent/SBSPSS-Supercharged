@@ -2804,9 +2804,20 @@ The rest touches no game source:
   reused through YAML anchors, with `TERRITORY: EUR`.  `pc-eur` needs only
   `data-eur`, and `data-eur` needs `data` only so it restores the LFS
   cache `data` saved: an EUR failure can't hold up the USA jobs.
-- **Not done here:** #90's parkgrab response file (a sprite list cut inside
-  the file list would still write `sprites.h`).  It belongs with
-  rebuilding parkgrab from source, #48.
+- **`makefile.gfx` (the sprite list).**  The #42 check catches a parkgrab
+  command line cut before `-o`, but a cut inside the file list would drop
+  sprites and still write `sprites.h`.  parkgrab already takes a response
+  file: its command-line reader (`Utils/Libs/GLib/MISC.CPP`) reads `@file`
+  as that file's whitespace-separated words, switches included, and it
+  expands `*.bmp` globs itself with `_findfirst`.  So MSYS2's make writes
+  the list to `out/<T>/data/sprites/sprites.rsp` with `$(file)` and passes
+  `@` that, and no command line carries the list.  `tools/make.exe` (3.79,
+  no `$(file)`) keeps the command line.  The five globs in the list
+  (`graphics/Characters/Jellyfish1/.../Jellyfish1_*.bmp` and four more)
+  already reached parkgrab unexpanded: the directories on disk are
+  `Graphics/...` and `JellyFish1_...`, and MSYS2's sh matches case-sensitively,
+  so it passed the patterns through.  The sprite outputs are byte-identical
+  with and without the response file.
 
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 
