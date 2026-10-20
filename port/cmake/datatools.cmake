@@ -149,3 +149,17 @@ add_executable(mklevel_tool ${_mklevel} ${SBSP_DATATOOL_ABI})
 set_target_properties(mklevel_tool PROPERTIES OUTPUT_NAME MkLevel)
 target_link_libraries(mklevel_tool PRIVATE dt_glib dt_ginlib dt_texgrab dt_maths dt_davelib)
 sbsp_datatool(mkactor_tool mklevel_tool)
+
+# ---------------------------------------------------------------------------
+# parkgrab (the sprite banks: Sprites.Spr/.h, shop, party).  Its own sprset,
+# tpage, VImage... are the forerunners of TexGrab's, with the same class
+# names, so it links GLib and GinLib (its .dsp's glibdev win32lib and
+# ginutils tplib; GinLib's gintex brings Maths) and not dt_texgrab.
+# ---------------------------------------------------------------------------
+set(_parkgrab bmploader cross grect main pak sprset tpage VImage)
+list(TRANSFORM _parkgrab PREPEND ${SBSP_UTILS}/parkgrab/)
+list(TRANSFORM _parkgrab APPEND .cpp)
+add_executable(parkgrab_tool ${_parkgrab} ${CMAKE_CURRENT_SOURCE_DIR}/tools/datatool-src/datatool_crash.cpp)
+set_target_properties(parkgrab_tool PROPERTIES OUTPUT_NAME parkgrab)
+target_link_libraries(parkgrab_tool PRIVATE dt_glib dt_ginlib dt_maths)
+sbsp_datatool(parkgrab_tool)

@@ -18,6 +18,7 @@
 /*	Std Lib
 	------- */
 #include <algorithm>
+#include "vc6_sort.h"	// VC6's order for equal elements (issue #48)
 #include "conio.h"
 
 /*	Glib
@@ -306,9 +307,9 @@ bool VRAM::AllocVRAM(TPRectVec & RectVec,bool nRotateEveryEmpty,bool nBig2Little
 		}
 
 	if (!Big2Little)
-		std::sort(RectVec.begin(),RectVec.end(),Predicate());
+		vc6::sort(RectVec.begin(),RectVec.end(),Predicate());
 	else
-		std::sort(RectVec.begin(),RectVec.end(),Predicate2());
+		vc6::sort(RectVec.begin(),RectVec.end(),Predicate2());
 
 	bool	AllocedEverything=true;
 

@@ -20,6 +20,7 @@
 /*	Std Lib
 	------- */
 #include <algorithm>
+#include "vc6_sort.h"	// VC6's order for equal elements (issue #48)
 #include <conio.h>
 #include <math.h>
 
@@ -480,7 +481,7 @@ int	FrameCount=AllSprFrames.size();
 			}
 		else
 			{
-			printf("Writing All headers (%i).\n",AllSprFrames.size());
+			printf("Writing All headers (%i).\n",(int)AllSprFrames.size());
 			for (f=0;f<AllSprFrames.size();f++)	// Write all headers
 				{
 				AllSprFrames[f].WriteHeader(Out);
@@ -608,7 +609,7 @@ void SprSet::AddFramesAndPalsToVRAM(VRAM & Vr,int TpNumber,int WidthInTpages,int
 
 	CopySprPals=AllSprPals;
 
-	std::sort(CopySprPals.begin(),CopySprPals.end());	/* Sort em according to how many cols */
+	vc6::sort(CopySprPals.begin(),CopySprPals.end());	/* Sort em according to how many cols */
 
 	for (f=0;f<AllSprPals.size();f++)
 		{

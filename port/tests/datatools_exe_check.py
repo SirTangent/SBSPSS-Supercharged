@@ -13,9 +13,11 @@ once counted into a bank's size) shows up as a mismatch here too.
                            <built Tga2Gfx> <committed Tga2Gfx.exe>
                            <built scripter> <committed scripter.exe>
                            [--mkactor <built> <committed>] [--mklevel <built> <committed>]
+                           [--parkgrab <built> <committed>]
 
 MkActor and MkLevel (clang-cl builds only) convert a small actor and the
-smallest level from the repo, run from the repo root.
+smallest level from the repo, and parkgrab (clang-cl only too) packs the
+shop and party sprites as makefile.gfx does, all run from the repo root.
 """
 import os
 import shutil
@@ -107,9 +109,10 @@ def run_dir(cmd, cwd, outdir, env=None):
 
 def main():
     argv = sys.argv[1:]
-    # MkActor and MkLevel build with clang-cl only: optional pairs after the six
+    # MkActor, MkLevel and parkgrab build with clang-cl only: optional pairs
+    # after the six
     pairs = {}
-    for opt in ("--mkactor", "--mklevel"):
+    for opt in ("--mkactor", "--mklevel", "--parkgrab"):
         if opt in argv:
             i = argv.index(opt)
             pairs[opt] = [os.path.abspath(a) for a in argv[i + 1:i + 3]]
@@ -199,6 +202,27 @@ def main():
             b = run_dir([pairs["--mklevel"][1]] + args, root, outdir)
             for f in sorted(set(a) | set(b)):
                 check("MkLevel " + f, a.get(f, b""), b.get(f, b""))
+        # parkgrab: makefile.gfx's shop and party lines (the .spr, the .h
+        # beside it, the -l: picture of VRAM, party's -k: report), then party
+        # with compressed texture pages, and -x: (no VRAM placement)
+        if "--parkgrab" in pairs:
+            outdir = os.path.join(tmp, "sprites")
+            os.mkdir(outdir)
+            shop = [f"graphics/shop/{n}.bmp" for n in
+                    "blower cake cupcake jelly2 partyhat prezzie sarnie teddy smalltoken".split()]
+            party = sorted("graphics/party/" + f for f in os.listdir("graphics/party")
+                           if f.lower().endswith(".bmp"))
+            o = outdir.replace("\\", "/")
+            runs = {"shop": ["-z+"] + shop + ["-b+", "-t:8,1,1", f"-l:{o}/shop.lbm", f"-o:{o}/shop.spr"],
+                    "party": ["-c-", "-z+", "-r+", "-q+"] + party +
+                             ["-b+", "-t:8,4,1", f"-l:{o}/party.lbm", f"-o:{o}/party.spr", f"-k:{o}/rep.txt"],
+                    "party -y+": ["-z+"] + party + ["-b+", "-y+", "-t:8,4,1", f"-o:{o}/party.spr"],
+                    "shop -x:": ["-z+"] + shop + [f"-x:{o}/shop.sprf"]}
+            for label, args in runs.items():
+                a = run_dir([pairs["--parkgrab"][0]] + args, root, outdir)
+                b = run_dir([pairs["--parkgrab"][1]] + args, root, outdir)
+                for f in sorted(set(a) | set(b)):
+                    check(f"parkgrab {label} {f}", a.get(f, b""), b.get(f, b""))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("datatools_exe_check: " + ("the committed x64 converters match their sources" if ok else "FAILURES"))

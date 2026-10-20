@@ -2878,12 +2878,17 @@ binaries in `tools/` under WOW64.  Done so far:
   `SBSP_VINTAGE_TOOLS` too.  MkLevel reads `MkLevel.ini` from beside its
   exe, so it gained `-c:<dir>`: the x64 one reads the same
   `tools/data/bin/MkLevel.ini` as the 1999 one.
+- **parkgrab**: the sprite banks (`Sprites.Spr` + `Sprites.h`, shop,
+  party).  Clang-cl only, like MkActor and MkLevel, and found on the PATH
+  like the first four.  Only **transtext** is still the 1999 exe: the
+  library it was built on never reached this repo, so it needs a rewrite.
 
 - **Where they live.** `port/build-pc.sh clangcl-x64-final --target
   mkdata_tool tga2gfx_tool scripter_tool lznp_tool mkactor_tool
-  mklevel_tool` builds them (every preset builds them - MkActor and MkLevel
-  the clang-cl ones - as `MkData.exe`, `Tga2Gfx.exe`, `scripter.exe`,
-  `lznp_tool.exe`, `MkActor.exe` and `MkLevel.exe` in its tree).  The clang-cl x64 copies are committed as
+  mklevel_tool parkgrab_tool` builds them (every preset builds them -
+  MkActor, MkLevel and parkgrab the clang-cl ones - as `MkData.exe`,
+  `Tga2Gfx.exe`, `scripter.exe`, `lznp_tool.exe`, `MkActor.exe`,
+  `MkLevel.exe` and `parkgrab.exe` in its tree).  The clang-cl x64 copies are committed as
   LFS objects in `port/tools/x64/` (lznp_tool's as `lznp.exe`).
   `build/globals.mak` puts that directory first on the MSYS2 make's PATH,
   so each name resolves there, and so does MkActor's `system("lznp ...")`
@@ -2903,7 +2908,9 @@ binaries in `tools/` under WOW64.  Done so far:
   output.  Under MinGW i686 it also checks that the output doesn't depend
   on the ABI.  On the clang-cl presets it also runs MkActor on a small
   actor (Anenome) and MkLevel on the smallest level (FMA_CONTROLROOM), from
-  the repo, and compares every file they write.
+  the repo, and parkgrab on makefile.gfx's shop and party lines, plus party
+  with compressed texture pages (`-y+`) and shop with `-x:`.  It compares
+  every file they write.
   `lznp_x64_exe_matches_source` does the same for
   `port/tools/x64/lznp.exe` as `lznp_exe_matches_source` does for the
   32-bit copy.  After a source change, rebuild the x64 copies and commit
@@ -2911,7 +2918,8 @@ binaries in `tools/` under WOW64.  Done so far:
 - **MkActor and MkLevel on x64.**
   - **The file structs keep their 32-bit layout.**  `dstructs.h`'s `DPTR`
     fields are the game's 4-byte `FPTR<T>` in an x64 tool build too
-    (`SBSP_DATATOOL` plus `_WIN64`; the tools store file offsets in them, and
+    (the x64 tool libraries define `SBSP_PC64`, as the x64 game does; the
+    tools store file offsets in them, and
     `Port_FptrRangeFail` is the tools' own in
     `port/tools/datatool-src/datatool_abi.cpp`).  MapEdit's `sExpTile`
     keeps its unused `RGB` pointer as a `u32`, because the `.MEX` holds 4
@@ -2969,6 +2977,31 @@ binaries in `tools/` under WOW64.  Done so far:
     stack as exe offsets (`llvm-symbolizer --obj=<exe>
     --relative-address <offset>` turns them into lines), where make
     otherwise says only "Segmentation fault".
+- **parkgrab on x64.**  The .dsp linked an older GLib build (glibdev's
+  `win32lib`) and the Theme Park library (`ginutils\tplib`), neither of
+  which is in the repo.  It builds against today's `Utils/Libs/GLib` and
+  `GinLib` instead (GinLib holds the two "TP Lib" headers parkgrab
+  includes, `ginio.h` and `repread.h`), and not against TexGrab:
+  `sprset`, `tpage`, `VImage` and the rest are parkgrab's own copies of
+  TexGrab's forerunners, with the same class names.  Those copies needed the
+  same fixes as TexGrab's: `vc6::sort` for the palette and rectangle sorts,
+  and the depacker's end address.  Two more:
+  - a `for`-scope variable on the `.gin` path;
+  - `SprPal` starts its texture-page base at 0.  Only `-t:` sets it, so
+    `-x:` (a sprite file with no VRAM placement) wrote whatever the stack
+    held as every `PAL_*` value: 25115 for all nine shop palettes from the
+    1999 exe, other values from a fresh build.
+- **parkgrab's `-e:` differs.**  `-e:<n>` shrinks textures larger than `n`
+  with a float supersampler, then reduces their colours with GLib's
+  `tquant` (Wu's quantiser, also float).  VC6 evaluated those expressions
+  on the x87 at double precision, rounding to float only where its
+  optimiser stored a value; x64 rounds every step.  So the reduced sprites'
+  pixels and colour counts differ, and with them their bit depth and place
+  in VRAM.  Party at `-e:32` reduces 33 of 44 sprites; 43 frame headers
+  differ (texture page, rotation, offset), and the `.h` does not.  A 32-bit
+  build with x87 maths (`/arch:IA32`) comes closer but isn't identical
+  either.  No makefile line uses `-e:`, and nothing else in parkgrab calls
+  `tquant`.
 - **scripter's runtime.** `lexer.cpp`/`parser.cpp` are the committed
   ALex/AYACC output, linked against Parser Generator's C++ runtime: the
   `yyc*.cpp` files of `Utils/Parser Generator/SOURCE`, built as the `pg_yl`
@@ -3014,14 +3047,25 @@ binaries in `tools/` under WOW64.  Done so far:
   `sSpriteAnim.Pad` and the unset fields of blank frames.  For all 27
   levels, MkLevel writes identical `.tex`, `.Lbm`, `.h` and `_INF.h`
   files.  Its `.Lvl`s differ only in the zeroed fields above, every byte
-  checked by struct field against two vintage runs.
+  checked by struct field against two vintage runs.  For makefile.gfx's
+  three parkgrab lines (USA and EUR give them the same inputs), the x64
+  parkgrab writes identical `.spr`s, `.h`s, `-l:` pictures and `-k:`
+  report, with the same console output.  In a 24-case matrix of the other
+  switches (`-y+` compression, `-r-`, `-q-`, `-c+`, `-m+`, `-f:`, `-w+`,
+  `-a+`, `-h+`, `-~:`, `-^+`, `-i:`, no sort, globs and `-s+`, `!`/`@`/`+`
+  names, `.lbm` input), 22 cases match; the other two are `-x:` and `-e:`
+  above.  Every case gives the same result twice.  Six `.gin` scenes, with
+  their textures beside them, give identical output too.  The only
+  difference is a `Load <file>` line, which the old library's
+  `CScene::Load` printed.
 - **Full data builds**, compared with `PERL_HASH_SEED=0 PERL_PERTURB_KEYS=0`
   (otherwise `lang.pl`'s hash order changes `trans.h`, the translations
   and every script, on every build).  What's left is the vintage
   MkLevel/MkActor's 1-2 uninitialised bytes in 32 `.Lvl`/`.SBK` files.
   They differ between two vintage builds as well (#2), so the lump is
   checked by running the vintage MkData on the x64 build's `Data/`: only
-  byte 2052 differs.
+  byte 2052 differs.  With parkgrab rebuilt as well, USA and EUR data
+  builds are byte-identical to the builds before it, all 453 files.
 
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 
