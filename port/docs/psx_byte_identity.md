@@ -47,15 +47,20 @@ check.
    doesn't see it, and FINAL compiles all three without a line number.
    `__LINE__` is the line in the file where the macro is *used*, so new
    lines in a header move only the macros used in that header.
-3. **The data build.**  `tools/perl/pl/lang.pl` writes the strings into
-   `final.dat` in Perl's randomised hash order, and transtext keeps that
-   order in the `STR__*` enum of `out/<T>/include/trans.h` and in every
-   `.dat`, so every data build shuffles the string table.  About 30
-   objects and 250 KB of the cpe then differ for no code reason.  Compare
-   two builds only if they share
-   one `out/<T>/include`, and never across a data build.
-   `psx_identity.py build` hashes `trans.h` before and after its run and
-   voids the comparison if it moved.
+3. **The data build.**  transtext numbers the `STR__*` enum of
+   `out/<T>/include/trans.h` in its input's order. When the order changes,
+   about 30 objects and 250 KB of the cpe differ for no code reason.
+   - **Before #95**, the 1999 `lang.pl` wrote that input, `final.dat`, in
+     Perl's randomised hash order, so every unseeded data build shuffled the
+     string table.
+   - **Since #95**, `port/tools/data/lang.py` writes the strings in the order
+     their ids first appear in `data/translations/text.dat`. `trans.h` is the
+     same on every build and in both territories, and changes only with the
+     text.
+
+   `psx_identity.py build` still hashes `trans.h` before and after its run
+   and voids the comparison if it moved. Rows of the build log compare only
+   when their `trans_h_sha256` matches.
 4. **Adding or removing a file the PS1 builds.**  A new translation unit
    changes the link, so it cannot be identical.  #43's `pad/padicon.cpp` was
    one, and was accepted as a deliberate change.
@@ -121,6 +126,7 @@ are the whole difference from `master`:
 | 53 | `gfx/font.cpp` | `(u8)` font-table indexes (issue #24) |
 | 61 | `shop/shop.cpp` | the cross and triangle glyphs back on `master`'s step (issue #56) |
 | 65 | the nine files that carried `#line` arms | DEBUG only: its line immediates move, once, to the files' true line numbers (issue #81).  FINAL and the line-insensitive DEBUG compare are unchanged |
+| #95 | `port/tools/data/lang.py` (in place of `lang.pl`), through `trans.h` | the `STR__*` ids in `data/translations/text.dat`'s order, so every use of one is renumbered, once.  The old order was Perl's hash order, which no build reproduced reliably, `master`'s included |
 
 A change that alters the PS1 build on purpose adds its row here.  It also
 appends its before and after `Spongey.cpe` hashes to
