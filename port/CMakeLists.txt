@@ -514,6 +514,12 @@ if(Python3_Interpreter_FOUND)
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/psx_identity_test.py
              WORKING_DIRECTORY ${SBSP_ROOT})
     set_tests_properties(psx_identity_rules PROPERTIES LABELS unit)
+    # The data build's text steps, port/tools/data/lang.py and trans_scr.py
+    # (the 1999 lang.pl / text_extract.pl rules), on fixed cases (issue #95).
+    add_test(NAME data_text_rules
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/lang_test.py
+             WORKING_DIRECTORY ${SBSP_ROOT})
+    set_tests_properties(data_text_rules PROPERTIES LABELS unit)
 endif()
 
 # M8 playthrough harness (tests/run_tier.py): the exit-code self-test, the
