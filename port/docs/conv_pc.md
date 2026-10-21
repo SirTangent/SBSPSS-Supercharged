@@ -2894,14 +2894,12 @@ All eight converters of the data build are rebuilt from their sources in
   `MkActor.exe`, `MkLevel.exe`, `parkgrab.exe` and `transtext.exe` in its
   tree).  The clang-cl x64 copies are committed as
   LFS objects in `port/tools/x64/` (lznp_tool's as `lznp.exe`).
-  `build/globals.mak` puts that directory first on the MSYS2 make's PATH,
-  so each name resolves there, and so does MkActor's `system("lznp ...")`
-  through `cmd`.  `port/build-data.sh --vintage-tools` (make
-  `SBSP_VINTAGE_TOOLS=1`) leaves it off, for an A/B against the old exes.
-  `port/tools` stays on the PATH either way.  A missing exe, or an
-  LFS pointer, stops build-data instead of falling back.  Make doesn't
-  rebuild outputs that are already up to date, so an A/B starts from an
-  empty `out/<T>`.
+  Since #95 the CMake data project runs them by path (below);
+  `port/build-data.cmd --vintage-tools` (`SBSP_DATA_TOOLS=vintage`) runs the
+  1999 exes instead, for an A/B against them.  A missing exe, or an LFS
+  pointer, stops build-data instead of falling back.  Under make,
+  `build/globals.mak` put the directory first on the MSYS2 make's PATH, and
+  `SBSP_VINTAGE_TOOLS=1` left it off; that route is retired.
 - **`datatools_exe_matches_source`** (unit) runs the tree's build and the
   committed exes on synthetic inputs (odd-sized and one-pixel TGAs, both
   depth branches, `legal.tga`; a two-script lump with banks of different
@@ -3117,6 +3115,70 @@ All eight converters of the data build are rebuilt from their sources in
   checked by running the vintage MkData on the x64 build's `Data/`: only
   byte 2052 differs.  With parkgrab rebuilt as well, USA and EUR data
   builds are byte-identical to the builds before it, all 453 files.
+
+## Data build on CMake + Ninja (issue #95)
+
+`port/build-data.cmd` (and `.sh`, which hands over to it) no longer run
+`makefile.gfx` through MSYS2's make and Perl.  The data build is now its own
+CMake project, `port/data`:
+- it is `project(... NONE)`, with no compiler, only custom commands;
+- it has presets `data-usa` and `data-eur`, with trees in
+  `port/build/data-<t>`;
+- `port/tools/data/build_data.py` configures and builds it with Ninja.
+
+The command line is unchanged: `usa|eur`, the preset words, `USA DEBUG`,
+`--vintage-tools`.  The no-argument default is USA again; under make, the
+territory came out empty.  `makefile.gfx` stays as the 1999 original, but
+nothing runs it.  The PS1 build keeps its own make + Perl (`makefile.gaz`,
+`dep.pl`).
+
+- **The same commands.** `port/data/lists.cmake` transcribes makefile.gfx's
+  input lists: the same names, order, spellings and switch placement.
+  - Every converter runs from the repo root, as under make. The scripts
+    `#include` their defs by repo-relative path, MkLevel.ini's `BackGfxDir`
+    is relative, and parkgrab sorts by the paths it is given.
+  - `sprites.rsp` is one of the outputs, written `file(CONFIGURE)` with LF,
+    as make's `$(file)` did, so it is byte-identical.
+  - The x64 MkLevel takes `-c:tools/data/bin`; the 1999 one reads its ini
+    beside its exe.
+- **Every dependency declared.** Each step depends on its converter exe and
+  on what the converter reads:
+  - actors: their whole `graphics/Characters/<A>` folder (frames and
+    `AnimList.Txt`);
+  - levels: their folder, plus `graphics/hazards`, `graphics/Platforms`,
+    `graphics/levels/BackGfx`, `MkLevel.ini` and `Sprites.h`;
+  - scripts: `data/Scripts/defs/*.scr`;
+  - the lump: `data/DataCache.scr` and everything it packs;
+  - shop and party: their bitmaps. Under make they had no prerequisites at
+    all, through an undefined variable.
+
+  A second build is `ninja: no work to do`. Touching an input rebuilds only
+  what depends on it: a shop bitmap → shop + lump, a sprite → the bank, all
+  27 levels and the lump.
+- **Parallel.** Each screen's temp file is `<out>.gfx.tmp`, not one `a.tmp`
+  in the repo root (`port/tools/data/datastep.py gfx`). MkActor runs in a
+  Ninja pool of one, since its `Actor.Tmp`/`Actor.Pak` live in its working
+  directory. The translation step is one command declaring all its outputs:
+  `final.dat`, the ten `.dat`s, `trans.h` and `trans.scr`.
+- **No Perl.** `port/tools/data/lang.py` and `trans_scr.py` port `lang.pl` and
+  `text_extract.pl`, rules included (`data_text_rules`). CMake loops replace
+  `mklevel.pl`/`mkactor.pl` and their 67 generated makefiles, which make
+  rebuilt every second run.
+- **The checks make lacked:**
+  - parkgrab exits 0 whatever happens, so `datastep.py parkgrab` fails
+    unless it wrote its `.h` (issue #42);
+  - the CD files keep `build-data.sh`'s 1 MiB floor (`datastep.py stage`).
+- **Outputs.** As before, plus a copy of `BIGLUMP.BIN` in
+  `out/<T>/FINAL/version/CD/` beside the DEBUG one, for makefile.gaz's
+  `cddata`; the data never depended on the variant.
+- **Oracle.** Given the make build's own `final.dat` (the test override
+  `-DSBSP_DATA_FINAL_DAT`), the CMake build matches the make build file for
+  file:
+  - USA and EUR: 386 of 386 identical, the make build's 67 generated
+    makefiles aside;
+  - `--vintage-tools`: identical against a vintage make build except the 26
+    `.Lvl` and 6 `.SBK` files whose stray bytes vary between any two
+    vintage runs, and the lump that packs them.
 
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 

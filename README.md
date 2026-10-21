@@ -27,20 +27,23 @@ Just a note, your GPU must support Vulkan. Most modern systems do.
 
 ### MSYS2 packages (MSYS2 Shell)
 
-Open the **MSYS2 MSYS** shell and install the data-build tools:
-
-```bash
-pacman -S --needed make perl
-```
-
-Then install the 32-bit compiler toolchain (same shell is fine, these are
-just packages):
+Open the **MSYS2 MSYS** shell and install the 32-bit toolchain. Its CMake
+and Ninja build the game data as well as the game:
 
 ```bash
 pacman -S --needed mingw-w64-i686-gcc mingw-w64-i686-cmake mingw-w64-i686-ninja mingw-w64-i686-vulkan-headers mingw-w64-i686-python
 ```
 
-Python runs the automated playthrough tests, and configure stops if it is
+The PlayStation build (`port\build-psx.cmd`, section 4) also needs the 1999
+makefiles' runtime, in the same shell:
+
+```bash
+pacman -S --needed make perl
+```
+
+Python runs the data build's text steps and the automated playthrough
+tests. The data build also needs a Windows Python 3 on the `PATH`, the one
+`python` finds in a Command Prompt. The game's configure stops if Python is
 missing. To build without those tests, set `SBSP_PLAYTHROUGH=OFF` in the
 environment before running the build script (section 4):
 
@@ -85,18 +88,18 @@ pointer file and the data build stops with "unmaterialised Git-LFS pointer".
 ## 3. Build the game data
 
 The game reads one big file, `BIGLUMP.BIN`, plus a set of generated headers
-the code build cannot start without. Both come from the original 1999 asset
-pipeline, run under MSYS2. From the repository root, in a normal Command
-Prompt or PowerShell:
+the code build cannot start without. Both come from the original asset
+pipeline's converters, rebuilt as 64-bit Windows tools (`port\tools\x64`).
+A CMake + Ninja project in `port\data` runs them. From the repository root,
+in a normal Command Prompt or PowerShell:
 
 ```bat
 port\build-data.cmd usa
 ```
 
-This runs `makefile.gfx` through the vintage converter executables for every
-level, actor, sprite sheet, script and translation, then stages the speech
-track and the four FMV movies beside the result. Expect it to take a few
-minutes the first time; later runs only rebuild what changed. Output:
+This converts every level, actor, sprite sheet, script and translation, then
+stages the speech track and the four FMV movies beside the result. It takes
+about a minute the first time; later runs only rebuild what changed. Output:
 
 ```
 out\USA\cd\BIGLUMP.BIN
@@ -110,9 +113,10 @@ territory only: one USA data build serves both the `debug` and `final`
 executables. EUR data (`port\build-data.cmd eur`) is only needed for the
 `eur-*` builds.
 
-The `.cmd` scripts start MSYS2's bash themselves, so they work from Git Bash
-too (`port/build-data.cmd usa`). The `.sh` scripts behind them run only in
-MSYS2's bash and say what to run instead if started anywhere else.
+From a bash shell (Git Bash or MSYS2's), `port/build-data.sh usa` does the
+same. The game builds' `.cmd` scripts start MSYS2's bash themselves, so they
+work from Git Bash too. The `.sh` scripts behind them run only in MSYS2's bash
+and say what to run instead if started anywhere else.
 
 ## 4. Build the game
 
