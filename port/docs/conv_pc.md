@@ -2860,9 +2860,9 @@ The rest touches no game source:
 
 ## x64 data tools (issue #48)
 
-The data build's converters are being rebuilt from their sources in
-`Utils/` as native x64 exes, one by one, instead of running the 1999 VC6
-binaries in `tools/` under WOW64.  Done so far:
+All eight converters of the data build are rebuilt from their sources in
+`Utils/` as native x64 exes, instead of running the 1999 VC6 binaries in
+`tools/` under WOW64:
 - **MkData**: BigLump.Bin + BigLump.h.
 - **Tga2Gfx**: the `.gfx` screens, and `LEGAL.GFX` in makefile.gaz's `cddata`.
 - **scripter**: the `.scr` → `.dat` scripts.
@@ -2880,15 +2880,19 @@ binaries in `tools/` under WOW64.  Done so far:
   `tools/data/bin/MkLevel.ini` as the 1999 one.
 - **parkgrab**: the sprite banks (`Sprites.Spr` + `Sprites.h`, shop,
   party).  Clang-cl only, like MkActor and MkLevel, and found on the PATH
-  like the first four.  Only **transtext** is still the 1999 exe: the
-  library it was built on never reached this repo, so it needs a rewrite.
+  like the first four.
+- **transtext**: the text databases (`<language>.dat`, `id.dat`) and
+  `trans.h`, from lang.pl's `final.dat`.  Clang-cl only, found on the PATH.
+  Its core is a rewrite (below), because the library it was built on never
+  reached this repo.
 
 - **Where they live.** `port/build-pc.sh clangcl-x64-final --target
   mkdata_tool tga2gfx_tool scripter_tool lznp_tool mkactor_tool
-  mklevel_tool parkgrab_tool` builds them (every preset builds them -
-  MkActor, MkLevel and parkgrab the clang-cl ones - as `MkData.exe`,
-  `Tga2Gfx.exe`, `scripter.exe`, `lznp_tool.exe`, `MkActor.exe`,
-  `MkLevel.exe` and `parkgrab.exe` in its tree).  The clang-cl x64 copies are committed as
+  mklevel_tool parkgrab_tool transtext_tool` builds them (every preset
+  builds them - MkActor, MkLevel, parkgrab and transtext the clang-cl ones -
+  as `MkData.exe`, `Tga2Gfx.exe`, `scripter.exe`, `lznp_tool.exe`,
+  `MkActor.exe`, `MkLevel.exe`, `parkgrab.exe` and `transtext.exe` in its
+  tree).  The clang-cl x64 copies are committed as
   LFS objects in `port/tools/x64/` (lznp_tool's as `lznp.exe`).
   `build/globals.mak` puts that directory first on the MSYS2 make's PATH,
   so each name resolves there, and so does MkActor's `system("lznp ...")`
@@ -2909,8 +2913,9 @@ binaries in `tools/` under WOW64.  Done so far:
   on the ABI.  On the clang-cl presets it also runs MkActor on a small
   actor (Anenome) and MkLevel on the smallest level (FMA_CONTROLROOM), from
   the repo, and parkgrab on makefile.gfx's shop and party lines, plus party
-  with compressed texture pages (`-y+`) and shop with `-x:`.  It compares
-  every file they write.
+  with compressed texture pages (`-y+`) and shop with `-x:`, and transtext
+  on a synthetic `final.dat`, with and without `-a+`.  It compares every
+  file they write.
   `lznp_x64_exe_matches_source` does the same for
   `port/tools/x64/lznp.exe` as `lznp_exe_matches_source` does for the
   32-bit copy.  After a source change, rebuild the x64 copies and commit
@@ -3002,6 +3007,41 @@ binaries in `tools/` under WOW64.  Done so far:
   build with x87 maths (`/arch:IA32`) comes closer but isn't identical
   either.  No makefile line uses `-e:`, and nothing else in parkgrab calls
   `tquant`.
+- **transtext's core, rewritten.**  `Utils/transtext` keeps `main.cpp`
+  (v1.92), its ScriptFile reader (`script.cpp`) and the Japanese code
+  (`kanjiclass.cpp`).  The Theme Park library's `trans.h`/`lang.h`
+  (`AllTextDatabases`, `TextDatabase`, the languages) never reached the
+  repo.  `port/tools/datatool-src/tplib` rewrites them from the 1999 exe's
+  disassembly, its messages and its output.  The rules are in its
+  `trans.h`.
+  - **Input:** while the next line is a `[command]`, its lines are
+    `<language>=<text>`, split by the PCRE `^(.+)\s*=\s*(.+)\s*`.
+    - Language names match case-insensitively.
+    - `\n` becomes a newline.
+    - A string with no lines is dropped, and one without English is fatal.
+  - **Output:** a language left out takes the English.  Each language's
+    printf conversions must match the English; a conversion runs from `%`
+    to the next lower-case letter, and bytes from 0x80 aren't lower case.
+    The eight languages and `id.dat` (`<ID> ` plus the English
+    conversions) go to `<dir>\<name>.dat`, in input order.
+  - **The 1999 exe's switches:** it has a `-a<+|->` that the surviving
+    `main.cpp` lacks, which names language 1 `ame` in place of `fre`.
+    `main.cpp` gained it, and its usage line now says what it does (the
+    exe's copied `-s`'s text).
+  - **Three fixes:**
+    - ScriptFile's line count starts at 0. The exe's error lines count from
+      0, and the surviving copy never set it (GinLib's later copy does).
+    - VC6's `seekg` left `eofbit` set where C++11's clears it, and the
+      reader's peeks depend on that: an unterminated last line ends the
+      file, so the exe drops its string. ScriptFile's peeks restore the bit.
+    - `getFileString` copied each switch's text into a `char[100]`, so a
+      longer path overran it (the 1999 exe crashes on a long absolute
+      `-h:`/`-o:`). It now takes any length.
+  - **The Japanese output:** `kanjiclass.cpp` needs `fontdata/got*.h`
+    (Gothic 11/13/15-dot kanji bitmaps, very likely still compiled into
+    `tools/transtext.exe`'s `.data`), also missing. `tplib/kanji_stub.cpp`
+    stands in, and `-e -d -j -p -s` stop with a message. The makefile uses
+    none of them, and the game has no Japanese text path.
 - **scripter's runtime.** `lexer.cpp`/`parser.cpp` are the committed
   ALex/AYACC output, linked against Parser Generator's C++ runtime: the
   `yyc*.cpp` files of `Utils/Parser Generator/SOURCE`, built as the `pg_yl`
@@ -3057,7 +3097,18 @@ binaries in `tools/` under WOW64.  Done so far:
   above.  Every case gives the same result twice.  Six `.gin` scenes, with
   their textures beside them, give identical output too.  The only
   difference is a `Load <file>` line, which the old library's
-  `CScene::Load` printed.
+  `CScene::Load` printed.  transtext writes every file of the data build's
+  run identically: all nine `.dat`s and `trans.h`.  So it does on a
+  41-case matrix of the rules above and their errors, matching every
+  message and exit code too. The matrix covers:
+  - all eight languages, `ame` with and without `-a+`;
+  - signature mismatches, missing English, bare and unusual `%`s, bytes
+    from 0x80;
+  - `=` in the text, white space, `\n`, CP1252, `;`;
+  - unterminated last lines, repeated IDs and languages, lines before the
+    first ID, blank and LF-only files;
+  - ill-formed lines, lines at and over the 4096-byte buffer, and output
+    that can't be opened.
 - **Full data builds**, compared with `PERL_HASH_SEED=0 PERL_PERTURB_KEYS=0`
   (otherwise `lang.pl`'s hash order changes `trans.h`, the translations
   and every script, on every build).  What's left is the vintage

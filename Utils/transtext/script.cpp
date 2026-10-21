@@ -98,6 +98,7 @@ void ScriptFile::open(char const * fileName)
 		close();
 
 	m_inStream.open(fileName,ios::binary|ios::in);
+	m_lineCount=0;
 
 	if (m_inStream)
 		{	
@@ -174,7 +175,23 @@ bool ScriptFile::getNextNonBlankLine(char * line,int lineLen)
 }
 
 /*----------------------------------------------------------------------
-	Function:	
+	Function:	seekBack
+	Purpose:	seekg as VC6's ran it: that left eofbit set, where C++11's
+				clears it, so a peek that read an unterminated last line
+				leaves eof() true and the file ends there (issue #48)
+  ---------------------------------------------------------------------- */
+static void seekBack(ifstream & in,streampos pos)
+{
+	bool	atEof=in.eof();
+
+	in.seekg(pos);
+
+	if (atEof)
+		in.setstate(ios::eofbit);
+}
+
+/*----------------------------------------------------------------------
+	Function:
 	Purpose:
 	Params:
 	Returns:
@@ -201,7 +218,7 @@ bool ScriptFile::nextLineIsCommand(void)
 		retVal=isCommand(line);
 		}
 
-	m_inStream.seekg(thisPos);
+	seekBack(m_inStream,thisPos);
 
 	m_lineCount=oldLineCount;
 
@@ -236,7 +253,7 @@ GString ScriptFile::peekNextCommand(void)
 		stripTrailingSpace(line);
 		retStr=getCommandString(line);
 
-		m_inStream.seekg(thisPos);
+		seekBack(m_inStream,thisPos);
 	
 		m_lineCount=oldLineCount;
 		}

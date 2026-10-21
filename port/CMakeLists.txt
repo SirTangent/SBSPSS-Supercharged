@@ -489,14 +489,15 @@ if(Python3_Interpreter_FOUND)
     # build.  This tree's copies, built by whichever toolchain, and the
     # committed x64 ones convert the same inputs to the same bytes
     # (tests/datatools_exe_check.py), so a 32/64-bit difference in the output
-    # shows up here too.  MkActor, MkLevel and parkgrab build with clang-cl
-    # only (cmake/datatools.cmake).
+    # shows up here too.  MkActor, MkLevel, parkgrab and transtext build with
+    # clang-cl only (cmake/datatools.cmake).
     set(SBSP_DATATOOL_CHECK_ARGS)
     if(TARGET mkactor_tool)
         list(APPEND SBSP_DATATOOL_CHECK_ARGS
              --mkactor $<TARGET_FILE:mkactor_tool> ${SBSP_ROOT}/port/tools/x64/MkActor.exe
              --mklevel $<TARGET_FILE:mklevel_tool> ${SBSP_ROOT}/port/tools/x64/MkLevel.exe
-             --parkgrab $<TARGET_FILE:parkgrab_tool> ${SBSP_ROOT}/port/tools/x64/parkgrab.exe)
+             --parkgrab $<TARGET_FILE:parkgrab_tool> ${SBSP_ROOT}/port/tools/x64/parkgrab.exe
+             --transtext $<TARGET_FILE:transtext_tool> ${SBSP_ROOT}/port/tools/x64/transtext.exe)
     endif()
     add_test(NAME datatools_exe_matches_source
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/datatools_exe_check.py

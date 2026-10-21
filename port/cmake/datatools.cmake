@@ -163,3 +163,21 @@ add_executable(parkgrab_tool ${_parkgrab} ${CMAKE_CURRENT_SOURCE_DIR}/tools/data
 set_target_properties(parkgrab_tool PROPERTIES OUTPUT_NAME parkgrab)
 target_link_libraries(parkgrab_tool PRIVATE dt_glib dt_ginlib dt_maths)
 sbsp_datatool(parkgrab_tool)
+
+# ---------------------------------------------------------------------------
+# transtext (the text databases <language>.dat + id.dat, and trans.h).  Its
+# main.cpp and ScriptFile survive in Utils/transtext; the Theme Park library
+# classes they drive (trans.h, lang.h) did not, and are rewritten from the
+# 1999 exe in tools/datatool-src/tplib, with a stub for the Japanese output,
+# whose font data is missing too.  Utils/transtext and tplib come before the
+# library include directories, so <script.h> and <trans.h> are these and
+# not GinLib's; GinLib itself is not linked (its ScriptFile is a later copy).
+# ---------------------------------------------------------------------------
+set(SBSP_TPLIB ${CMAKE_CURRENT_SOURCE_DIR}/tools/datatool-src/tplib)
+add_executable(transtext_tool ${SBSP_UTILS}/transtext/main.cpp ${SBSP_UTILS}/transtext/script.cpp
+    ${SBSP_TPLIB}/trans.cpp ${SBSP_TPLIB}/kanji_stub.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/datatool-src/datatool_crash.cpp)
+set_target_properties(transtext_tool PROPERTIES OUTPUT_NAME transtext)
+target_include_directories(transtext_tool BEFORE PRIVATE ${SBSP_UTILS}/transtext ${SBSP_TPLIB})
+target_link_libraries(transtext_tool PRIVATE dt_glib)
+sbsp_datatool(transtext_tool)

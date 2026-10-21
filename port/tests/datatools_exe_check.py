@@ -13,11 +13,12 @@ once counted into a bank's size) shows up as a mismatch here too.
                            <built Tga2Gfx> <committed Tga2Gfx.exe>
                            <built scripter> <committed scripter.exe>
                            [--mkactor <built> <committed>] [--mklevel <built> <committed>]
-                           [--parkgrab <built> <committed>]
+                           [--parkgrab <built> <committed>] [--transtext <built> <committed>]
 
 MkActor and MkLevel (clang-cl builds only) convert a small actor and the
 smallest level from the repo, and parkgrab (clang-cl only too) packs the
 shop and party sprites as makefile.gfx does, all run from the repo root.
+transtext (clang-cl only) converts a synthetic final.dat.
 """
 import os
 import shutil
@@ -76,6 +77,17 @@ SCR_MAIN = (b"#include\tdefs.scr\r\n#define\tTWELVE\t12\r\n\r\n"
             b"if($tmp9>TWELVE)\r\n\t$tmp9=$tmp9-TWELVE;\r\nstop;\r\n")
 
 
+# transtext: lang.pl's final.dat (CRLF; `[ID]` then `<language>=<text>`
+# lines): a language left out takes the English, `\n` becomes a newline,
+# printf conversions must match the English, bytes from 0x80 pass through,
+# and an ID with no lines is dropped.
+TRANS_FINAL = (b"[STR__FIRST]\r\neng=Level %d-%d\r\nger=Stufe %d-%d\r\n\r\n"
+               b"[STR__SECOND]\r\neng=  two\\nlines \r\nfre=deux\\nlignes\r\nFRE=Deux\r\n\r\n"
+               b"[STR__EMPTY]\r\n\r\n"
+               b"[STR__THIRD]\r\neng=\x91caf\xe9\x92 sure\r\nswe=s ; comment\r\n"
+               b"spa=tres\r\nita=tre\r\ndut=drie\r\njap=san\r\n\r\n")
+
+
 def run(cmd, cwd, wants):
     r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     if r.returncode != 0:
@@ -112,7 +124,7 @@ def main():
     # MkActor, MkLevel and parkgrab build with clang-cl only: optional pairs
     # after the six
     pairs = {}
-    for opt in ("--mkactor", "--mklevel", "--parkgrab"):
+    for opt in ("--mkactor", "--mklevel", "--parkgrab", "--transtext"):
         if opt in argv:
             i = argv.index(opt)
             pairs[opt] = [os.path.abspath(a) for a in argv[i + 1:i + 3]]
@@ -223,6 +235,21 @@ def main():
                 b = run_dir([pairs["--parkgrab"][1]] + args, root, outdir)
                 for f in sorted(set(a) | set(b)):
                     check(f"parkgrab {label} {f}", a.get(f, b""), b.get(f, b""))
+        # transtext <final.dat> -h:<header> -o:<dir> [-a+]: every language's
+        # .dat, id.dat and the header
+        if "--transtext" in pairs:
+            work = os.path.join(tmp, "text")
+            outdir = os.path.join(work, "o")
+            os.makedirs(outdir)
+            # -a+ names language 1 `ame`, not `fre`
+            american = TRANS_FINAL.replace(b"fre=", b"ame=").replace(b"FRE=", b"AME=")
+            for label, extra, text in (("", [], TRANS_FINAL), (" -a+", ["-a+"], american)):
+                open(os.path.join(work, "final.dat"), "wb").write(text)
+                args = ["-h:o/trans.h", "-o:o"] + extra + ["final.dat"]
+                a = run_dir([pairs["--transtext"][0]] + args, work, outdir)
+                b = run_dir([pairs["--transtext"][1]] + args, work, outdir)
+                for f in sorted(set(a) | set(b)):
+                    check(f"transtext{label} {f}", a.get(f, b""), b.get(f, b""))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("datatools_exe_check: " + ("the committed x64 converters match their sources" if ok else "FAILURES"))

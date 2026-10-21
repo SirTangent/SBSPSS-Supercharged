@@ -24,7 +24,7 @@
 #define	__DATA_FPTR_HEADER__
 
 #if defined(PSX_MIPS_ASM) || !defined(SBSP_PC64)
-#error fptr.h is the x64 view of dstructs.h only
+#error fptr.h is the x64 PC view of dstructs.h only
 #endif
 
 #include <stdint.h>

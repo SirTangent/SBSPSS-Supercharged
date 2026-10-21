@@ -2,9 +2,9 @@
 # Build the SBSPSS game data (BigLump.Bin + generated headers) on modern Windows.
 #
 # Runs the original makefile.gfx with the MSYS2 runtime (make/sh/coreutils/perl)
-# driving the converter EXEs: the ones rebuilt from source as x64 exes in
+# driving the converter EXEs, all eight rebuilt from source as x64 exes in
 # port/tools/x64 (issue #48: MkData, Tga2Gfx, scripter, lznp, MkActor,
-# MkLevel and parkgrab), the repo's original Win32 transtext for the text.
+# MkLevel, parkgrab and transtext, whose core is a rewrite).
 # --vintage-tools runs the originals for every converter, for an A/B of the
 # outputs (lznp's original is 16-bit, so that one is the 32-bit
 # port/tools/lznp.exe).
@@ -82,7 +82,7 @@ echo "Data build: TERRITORY=$TERRITORY (vintage make VERSION=$VERSION) -> out/$T
 if [ "$VINTAGE" = 1 ]; then
     echo "Converters: the 1999 Win32 exes (--vintage-tools)"
 else
-    for tool in MkData Tga2Gfx scripter lznp MkActor MkLevel parkgrab; do
+    for tool in MkData Tga2Gfx scripter lznp MkActor MkLevel parkgrab transtext; do
         exe="port/tools/x64/$tool.exe"
         if [ ! -f "$exe" ] || [ "$(stat -c%s "$exe")" -lt 4096 ]; then
             echo "ERROR: $exe is missing or an unmaterialised Git-LFS pointer." >&2
@@ -91,7 +91,7 @@ else
             exit 1
         fi
     done
-    echo "Converters: port/tools/x64 (MkData, Tga2Gfx, scripter, lznp, MkActor, MkLevel, parkgrab), the 1999 Win32 exe for transtext"
+    echo "Converters: port/tools/x64 (MkData, Tga2Gfx, scripter, lznp, MkActor, MkLevel, parkgrab, transtext)"
 fi
 
 # Until issue #15 three makefile.gfx recipes redirected to `nul`, which

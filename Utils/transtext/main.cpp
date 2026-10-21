@@ -87,6 +87,7 @@ static GString		g_japLbmDir;
 static GString		g_englishLbmsDir;
 static GString		g_japLbmListFile;
 static int			g_fontSize=0;
+static bool			g_americanNames=false;
 
 /*----------------------------------------------------------------------
 	Data
@@ -117,7 +118,7 @@ int main(int argc, char ** argv)
 		if (fileWithTranslations)
 			{
 			AllTextDatabases	myDatabases;
-			myDatabases.readTranslationFile(fileWithTranslations);
+			myDatabases.readTranslationFile(fileWithTranslations,g_americanNames);
 
 			if (outDir)
 				myDatabases.write(outDir);
@@ -183,6 +184,7 @@ void usage(void)
 	cout<<"-p:<file>           File to save list of saved lbms to"<<endl;
 	cout<<endl;
 	cout<<"-s:<0|1|2>          Set the size of the output font"<<endl;
+	cout<<"-a<+|->             Language 1 is ame (American), not fre"<<endl;
 	cout<<endl;
 }
 
@@ -199,7 +201,6 @@ GString	getFileString(char const * Switch)
 	int				Offsets[NumOfOffsets];
 	char const *	ErrTxt;
 	int				ErrNum;
-	char			SwitchText[100];
 
 	MyPattern=pcre_compile("^-.:(.*)",0,&ErrTxt,&ErrNum,NULL);
 	Matches=pcre_exec(MyPattern,NULL,Switch,strlen(Switch),0,Offsets,NumOfOffsets);
@@ -207,10 +208,9 @@ GString	getFileString(char const * Switch)
 	if (Matches != 2)
 		GObject::Error(ERR_FATAL,"Ill formatted switch %s",Switch);
 
-	memcpy(SwitchText,&Switch[Offsets[2]],Offsets[3]-Offsets[2]);
-	SwitchText[Offsets[3]-Offsets[2]]=0;
-
-	return(GString(SwitchText));
+	// the text after `-x:` at any length: it went through a char[100], which
+	// a longer path overran (the 1999 exe crashes on one; issue #48)
+	return(GString(&Switch[Offsets[2]],Offsets[3]-Offsets[2]));
 }
 
 /*----------------------------------------------------------------------
@@ -274,6 +274,10 @@ char * cycleCommands(char * cmdString,int num)
 
 			case 's':
 				g_fontSize=atoi(getFileString(cmdString));
+				break;
+
+			case 'a':
+				g_americanNames=getPlusMinus(cmdString);
 				break;
 
 			default:
