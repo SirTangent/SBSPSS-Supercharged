@@ -47,10 +47,12 @@ check.
    doesn't see it, and FINAL compiles all three without a line number.
    `__LINE__` is the line in the file where the macro is *used*, so new
    lines in a header move only the macros used in that header.
-3. **The data build.**  `tools/perl/pl/lang.pl` writes the `STR__*` enum in
-   `out/<T>/include/trans.h` in Perl's randomised hash order, so every data
-   build shuffles the string table.  About 30 objects and 250 KB of the cpe
-   then differ for no code reason.  Compare two builds only if they share
+3. **The data build.**  `tools/perl/pl/lang.pl` writes the strings into
+   `final.dat` in Perl's randomised hash order, and transtext keeps that
+   order in the `STR__*` enum of `out/<T>/include/trans.h` and in every
+   `.dat`, so every data build shuffles the string table.  About 30
+   objects and 250 KB of the cpe then differ for no code reason.  Compare
+   two builds only if they share
    one `out/<T>/include`, and never across a data build.
    `psx_identity.py build` hashes `trans.h` before and after its run and
    voids the comparison if it moved.

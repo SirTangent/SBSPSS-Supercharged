@@ -86,6 +86,18 @@ const MEM_INFO *GSYS_GetWorkMemInfo(void)
 static void *	SaveParam;
 void			(*SaveFunc)(void *);
 
+#if !defined(_M_IX86)
+/*	The stack switch below rewrites the x86 jmp_buf.  Only tasker.c calls it,
+	and none of the data tools uses tasks (issue #48), so other targets
+	stop here instead.  */
+#include <stdio.h>
+#include <stdlib.h>
+void GSYS_SetStackAndJump(void *Stack,void(*Func)(void *),void *Param)
+{
+	fprintf(stderr,"GSYS_SetStackAndJump: x86 only\n");
+	abort();
+}
+#else
 void GSYS_SetStackAndJump(void *Stack,void(*Func)(void *),void *Param)
 {
 	jmp_buf			GazBuff;
@@ -100,12 +112,13 @@ void GSYS_SetStackAndJump(void *Stack,void(*Func)(void *),void *Param)
 	longjmp(GazBuff,0);
 
 	Func(Param);
-}	
+}
 
 void MyFunc(void)
 {
 	SaveFunc(SaveParam);
 }
+#endif
 
 /*	---------------------------------------------------------------------------
 	Function:	void GSYS_MarkStack(void * Stack, U32 StackSize)

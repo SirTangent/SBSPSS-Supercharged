@@ -147,8 +147,8 @@ void	CMkLevelLayerRGB::Process(CMkLevel *Core)
 int		CMkLevelLayerRGB::Write(CMkLevel *Core,FILE *File,const char *LayerName)
 {
 int				ThisPos=ftell(File);
-sLayerHdr		Hdr;
-sLayerRGBHdr	RGBHdr;
+sLayerHdr		Hdr={0};
+sLayerRGBHdr	RGBHdr={0};
 
 		Hdr.Type=Type;
 		Hdr.SubType=SubType;

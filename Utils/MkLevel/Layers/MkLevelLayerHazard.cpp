@@ -48,7 +48,7 @@ void	CMkLevelLayerHazard::Process(CMkLevel *Core)
 int		CMkLevelLayerHazard::Write(CMkLevel *Core,FILE *File,const char *LayerName)
 {
 int			ThisPos=ftell(File);
-sThingHdr	Hdr;
+sThingHdr	Hdr={0};
 int			i,ListSize=ThingList.size();
 		
 		Hdr.Count=ListSize;
@@ -58,7 +58,7 @@ int			i,ListSize=ThingList.size();
 		{
 			sMkLevelLayerThing	&ThisThing=ThingList[i];
 			int					p,PointCount=ThisThing.XY.size();
-			sThingHazard			OutThing;
+			sThingHazard			OutThing={0};
 
 			OutThing.Type=ThisThing.Type;
 			OutThing.Speed=ThisThing.Data.Hazard.HazardSpeed;
@@ -75,7 +75,7 @@ int			i,ListSize=ThingList.size();
 
 			for (p=0;p<PointCount;p++)
 			{
-				sThingPoint	Pnt;
+				sThingPoint	Pnt={0};
 				Pnt.X=ThisThing.XY[p].x;
 				Pnt.Y=ThisThing.XY[p].y;
 				fwrite(&Pnt,sizeof(sThingPoint),1,File);

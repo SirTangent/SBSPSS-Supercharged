@@ -17,6 +17,7 @@ GString		IncDir;
 int			PakW=0,PakH=0;
 bool		LocalGeom=false;
 float		SnapThresh=0;
+GString		ConfigDir;		// -c: where MkLevel.ini is, when not beside the exe (issue #48)
 
 //***************************************************************************
 char * CycleCommands(char *String,int Num)
@@ -80,6 +81,10 @@ int		Count;
 					TpStr= CheckFileString(String);
 					SnapThresh=atof(TpStr);
 					break;
+				case 'c':
+					ConfigDir= CheckFileString(String);
+					ConfigDir.Append('\\');
+					break;
 
 				default:
 					GObject::Error(ERR_FATAL,"Unknown switch %s",String);
@@ -112,6 +117,7 @@ void Usage(char *ErrStr)
 	printf("   -l:             Enable Local Geom\n");
 	printf("   -p:             Level Chunk Pak Info (X,Y) (Default=None(0,0)\n");
 	printf("   -z:             Snap Threshold\n");
+	printf("   -c:[DIR]        Dir of MkLevel.ini (Default=the exe's)\n");
 	GObject::Error(ERR_FATAL,ErrStr);
 }
 
@@ -126,7 +132,8 @@ std::vector<GString> const &Files = MyFiles.GetFileInfoVector();
 		if (Files.size()==0)	Usage("No Levels specified\n");
 		if (Files.size()>1)		Usage("Too many Levels specified\n");
 
-		Level.SetAppDir(argv[0]);
+		// SetAppDir keeps the directory of the path it is given
+		Level.SetAppDir(ConfigDir.Empty() ? argv[0] : (char const *)ConfigDir);
 		Level.Init(Files[0],OutStr,IncDir,TPBase,TPW,TPH,PakW,PakH,LocalGeom,SnapThresh);
 		Level.Load();
 		Level.Process();

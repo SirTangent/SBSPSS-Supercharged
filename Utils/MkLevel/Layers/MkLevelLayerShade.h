@@ -13,7 +13,7 @@ struct  sBackGfxList
 {
 		GString					Name;
 		int						TexID;
-		sLayerShadeBackGfxType	Out;
+		sLayerShadeBackGfxType	Out{};
 
 bool	operator ==(sBackGfxList const &v1)		{return(Name==v1.Name);}
 };
@@ -36,7 +36,7 @@ protected:
 		CList<sLayerShadeGfx>	GfxList;
 
 		CList<sBackGfxList>		OutTypeList;
-		sLayerShadeHdr			ShadeHdr;
+		sLayerShadeHdr			ShadeHdr{};
 };
 
 /*****************************************************************************/

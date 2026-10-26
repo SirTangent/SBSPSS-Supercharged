@@ -11,7 +11,7 @@ struct	sPoint
 {
 	int	x;
 	int	y;
-inline	operator=(sPoint const &Src)	{x=Src.x;y=Src.y;}
+inline	void operator=(sPoint const &Src)	{x=Src.x;y=Src.y;}
 };
 
 struct	sMkLevelLayerThing 

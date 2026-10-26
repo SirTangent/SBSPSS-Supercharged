@@ -467,6 +467,8 @@ set_tests_properties(lznp_roundtrip PROPERTIES LABELS unit)
 add_executable(lznp_tool tools/lznp-src/lznp_cli.cpp tools/lznp-src/lznp_encode.cpp)
 target_compile_options(lznp_tool PRIVATE ${SBSP_DEBUG_FLAGS})
 sbsp_plain_exe_link(lznp_tool)
+# The data-pipeline converters rebuilt from Utils/ (issue #48)
+include(cmake/datatools.cmake)
 if(Python3_Interpreter_FOUND)
     add_test(NAME lznp_exe_matches_source
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/lznp_exe_check.py
@@ -474,6 +476,37 @@ if(Python3_Interpreter_FOUND)
                      ${SBSP_ROOT}/port/tests/str_frame1.bin
              WORKING_DIRECTORY ${SBSP_ROOT})
     set_tests_properties(lznp_exe_matches_source PROPERTIES LABELS unit)
+    # ... and so must its clang-cl x64 build in port/tools/x64, which the data
+    # build runs by default (issue #48); the one above serves --vintage-tools.
+    add_test(NAME lznp_x64_exe_matches_source
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/lznp_exe_check.py
+                     $<TARGET_FILE:lznp_tool> ${SBSP_ROOT}/port/tools/x64/lznp.exe
+                     ${SBSP_ROOT}/port/tests/str_frame1.bin
+             WORKING_DIRECTORY ${SBSP_ROOT})
+    set_tests_properties(lznp_x64_exe_matches_source PROPERTIES LABELS unit)
+    # The committed port/tools/x64 converters (LFS, issue #48: build-data runs
+    # them in place of the 1999 tools/ exes) must be what the Utils/ sources
+    # build.  This tree's copies, built by whichever toolchain, and the
+    # committed x64 ones convert the same inputs to the same bytes
+    # (tests/datatools_exe_check.py), so a 32/64-bit difference in the output
+    # shows up here too.  MkActor, MkLevel, parkgrab and transtext build with
+    # clang-cl only (cmake/datatools.cmake).
+    set(SBSP_DATATOOL_CHECK_ARGS)
+    if(TARGET mkactor_tool)
+        list(APPEND SBSP_DATATOOL_CHECK_ARGS
+             --mkactor $<TARGET_FILE:mkactor_tool> ${SBSP_ROOT}/port/tools/x64/MkActor.exe
+             --mklevel $<TARGET_FILE:mklevel_tool> ${SBSP_ROOT}/port/tools/x64/MkLevel.exe
+             --parkgrab $<TARGET_FILE:parkgrab_tool> ${SBSP_ROOT}/port/tools/x64/parkgrab.exe
+             --transtext $<TARGET_FILE:transtext_tool> ${SBSP_ROOT}/port/tools/x64/transtext.exe)
+    endif()
+    add_test(NAME datatools_exe_matches_source
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/datatools_exe_check.py
+                     $<TARGET_FILE:mkdata_tool> ${SBSP_ROOT}/port/tools/x64/MkData.exe
+                     $<TARGET_FILE:tga2gfx_tool> ${SBSP_ROOT}/port/tools/x64/Tga2Gfx.exe
+                     $<TARGET_FILE:scripter_tool> ${SBSP_ROOT}/port/tools/x64/scripter.exe
+                     ${SBSP_DATATOOL_CHECK_ARGS}
+             WORKING_DIRECTORY ${SBSP_ROOT})
+    set_tests_properties(datatools_exe_matches_source PROPERTIES LABELS unit)
     # port/tools/psx_identity.py's rules (what `lines` passes as the same PS1
     # tokens, the makefile.gaz pattern `build` keys on) on fixed cases, the
     # PR #91 review's counterexamples included (tests/psx_identity_test.py).

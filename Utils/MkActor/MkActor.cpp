@@ -288,7 +288,7 @@ char	AnimName[256];
 		for (i=0; i<ListSize; i++)
 		{
 			sAnim	&ThisAnim=AnimList[i];
-			sprintf(AnimName,"%s",InAnimList[i]);
+			sprintf(AnimName,"%s",(char const *)InAnimList[i]);
 
 			ThisAnim.Name=&AnimName[0];
 
@@ -301,7 +301,7 @@ void	CMkActor::FindFrames(sAnim &ThisAnim)
 {
 GString		Filename;
 _finddata_t Find;
-long		FileHandle;
+intptr_t	FileHandle;	// _findfirst's handle: 64 bits on x64 (issue #48)
 int			Error=0;
 GString		AnimName=Name+"_"+ThisAnim.Name;
 GString		DirName=AnimName+"\\";
@@ -314,7 +314,7 @@ int			CheckLen=strlen(BaseName);
 
 			if( (FileHandle= _findfirst( Filename, &Find)) == -1L )
 			{
-				GObject::Error(ERR_WARNING,"Cant find Anim %s.\n",ThisAnim.Name);
+				GObject::Error(ERR_WARNING,"Cant find Anim %s.\n",(char const *)ThisAnim.Name);
 				return;
 			}
 
@@ -344,7 +344,7 @@ int		i,ListSize=AnimList.size();
 			int		FrameCount=ThisAnim.Frames.size();
 			for (int f=0; f<FrameCount; f++)
 			{
-				printf("%s - Load Anim %2d/%2d\tFrame %2d/%2d   \r",Name,i+1,ListSize,f,FrameCount);
+				printf("%s - Load Anim %2d/%2d\tFrame %2d/%2d   \r",(char const *)Name,i+1,ListSize,f,FrameCount);
 				LoadBmp(ThisAnim.Frames[f]);
 			}
 		}
@@ -483,7 +483,7 @@ void	CMkActor::CheckAndShrinkFrame(sBmp &Bmp,const char *FrameName)
 int		ColorCount=Bmp.Frm.GetNumOfCols();
 		if (ColorCount>16)
 		{
-				GObject::Error(ERR_FATAL,"%s has %i colors.\n",Name,ColorCount);
+				GObject::Error(ERR_FATAL,"%s has %i colors.\n",(char const *)Name,ColorCount);
 		}
 // Check Palette
 		if (BmpList.size())
@@ -565,7 +565,7 @@ u8		*TGA=(u8*)malloc(Frm.GetWidth()*Frm.GetHeight()*3);
 		Frm.MakeRGB(TGA);
 
 		char	OutName[256];
-		sprintf(OutName,"\\x\\%s.tga",Name);
+		sprintf(OutName,"\\x\\%s.tga",(char const *)Name);
 		SaveTGA(OutName,Frm.GetWidth(),Frm.GetHeight(),TGA,true);
 		free(TGA);
 }
@@ -591,7 +591,7 @@ int		i,ListSize=BmpList.size();
 		{
 			sBmp	&ThisBmp=BmpList[i];
 
-			printf("%s - Processing Frame %2d\\%2d\t\t\t\r",Name,i+1,ListSize);
+			printf("%s - Processing Frame %2d\\%2d\t\t\t\r",(char const *)Name,i+1,ListSize);
 			if (ThisBmp.Psx)
 			{
 				PakImage(ThisBmp);
@@ -641,7 +641,7 @@ GString			OutName=OutFile+".SBK";
 		fclose(File);
 
 		WriteInclude();
-		printf("%s. D=%i B=%i - WH=%i %i - In=%i Out=%i Sv=%i \n",Name,DupCount,BlankCount,FileHdr.MaxW,FileHdr.MaxH,TotalIn,TotalOut,TotalIn-TotalOut);
+		printf("%s. D=%i B=%i - WH=%i %i - In=%i Out=%i Sv=%i \n",(char const *)Name,DupCount,BlankCount,FileHdr.MaxW,FileHdr.MaxH,TotalIn,TotalOut,TotalIn-TotalOut);
 
 }
 
@@ -696,7 +696,7 @@ vector<sSpriteAnim>	Hdrs;
 			for (f=0; f<FrameCount; f++)
 			{
 				sFrame			&ThisFrame=ThisAnim.Frames[f];
-				sSpriteFrame	OutFrame;
+				sSpriteFrame	OutFrame={0};
 				
 				OutFrame.FrameIdx=ThisFrame.FrameIdx;
 				OutFrame.XOfs=ThisFrame.XOfs;
@@ -796,13 +796,13 @@ GString	Filename=IncFile+"_Anim.h";
 
 		File=fopen(Filename,"wt");
 
-		fprintf(File,"// %s Anim Header\n",Name);
+		fprintf(File,"// %s Anim Header\n",(char const *)Name);
 		fprintf(File,"\n");
-		fprintf(File,"#ifndef\t__ANIM_%s_HEADER__\n",Name);
-		fprintf(File,"#define\t__ANIM_%s_HEADER__\n",Name);
+		fprintf(File,"#ifndef\t__ANIM_%s_HEADER__\n",(char const *)Name);
+		fprintf(File,"#define\t__ANIM_%s_HEADER__\n",(char const *)Name);
 		fprintf(File,"\n");
 		fprintf(File,"\n");
-		fprintf(File,"enum\tANIM_%s_LIST\n",Name);
+		fprintf(File,"enum\tANIM_%s_LIST\n",(char const *)Name);
 		fprintf(File,"{\n");
 
 int		ListSize=AnimList.size();
@@ -811,7 +811,7 @@ int		ListSize=AnimList.size();
 			sAnim	&ThisAnim=AnimList[i];
 			GString	AnimName=ThisAnim.Name;
 			AnimName.Upper();
-			fprintf(File,"\tANIM_%s_%s",Name,AnimName);
+			fprintf(File,"\tANIM_%s_%s",(char const *)Name,(char const *)AnimName);
 			if (i==0)
 			{
 			fprintf(File,"=0");
@@ -819,7 +819,7 @@ int		ListSize=AnimList.size();
 		fprintf(File,",\n");
 		}
 
-		fprintf(File,"\tNUM_ANIM_%s\n",Name);
+		fprintf(File,"\tNUM_ANIM_%s\n",(char const *)Name);
 		fprintf(File,"};\n");
 		fprintf(File,"\n");
 		fprintf(File,"#endif\n");

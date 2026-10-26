@@ -123,7 +123,7 @@ CTexGrab	&TexGrab=Core->GetTexGrab();
 /*****************************************************************************/
 int		CMkLevelLayerShade::Write(CMkLevel *Core,FILE *File,const char *LayerName)
 {
-sLayerHdr		Hdr;
+sLayerHdr		Hdr={0};
 int				ThisPos=ftell(File);
 
 		Hdr.Type=Type;
@@ -177,7 +177,7 @@ int		i,ListSize=GfxList.size();
 		for (i=0; i<ListSize; i++)
 		{
 			sLayerShadeGfx		&ThisGfx=GfxList[i];
-			sLayerShadeBackGfx	Out;
+			sLayerShadeBackGfx	Out={0};
 			
 			Out.Type=ThisGfx.Gfx;
 			Out.PosX=ThisGfx.Pos.x;

@@ -61,7 +61,8 @@ protected:
 
 	void		open(char const * fileName);
 	void		close(void);
-
+	int			getLineCount(void)
+		{return(m_lineCount);}
 
 
 public:

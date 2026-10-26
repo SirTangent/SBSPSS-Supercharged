@@ -470,20 +470,20 @@ Gin4File	GinFile;
 	FileName=Name;
 	GinFile.Load(Name);
 
-std::vector<GinChunk  const *> &VersionChunk=GinFile.GetVersionChunk();
-std::vector<GinChunk  const *> &TexNamesChunk=GinFile.GetTexNamesChunk();
-std::vector<GinChunk  const *> &MatChunk=GinFile.GetMatChunk();
-std::vector<GinChunk  const *> &MshChunk=GinFile.GetMshChunk();
-std::vector<GinChunk  const *> &PointsChunk=GinFile.GetPointsChunk();
-std::vector<GinChunk  const *> &TrisChunk=GinFile.GetTrisChunk();
-std::vector<GinChunk  const *> &VColTrisChunk=GinFile.GetVColTrisChunk();
-std::vector<GinChunk  const *> &UVtrisChunk=GinFile.GetUVtrisChunk();
-std::vector<GinChunk  const *> &SceneTreeChunk=GinFile.GetSceneTreeChunk();
-std::vector<GinChunk  const *> &AnimTreeChunk=GinFile.GetAnimTreeChunk();
-std::vector<GinChunk  const *> &KeyAnimTreeChunk=GinFile.GetKeyAnimTreeChunk();
-std::vector<GinChunk  const *> &SkinTreeChunk=GinFile.GetSkinTreeChunk();
-std::vector<GinChunk  const *> &UserPropChunk=GinFile.GetUserPropChunk();
-std::vector<GinChunk  const *> &CameraChunk=GinFile.GetCameraChunk();
+std::vector<GinChunk  const *>VersionChunk=GinFile.GetVersionChunk();
+std::vector<GinChunk  const *>TexNamesChunk=GinFile.GetTexNamesChunk();
+std::vector<GinChunk  const *>MatChunk=GinFile.GetMatChunk();
+std::vector<GinChunk  const *>MshChunk=GinFile.GetMshChunk();
+std::vector<GinChunk  const *>PointsChunk=GinFile.GetPointsChunk();
+std::vector<GinChunk  const *>TrisChunk=GinFile.GetTrisChunk();
+std::vector<GinChunk  const *>VColTrisChunk=GinFile.GetVColTrisChunk();
+std::vector<GinChunk  const *>UVtrisChunk=GinFile.GetUVtrisChunk();
+std::vector<GinChunk  const *>SceneTreeChunk=GinFile.GetSceneTreeChunk();
+std::vector<GinChunk  const *>AnimTreeChunk=GinFile.GetAnimTreeChunk();
+std::vector<GinChunk  const *>KeyAnimTreeChunk=GinFile.GetKeyAnimTreeChunk();
+std::vector<GinChunk  const *>SkinTreeChunk=GinFile.GetSkinTreeChunk();
+std::vector<GinChunk  const *>UserPropChunk=GinFile.GetUserPropChunk();
+std::vector<GinChunk  const *>CameraChunk=GinFile.GetCameraChunk();
 
 int	Node,NodeCount;
 
@@ -709,7 +709,7 @@ std::vector<int>	ChildList;
 int		ChildCount=ChildList.size();
 
 		for (int Sp=0;Sp<PrintTreeSpace;Sp++) printf("| "); 
-		printf("(P=%i I=%i C=%i) %s - T=%i, V=%i A=%i\n",NodeParentIdx,NodeIdx,ChildCount,Node.Name,Node.Tris.size(),Node.Pts.size(),Node.Anim.size());
+		printf("(P=%i I=%i C=%i) %s - T=%i, V=%i A=%i\n",NodeParentIdx,NodeIdx,ChildCount,Node.Name,(int)Node.Tris.size(),(int)Node.Pts.size(),(int)Node.Anim.size());
 		PrintTreeSpace++;
 
 		for (int Child=0;Child<ChildCount;Child++) PrintTreeNode(ChildList[Child],Tree);

@@ -60,7 +60,7 @@ struct sOutElem3d
 {
 //		bool			LocalGeom;
 		bool			Model;
-		sElem3d			Elem3d;
+		sElem3d			Elem3d{};
 		CFaceStore		FaceStore;
 //		CList<u16>		LocalVtxIdxList;
 //		int				LocalVtxIdxStart;
@@ -194,7 +194,7 @@ protected:
 		CList<sMkLevelModel>	ModelList;
 		CFaceStore				ModelFaceList;
 
-		sLevelHdr				LevelHdr;
+		sLevelHdr				LevelHdr{};
 		sExpTri					FlatFace[2];
 
 		CList<sInfItem>			InfList;
