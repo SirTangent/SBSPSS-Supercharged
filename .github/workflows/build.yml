@@ -91,18 +91,18 @@ jobs:
         run: git lfs pull
 
   # M0 data pipeline: BigLump.Bin + generated headers (BigLump.h, Sprites.h,
-  # trans.h, ...) that gate both the PC and PSX configure/build steps. Runs
-  # the committed converter EXEs - the x64 rebuilds in port/tools/x64 (issue
-  # #48, LFS, fetched by the pull below), the vintage Win32 ones in
-  # tools/Data/bin and tools/psyq/bin for the rest - via MSYS2 make/perl:
-  # no compiler needed here, just the base runtime.
+  # trans.h, ...) that gate both the PC and PSX configure/build steps.  The
+  # CMake + Ninja data project in port/data (issue #95) runs the committed x64
+  # converter EXEs in port/tools/x64 (issue #48, LFS, fetched by the pull
+  # below): no compiler, just MSYS2's CMake and Ninja, at C:\msys64 where
+  # build_data.py looks first, and the runner's Python.
   data:
     needs: lfs
     runs-on: windows-latest
     timeout-minutes: 20
-    defaults: &msys2-defaults
+    defaults: &data-defaults
       run:
-        shell: msys2 {0}
+        shell: cmd
     steps: &data-steps
       - uses: actions/checkout@v7
 
@@ -121,12 +121,15 @@ jobs:
 
       - uses: msys2/setup-msys2@v2
         with:
-          msystem: MSYS
-          install: make perl
+          location: C:\
+          msystem: MINGW32
+          install: >-
+            mingw-w64-i686-cmake
+            mingw-w64-i686-ninja
           cache: true
 
       - name: Build data (BigLump.Bin + generated headers)
-        run: bash port/build-data.sh "$TERRITORY" "$VERSION"
+        run: port\build-data.cmd %TERRITORY%
 
       - uses: actions/upload-artifact@v7
         with:
@@ -142,7 +145,7 @@ jobs:
     needs: lfs
     runs-on: windows-latest
     timeout-minutes: 20
-    defaults: *msys2-defaults
+    defaults: *data-defaults
     env:
       TERRITORY: EUR
     steps: *data-steps
@@ -169,7 +172,9 @@ jobs:
       fail-fast: false
       matrix:
         preset: ${{ fromJSON(inputs.profile == 'pr' && '["debug"]' || '["debug", "final"]') }}
-    defaults: *msys2-defaults
+    defaults: &msys2-defaults
+      run:
+        shell: msys2 {0}
     env:
       SDL_VIDEODRIVER: dummy
       SDL_AUDIODRIVER: dummy
