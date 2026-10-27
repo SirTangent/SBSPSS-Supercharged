@@ -3,24 +3,21 @@
 #
 # Configure via the presets in port/CMakePresets.json, or directly:
 #   cmake -S port -B port/build/debug -G Ninja \
-#         --toolchain cmake/mingw32-toolchain.cmake -DSBSP_VARIANT=DEBUG
+#         --toolchain cmake/clangcl-toolchain.cmake -DSBSP_ARCH=x64 -DSBSP_VARIANT=DEBUG
 #
-# Two toolchains (M8 PR 4).  MinGW g++ (cmake/mingw32-toolchain.cmake) is
-# the shipping build: static exes, SDL3 from the MSYS2 package.  clang-cl
-# (cmake/clangcl-toolchain.cmake, i686-pc-windows-msvc) is the Visual Studio
-# route: MSVC CRT, lld-link PDBs, SDL3 from the official VC package as a
-# DLL.  The compiler frontend picks the flag spellings below and everything
-# else is shared, so a shim change that only builds on one of them shows up
-# in CI (the clangcl job) rather than on a tester's machine.
-#
-# clang-cl also builds x64 (M9, -DSBSP_ARCH=x64 -> x86_64-pc-windows-msvc,
-# presets clangcl-x64-*).  The game target gets SBSP_PC64 there - see
-# SBSP_GAME_DEFINES below and port/docs/conv_pc.md, "x64 (M9)".
+# One toolchain: clang-cl (cmake/clangcl-toolchain.cmake) against the MSVC
+# CRT and Windows SDK, linked by lld-link with a PDB per exe, SDL3 from the
+# official VC package as a DLL.  The shipping build is x64
+# (x86_64-pc-windows-msvc, the plain debug/final presets), where the game
+# target gets SBSP_PC64 - see SBSP_GAME_DEFINES below and
+# port/docs/conv_pc.md, "x64 (M9)".  The x86-* presets build the same code
+# for i686-pc-windows-msvc, which parity64 holds x64 to.  MinGW g++ built the
+# port until issue #39 retired it with MSYS2's 32-bit repository.
 #
 cmake_minimum_required(VERSION 3.28)
 project(sbspss LANGUAGES C CXX)
-# every exe links psyq/host/sbsp.rc (the manifest, see sbsp_exe_link); both
-# toolchain files name the resource compiler (windres / llvm-rc)
+# every exe links psyq/host/sbsp.rc (the manifest, see sbsp_exe_link); the
+# toolchain file names the resource compiler (llvm-rc)
 enable_language(RC)
 
 set(SBSP_VARIANT   "DEBUG" CACHE STRING "Game build variant: DEBUG or FINAL")
@@ -28,17 +25,12 @@ set(SBSP_TERRITORY "USA"   CACHE STRING "Territory: USA or EUR")
 set_property(CACHE SBSP_VARIANT   PROPERTY STRINGS DEBUG FINAL)
 set_property(CACHE SBSP_TERRITORY PROPERTY STRINGS USA EUR)
 
-# MinGW only (clang-cl always writes a PDB): CodeView debug info in the
-# objects (-gcodeview, gcc 15+) and a <exe>.pdb beside every exe (ld --pdb),
-# so Visual Studio / WinDbg can debug the MinGW build with source and locals.
-option(SBSP_CODEVIEW "MinGW: CodeView debug info + .pdb per exe (Visual Studio / WinDbg)" OFF)
-
 get_filename_component(SBSP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 
-if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
-    set(SBSP_MSVC ON)       # clang-cl: MSVC-style command line + CRT
-else()
-    set(SBSP_MSVC OFF)      # MinGW g++
+if(NOT CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+    message(FATAL_ERROR
+        "The port builds with clang-cl only (cmake/clangcl-toolchain.cmake, through the presets: "
+        "port\\build-pc.cmd debug).  MinGW g++ was retired by issue #39.")
 endif()
 
 # OFF = the shim and its unit exes only (no sbsp.exe / sbsp_headless.exe,
@@ -64,17 +56,12 @@ if(SBSP_BUILD_GAME AND SBSP_PLAYTHROUGH AND NOT Python3_Interpreter_FOUND)
     if(NOT _sbsp_tree_parent STREQUAL "${CMAKE_CURRENT_SOURCE_DIR}/build")
         set(_sbsp_tree "<preset>")
     endif()
-    if(MINGW)
-        set(_sbsp_hand "in port/, with C:\\msys64\\mingw32\\bin on the PATH")
-    else()
-        set(_sbsp_hand "in port/")
-    endif()
     message(FATAL_ERROR
         "Python 3 not found, and the playthrough tests (tests/run_tier.py) need it.  "
         "Install Python 3 for Windows (python.org) and put it on PATH, or build without registering them:\n"
         "  set SBSP_PLAYTHROUGH=OFF, then port\\build-pc.cmd ${_sbsp_tree}\n"
         "  (PowerShell: $env:SBSP_PLAYTHROUGH = \"OFF\")\n"
-        "or, configuring by hand ${_sbsp_hand}:\n"
+        "or, configuring by hand in port/:\n"
         "  cmake --preset ${_sbsp_tree} -DSBSP_PLAYTHROUGH=OFF")
 endif()
 
@@ -98,95 +85,51 @@ endif()
 include(cmake/game_sources.cmake)
 
 # ---------------------------------------------------------------------------
-# Compiler-specific spellings.  -Wno-<x> switches take the GNU form on both
-# (clang-cl passes -W<name> through) - but a bare -Wall is /Wall to clang-cl,
-# which is clang's -Weverything; /W3 is its in-order spelling of -Wall (a
-# /clang:-Wall would be appended after every -Wno-, undoing them).  Codegen
-# and debug-info switches differ outright.
+# Compiler switches.  -Wno-<x> switches take the GNU form (clang-cl passes
+# -W<name> through) - but a bare -Wall is /Wall to clang-cl, which is
+# clang's -Weverything; /W3 is its in-order spelling of -Wall (a
+# /clang:-Wall would be appended after every -Wno-, undoing them).
 # ---------------------------------------------------------------------------
-if(SBSP_MSVC)
-    set(SBSP_WARN_ALL    /W3)
-    set(SBSP_DEBUG_FLAGS /Z7)               # CodeView in the object; lld-link /DEBUG collects <exe>.pdb
-    set(SBSP_OPT_FLAGS   /O2)
-    set(SBSP_GAME_DIALECT
-        /clang:-std=gnu++98
-        /clang:-fpermissive
-        /clang:-fno-strict-aliasing
-        /clang:-fno-builtin
-        /EHs-c-                             # -fno-exceptions
-        /GR-                                # -fno-rtti
-    )
-    # static CRT (/MT), like MinGW's -static: the exes carry their runtime
-    set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
-    # the MSVC CRT's "fopen/getenv/strncpy are deprecated, use the _s forms"
-    # advisories: not warnings about this code, and the _s forms are not
-    # portable to MinGW
-    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
-elseif(SBSP_CODEVIEW)
-    set(SBSP_DEBUG_FLAGS -gcodeview)
-    set(SBSP_OPT_FLAGS   -O2)
-else()
-    set(SBSP_DEBUG_FLAGS -g)
-    set(SBSP_OPT_FLAGS   -O2)
-endif()
-if(NOT SBSP_MSVC)
-    set(SBSP_WARN_ALL -Wall)
-    set(SBSP_GAME_DIALECT
-        -std=gnu++98
-        -fpermissive
-        -fno-exceptions
-        -fno-rtti
-        -fno-strict-aliasing
-        -fno-builtin
-    )
-endif()
+set(SBSP_WARN_ALL    /W3)
+set(SBSP_DEBUG_FLAGS /Z7)               # CodeView in the object; lld-link /DEBUG collects <exe>.pdb
+set(SBSP_OPT_FLAGS   /O2)
+set(SBSP_GAME_DIALECT
+    /clang:-std=gnu++98
+    /clang:-fpermissive
+    /clang:-fno-strict-aliasing
+    /clang:-fno-builtin
+    /EHs-c-                             # -fno-exceptions
+    /GR-                                # -fno-rtti
+)
+# static CRT (/MT): the exes carry their runtime
+set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
+# the MSVC CRT's "fopen/getenv/strncpy are deprecated, use the _s forms"
+# advisories: not warnings about this code
+add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 
-# The game exes under clang-cl.  MSVC mangles a global's type into its name
-# where the Itanium ABI (MinGW) uses the bare name, so a declaration that
-# disagrees with its definition is one symbol under gcc and two under
-# clang-cl: mathtab.h declares `extern const s16 SinTable[1024]`, sincos.cpp
-# defines it non-const.  The linker is told the const spelling is the other
-# one.  (The proper fix is a !PSX_MIPS_ASM arm in the PS1 sources; not
-# taken while the MinGW exe is the one that ships.)
-if(SBSP_MSVC)
-    set(SBSP_GAME_LINK_OPTIONS "/alternatename:?SinTable@@3QBFB=?SinTable@@3PAFA")
-endif()
-
-# Every exe.  MinGW: the C/C++ runtimes linked in (SDL3 is a static lib
-# there too) so the exes are standalone, plus the PDB when SBSP_CODEVIEW.
-# clang-cl: /MT already carries the CRT; /DEBUG makes lld-link write
+# Every exe: /MT already carries the CRT; /DEBUG makes lld-link write
 # <exe>.pdb from the /Z7 objects; SDL3 is a DLL in the official VC package
 # (it ships no static lib), so it is copied beside the exes to keep "runs
-# from its build dir" true on both toolchains.  One target copies it, ahead
-# of every exe: a POST_BUILD copy per exe raced when ninja linked two at
-# once, the second failing on the DLL the first held open (PR #94's run).
+# from its build dir" true.  One target copies it, ahead of every exe: a
+# POST_BUILD copy per exe raced when ninja linked two at once, the second
+# failing on the DLL the first held open (PR #94's run).
 #
 # And one application manifest for all of them, psyq/host/sbsp.rc ->
 # sbsp.manifest (issue #62): activeCodePage UTF-8, so narrow paths carry any
-# character.  MinGW's own default-manifest.o gives way to it (same resource
-# slot); lld-link is told to generate none, or the exe would carry two.
+# character.  lld-link is told to generate none, or the exe would carry two.
 set(SBSP_RC ${CMAKE_CURRENT_SOURCE_DIR}/psyq/host/sbsp.rc)
 set_source_files_properties(${SBSP_RC} PROPERTIES
     INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/psyq/host     # finds sbsp.manifest
     OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/psyq/host/sbsp.manifest)
 function(sbsp_exe_link target)
     target_sources(${target} PRIVATE ${SBSP_RC})
-    if(SBSP_MSVC)
-        target_link_options(${target} PRIVATE /DEBUG /MANIFEST:NO)
-        if(TARGET SDL3::SDL3-shared)
-            if(NOT TARGET sbsp_runtime_dlls)
-                add_custom_target(sbsp_runtime_dlls
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                            $<TARGET_FILE:SDL3::SDL3-shared> ${CMAKE_CURRENT_BINARY_DIR})
-            endif()
-            add_dependencies(${target} sbsp_runtime_dlls)
-        endif()
-    else()
-        target_link_options(${target} PRIVATE -static)
-        if(SBSP_CODEVIEW)
-            target_link_options(${target} PRIVATE -Wl,--pdb=)      # empty name = <exe>.pdb
-        endif()
+    target_link_options(${target} PRIVATE /DEBUG /MANIFEST:NO)
+    if(NOT TARGET sbsp_runtime_dlls)
+        add_custom_target(sbsp_runtime_dlls
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    $<TARGET_FILE:SDL3::SDL3-shared> ${CMAKE_CURRENT_BINARY_DIR})
     endif()
+    add_dependencies(${target} sbsp_runtime_dlls)
 endfunction()
 
 # ---------------------------------------------------------------------------
@@ -208,13 +151,11 @@ set(SBSP_GAME_DEFINES
     CLIMAX=2
     TPWART=3
     __DEV_KIT__=SONY_PCI
-)
-if(SBSP_MSVC)
     # the UCRT headers spell their exception specifications `noexcept` for
     # every C++ dialect; gnu++98 has no such keyword, and corecrt.h lets the
     # user pick the spelling first
-    list(APPEND SBSP_GAME_DEFINES "_CRT_NOEXCEPT=throw()")
-endif()
+    "_CRT_NOEXCEPT=throw()"
+)
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
     # x64 (M9): the file-overlay structs keep their 4-byte pointer fields
     # (tools/Data/include/fptr.h), the heap aligns to 16 (source/mem/memory.h).
@@ -248,7 +189,7 @@ set(SBSP_GAME_CXX_FLAGS
 
 # Include order is load-bearing (mirrors ccopt.mak); port/include shadows the
 # few PSY-Q headers that cannot compile on x86, and tools/psyq/include sits
-# BEHIND the system headers (-idirafter) so MinGW's real stddef/stdlib/stdio
+# BEHIND the system headers (-idirafter) so the CRT's real stddef/stdlib/stdio
 # win while the SDK's libgpu/libgte/libcd/... layouts stay authoritative.
 set(SBSP_GAME_INCLUDES
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -259,11 +200,7 @@ set(SBSP_GAME_INCLUDES
     ${SBSP_ROOT}/data
     ${SBSP_ROOT}/out/${SBSP_TERRITORY}/include
 )
-if(SBSP_MSVC)
-    set(SBSP_PSYQ_DIRAFTER "/clang:-idirafter${SBSP_ROOT}/tools/psyq/include")
-else()
-    set(SBSP_PSYQ_DIRAFTER -idirafter ${SBSP_ROOT}/tools/psyq/include)
-endif()
+set(SBSP_PSYQ_DIRAFTER "/clang:-idirafter${SBSP_ROOT}/tools/psyq/include")
 
 function(sbsp_game_flavour target)
     target_compile_definitions(${target} PRIVATE ${SBSP_GAME_DEFINES})
@@ -290,16 +227,12 @@ endif()
 # ---------------------------------------------------------------------------
 # PsyQ-on-PC shim runtime (modern C++)
 # ---------------------------------------------------------------------------
-# SDL3 (window/input/present host).  The mingw32 package ships a real static
-# lib, so the exes stay standalone; SDL3::SDL3-static drags its Win32 deps in
-# via the package's CMake config.  Vulkan needs only headers at build time -
-# the loader is reached at runtime through SDL_Vulkan_LoadLibrary - and MSYS2
-# puts them on the system include path.  clang-cl has neither package: the
-# official SDL3 VC devel package and the Khronos headers are fetched on
-# first configure (cmake/deps_vc.cmake), pinned to MSYS2's versions.
-if(SBSP_MSVC)
-    include(cmake/deps_vc.cmake)
-endif()
+# SDL3 (window/input/present host) and the Vulkan headers - the loader is
+# reached at runtime through SDL_Vulkan_LoadLibrary, so Vulkan needs only
+# headers at build time.  The official SDL3 VC devel package and the Khronos
+# headers are fetched on first configure (cmake/deps_vc.cmake), pinned by
+# SHA-256.
+include(cmake/deps_vc.cmake)
 find_package(SDL3 CONFIG REQUIRED)
 
 file(GLOB SBSP_SHIM_SOURCES CONFIGURE_DEPENDS
@@ -340,11 +273,7 @@ target_include_directories(psyq_shim PRIVATE
     ${SBSP_ROOT}/out/${SBSP_TERRITORY}/include
     ${SBSP_VULKAN_INCLUDE}
 )
-if(TARGET SDL3::SDL3-static)
-    target_link_libraries(psyq_shim PUBLIC SDL3::SDL3-static)
-else()
-    target_link_libraries(psyq_shim PUBLIC SDL3::SDL3)
-endif()
+target_link_libraries(psyq_shim PUBLIC SDL3::SDL3)
 target_link_libraries(psyq_shim PUBLIC winmm)   # timeBeginPeriod (host/pump.cpp)
 
 # ---------------------------------------------------------------------------
@@ -356,7 +285,6 @@ if(SBSP_BUILD_GAME)
     add_executable(sbsp $<TARGET_OBJECTS:sbsp_game_main> $<TARGET_OBJECTS:psyq_args>)
     set_target_properties(sbsp PROPERTIES LINKER_LANGUAGE CXX)
     sbsp_exe_link(sbsp)
-    target_link_options(sbsp PRIVATE ${SBSP_GAME_LINK_OPTIONS})
     target_link_libraries(sbsp PRIVATE
         $<LINK_LIBRARY:WHOLE_ARCHIVE,sbsp_game>
         psyq_shim
@@ -372,7 +300,6 @@ if(SBSP_BUILD_GAME)
     add_executable(sbsp_headless tests/headless.cpp $<TARGET_OBJECTS:psyq_args>)
     sbsp_game_flavour(sbsp_headless)
     sbsp_exe_link(sbsp_headless)
-    target_link_options(sbsp_headless PRIVATE ${SBSP_GAME_LINK_OPTIONS})
     target_link_libraries(sbsp_headless PRIVATE
         $<LINK_LIBRARY:WHOLE_ARCHIVE,sbsp_game>
         psyq_shim
@@ -443,20 +370,12 @@ sbsp_shim_test(framedump_test)  # BMP dumps: pixel-exact, SetDispMask(0) black, 
 # (source/utils/lznp.cpp): synthetic, structured and fuzzed buffers plus a
 # committed fixture must round-trip byte for byte.  No shim - the encoder, the
 # decoder and the test alone.  It was a hand-built proof until issue #61.
-# A plain tool without SDL: static on MinGW so it runs from the build tree
-# without the mingw32 DLLs, and none of sbsp_exe_link's runtime-DLL copy,
-# which fails on a target that has no DLLs to copy.
-function(sbsp_plain_exe_link target)
-    if(NOT SBSP_MSVC)
-        target_link_options(${target} PRIVATE -static)
-    endif()
-endfunction()
+# A plain tool without SDL, so none of sbsp_exe_link's runtime-DLL copy.
 add_executable(lznp_roundtrip tools/lznp-src/roundtrip_test.cpp tools/lznp-src/lznp_encode.cpp
                               ${SBSP_ROOT}/source/utils/lznp.cpp)
 target_include_directories(lznp_roundtrip PRIVATE ${SBSP_ROOT}/source/utils)
 # the game's lznp.cpp includes "lznp.h" for lznp.H, as the game flavour allows
 target_compile_options(lznp_roundtrip PRIVATE ${SBSP_DEBUG_FLAGS} -Wno-nonportable-include-path)
-sbsp_plain_exe_link(lznp_roundtrip)
 add_test(NAME lznp_roundtrip COMMAND lznp_roundtrip ${SBSP_ROOT}/port/tests/str_frame1.bin
          WORKING_DIRECTORY ${SBSP_ROOT})
 set_tests_properties(lznp_roundtrip PROPERTIES LABELS unit)
@@ -465,7 +384,6 @@ set_tests_properties(lznp_roundtrip PROPERTIES LABELS unit)
 # inputs identically (tests/lznp_exe_check.py).
 add_executable(lznp_tool tools/lznp-src/lznp_cli.cpp tools/lznp-src/lznp_encode.cpp)
 target_compile_options(lznp_tool PRIVATE ${SBSP_DEBUG_FLAGS})
-sbsp_plain_exe_link(lznp_tool)
 # The data-pipeline converters rebuilt from Utils/ (issue #48)
 include(cmake/datatools.cmake)
 if(Python3_Interpreter_FOUND)

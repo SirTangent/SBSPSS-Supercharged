@@ -1,10 +1,10 @@
 name: PR check
 
 # The quick check every pull request into SBSP-Win11 gets: build.yml's pr
-# profile, five jobs - lfs, USA data, MinGW debug, clang-cl x64 FINAL and
-# the PlayStation link.  The full set (EUR, MinGW final, the clang-cl debug
-# legs) is build.yml run by hand before a release.  A pull request that
-# changes only documentation skips this.
+# profile, five jobs - lfs, USA data, the x64 debug and final legs and the
+# PlayStation link.  The full set (EUR, the x86 legs) is build.yml run by
+# hand before a release.  A pull request that changes only documentation
+# skips this.
 on:
   pull_request:
     branches: [SBSP-Win11]

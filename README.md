@@ -18,30 +18,14 @@ In line with the overall project purpose, you can build the game executable usin
 ## 1. Prerequisites
 | Requirement | Notes |
 |---|---|
-| Windows 10 or 11, 64-bit | The shipping game is a 32-bit executable; it runs fine on 64-bit Windows using WoW64 translation. (A 64-bit build exists too, section 4.) |
+| Windows 10 or 11, 64-bit | The game is a 64-bit executable. |
 | Git with Git LFS | Install [Git for Windows](https://git-scm.com/install/windows), then `git lfs install` once. |
 | Python 3.8 or newer | From <https://www.python.org> (or its Python install manager), on the `PATH`. It runs the build scripts, the data build's text steps and the automated playthrough tests. |
-| Visual Studio 2022 with "C++ CMake tools for Windows" | Community or Build Tools, the *Desktop development with C++* workload with its *C++ CMake tools for Windows* component. The build scripts take CMake and Ninja from it (or from the `PATH`, when both are there). |
-| MSYS2, installed at `C:\msys64` | For now only for the MinGW presets (`debug`, `final`, `eur-*`; issue #39 retires them) and the PlayStation build (issue #98). Download from <https://www.msys2.org>. To install elsewhere, set `MSYS2_WIN` (Windows path) before running the `.cmd` scripts. |
-| *Optional:* LLVM + the MSVC x64/x86 build tools | Only for the `clangcl-*` presets (section 4): [LLVM](https://releases.llvm.org) at `C:\Program Files\LLVM` (or the "C++ Clang tools for Windows" VS component) plus Visual Studio's MSVC x64/x86 build tools and a Windows 10/11 SDK. Everything else (SDL3, Vulkan headers) is fetched by CMake. |
+| Visual Studio 2022 (Community or Build Tools) | The *Desktop development with C++* workload with its MSVC x64/x86 build tools, a Windows 10/11 SDK and the *C++ CMake tools for Windows* component. The build scripts take CMake and Ninja from it (or from the `PATH`, when both are there). |
+| LLVM | [LLVM](https://releases.llvm.org) at `C:\Program Files\LLVM`, or Visual Studio's *C++ Clang tools for Windows* component: the game builds with `clang-cl`. Everything else (SDL3, Vulkan headers) is fetched by CMake. |
+| *Optional:* MSYS2, installed at `C:\msys64` | Only for the PlayStation build (`port\build-psx.cmd`, section 4), until issue #98 moves it off MSYS2. Download from <https://www.msys2.org>, then in the **MSYS2 MSYS** shell: `pacman -S --needed make perl`. To install elsewhere, set `MSYS2_WIN` (Windows path). |
 
 Just a note, your GPU must support Vulkan. Most modern systems do.
-
-### MSYS2 packages (MSYS2 Shell)
-
-Open the **MSYS2 MSYS** shell and install the 32-bit toolchain the MinGW
-presets compile with (CMake and Ninja come from Visual Studio):
-
-```bash
-pacman -S --needed mingw-w64-i686-gcc mingw-w64-i686-vulkan-headers
-```
-
-The PlayStation build (`port\build-psx.cmd`, section 4) also needs the 1999
-makefiles' runtime, in the same shell:
-
-```bash
-pacman -S --needed make perl
-```
 
 The `.cmd` scripts run their Python script under `py -3`, or `python` when
 there is no launcher. The game's build runs its playthrough tests under the
@@ -59,15 +43,7 @@ remembers the setting until the script runs again with
 `SBSP_PLAYTHROUGH=ON`. Configuring by hand instead, the switch is
 `cmake --preset debug -DSBSP_PLAYTHROUGH=OFF`, run in `port\` from a
 *Developer PowerShell for VS 2022* (which puts CMake and Ninja on the
-`PATH`), with `C:\msys64\mingw32\bin` on the `PATH` too for a MinGW preset.
-
-SDL3 needs special handling. MSYS2 is retiring its 32-bit environment and has
-removed `mingw-w64-i686-sdl3` from the package index, but the package file is
-still on the mirror. Install it by URL:
-
-```bash
-pacman -U https://repo.msys2.org/mingw/mingw32/mingw-w64-i686-sdl3-3.4.10-1-any.pkg.tar.zst
-```
+`PATH`).
 
 ## 2. Get the source (Powershell)
 
@@ -125,19 +101,24 @@ MSYS2's bash for the 1999 makefiles (issue #98).
 port\build-pc.cmd debug
 ```
 
-The argument is `debug`, `final`, or `usa` (both). The script puts the MinGW
-toolchain on the path, configures with the matching CMake preset and builds
-with Ninja. A clean build takes a few minutes. `eur-debug`, `eur-final` and
-`eur` are the EUR builds and need EUR data; `all`, which is also what no
-argument means, builds all four and so needs both territories' data. Output:
+The argument is `debug`, `final`, or `usa` (both). The script configures
+with the matching CMake preset and builds with Ninja, using LLVM's `clang-cl`
+against the MSVC C runtime and Windows SDK, for 64-bit Windows
+(`x86_64-pc-windows-msvc`). A clean build takes a few minutes; the first
+configure also downloads SDL3 and the Vulkan headers into
+`port\build\deps\`. `eur-debug`, `eur-final` and `eur` are the EUR builds
+and need EUR data; `all`, which is also what no argument means, builds all
+four and so needs both territories' data. Output:
 
 | Variant | Executable | What it is |
 |---|---|---|
 | `debug` | `port\build\debug\sbsp.exe` | Asserts on, debug overlays and screen tools available, prim-pool overflow detection. Use this one while developing. |
-| `final` | `port\build\final\sbsp.exe` | The shipping configuration: asserts compiled out. Both variants use the same optimisation level (`-O2`). |
+| `final` | `port\build\final\sbsp.exe` | The shipping configuration: asserts compiled out. Both variants use the same optimisation level (`/O2`). |
 
-The same directories also contain `sbsp_headless.exe` and the nineteen
-`*_test.exe` unit-test executables. The recommended command is
+Each executable has its `.pdb` and an `SDL3.dll` beside it (the official SDL
+VC package has no static library). The same directories also contain
+`sbsp_headless.exe` and the unit-test executables. The recommended command
+is
 
 ```bat
 port\build-pc.cmd test usa
@@ -153,57 +134,32 @@ failed.
 
 ### Debugging in Visual Studio (optional)
 
-The MinGW executables carry DWARF debug info, which gdb reads and Visual
-Studio does not. Set `SBSP_CODEVIEW=1` before building to get CodeView
-instead, with a `.pdb` beside every executable:
+*File > Open > Project/Solution* on `port\build\debug\sbsp.exe` in Visual
+Studio (or open it in WinDbg) and you have source, breakpoints and locals
+from the `.pdb` beside it.
+
+### 32-bit builds (optional)
+
+The same code also builds as a 32-bit executable (`i686-pc-windows-msvc`):
 
 ```bat
-set SBSP_CODEVIEW=1
-port\build-pc.cmd debug
+port\build-pc.cmd x86-debug
 ```
 
-Then *File > Open > Project/Solution* on `port\build\debug\sbsp.exe` in
-Visual Studio (or open it in WinDbg) and you have source, breakpoints and
-locals. The same flag is a CMake option, `-DSBSP_CODEVIEW=ON`. Building
-with it prints a few harmless `undefined reference ... (.debug$S)` lines at
-link time (a GCC CodeView quirk with one function-local static); the PDB is
-fine.
+`x86` names the debug + final pair, for `test` and `soak` too, and the EUR
+trees are `x86-eur-debug` and `x86-eur-final` (`port\build-pc.cmd x86 eur`).
+They don't ship; they exist to check the 64-bit build against.
+`port\build-pc.cmd parity64 [usa|eur] [debug|final]` plays every route and
+level on both and requires the same frames, and the 64-bit exe to replay the
+32-bit exe's recordings to the same memory card. The game data is the same
+for both: the 4-byte pointer fields in the level and actor files are read
+through a 4-byte pointer type (`port/docs/conv_pc.md`, "Game-source changes
+(M9)").
 
-### Building with clang-cl (optional)
-
-The port also builds with LLVM's `clang-cl` against the MSVC C runtime and
-Windows SDK (32-bit, `i686-pc-windows-msvc`), the toolchain Visual Studio
-debugs natively and the one that does not depend on MSYS2's shrinking
-32-bit package repository:
-
-```bat
-port\build-pc.cmd clangcl-debug
-```
-
-Output is `port\build\clangcl-debug\` with the same executables, each
-with its `.pdb` and an `SDL3.dll` beside it (the official SDL VC package
-has no static library). The first configure downloads SDL3 and the Vulkan
-headers into `port\build\deps\`. `port\build-pc.cmd test clangcl` runs
-the same tests. The MinGW executables remain the 32-bit ones that ship.
-
-The same toolchain also builds a true 64-bit executable
-(`x86_64-pc-windows-msvc`; it needs the MSVC x64 build tools):
-
-```bat
-port\build-pc.cmd clangcl-x64-debug
-```
-
-`clangcl64` names the debug + final pair, for `test` and `soak` too. The
-game data is unchanged - the 4-byte pointer fields in the level and actor
-files are read through a 4-byte pointer type (`port/docs/conv_pc.md`,
-"Game-source changes (M9)"), and the 64-bit exe renders the same frames as
-the 32-bit one.
-
-Both clang-cl builds have EUR trees as well: `clangcl-eur-debug`,
-`clangcl-eur-final`, `clangcl-x64-eur-debug` and `clangcl-x64-eur-final`.
-Put the territory after the pair word, as in `port\build-pc.cmd clangcl eur`
-or `port\build-pc.cmd test clangcl64 eur` (`usa` is the default). Like the
-MinGW `eur-*` builds they need the EUR data.
+The port built with MinGW g++ until issue #39. Those presets used the names
+`debug`, `final`, `eur-debug` and `eur-final`, and `build-pc.cmd`
+reconfigures such a tree from scratch the first time. The old `clangcl*`
+words are refused with their new names.
 
 ### Continuous integration
 
@@ -212,9 +168,8 @@ Two GitHub Actions workflows share one set of jobs
 
 - **PR check** (`pr.yml`) runs on every pull request into `SBSP-Win11`
   that changes more than documentation (`*.md`, `Dox/`, `port/docs/`). It
-  builds the USA data, then builds and tests the MinGW `debug` tree and the
-  clang-cl `clangcl-x64-final` tree (the `sbsp64.exe` that `port/package.py
-  --x64` ships), and links the PlayStation executable.
+  builds the USA data, then builds and tests the `debug` and `final` trees,
+  and links the PlayStation executable.
 - **Build & test (release)** (`build.yml`) runs everything, listed below.
   Nobody's push or pull request starts it: run it before a release from the
   *Actions* tab (*Build & test (release)*, *Run workflow*) or with
@@ -227,8 +182,7 @@ before opening it:
 
 ```bat
 port\build-pc.cmd test usa
-port\build-pc.cmd test clangcl-debug
-port\build-pc.cmd test clangcl64
+port\build-pc.cmd test x86
 python port\tools\stretch_keycaps.py --check
 ```
 
@@ -237,10 +191,9 @@ and, if the change touches the game sources, the PlayStation link:
 byte-identical: `python port\tools\psx_identity.py lines` checks that in
 seconds, and `python port\tools\psx_identity.py build` proves it with clean
 builds (see `port/docs/psx_byte_identity.md`). A release run builds the USA data, checks the key-cap
-bitmaps against their masters, builds and tests the MinGW `debug` and `final`
-trees and the clang-cl `clangcl-debug`, `clangcl-x64-debug` and
-`clangcl-x64-final` trees, and links the PlayStation executable. It also
-builds the EUR data (`data-eur`) and builds and tests the MinGW `eur-debug`
+bitmaps against their masters, builds and tests the `debug`, `final`,
+`x86-debug` and `x86-final` trees, and links the PlayStation executable. It
+also builds the EUR data (`data-eur`) and builds and tests the `eur-debug`
 and `eur-final` trees on it (`pc-eur`, issue #42); locally that is
 `port\build-data.cmd eur` and `port\build-pc.cmd test eur`.
 
@@ -283,13 +236,11 @@ text exists in the game data, so `language=` loads the same strings whatever
 it says - real localization is issue #37.)
 
 **Tester zip.** `port\package.cmd [--territory usa|eur]` (or `python port\package.py`) bundles the
-FINAL and DEBUG executables, the data, a `saves\` folder, a README and
-`run-test-session.cmd` (a recorded, logged play session) into
-`port\build\sbsp-<territory>-<date>.zip`. Add `--x64` (after
-`port\build-pc.cmd clangcl64 usa` or `clangcl64 eur`) to include the 64-bit executables as
-`sbsp64.exe` / `sbsp64-debug.exe` with their `SDL3.dll`; they share the data,
-settings and memory card with the 32-bit ones, and
-`run-test-session.cmd x64` records a session on them.
+FINAL and DEBUG executables (`sbsp.exe`, `sbsp-debug.exe`) with their
+`SDL3.dll`, the data, a `saves\` folder, a README and `run-test-session.cmd`
+(a recorded, logged play session) into
+`port\build\sbsp-<territory>-<date>.zip`. `--build` runs
+`port\build-data.cmd` and `port\build-pc.cmd` for the territory first.
 
 **Skipping to a level** while testing:
 
@@ -365,7 +316,7 @@ Given this was a solo project and that I have a full-time software engineering j
 
 ### Plan to support other platforms?
 
-Yes, Definately! Right now, the MVP is to get it ported for Windows 11. In addition, it builds as a 32-bit application (running under WoW64) and, with clang-cl, as a native 64-bit (x86-64) one (section 4). Once I finish the Win11 milestone, I can start to work on other ports. Here are some on the to-do list.
+Yes, Definately! Right now, the MVP is to get it ported for Windows 11. It builds as a native 64-bit (x86-64) application with clang-cl, and as a 32-bit one for comparison (section 4). Once I finish the Win11 milestone, I can start to work on other ports. Here are some on the to-do list.
 
 * MacOS
 * Linux
