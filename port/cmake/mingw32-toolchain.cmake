@@ -16,7 +16,7 @@ set(CMAKE_CXX_COMPILER "${MINGW32_ROOT}/bin/g++.exe")
 set(CMAKE_RC_COMPILER  "${MINGW32_ROOT}/bin/windres.exe")
 
 # The compiler subprocesses (cc1plus etc.) need the mingw32 DLLs on PATH.
-# port/build-pc.sh arranges that; guard configure-time checks here too.
+# port/tools/build_pc.py arranges that; guard configure-time checks here too.
 set(CMAKE_FIND_ROOT_PATH "${MINGW32_ROOT}")
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
