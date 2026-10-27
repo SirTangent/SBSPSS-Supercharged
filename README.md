@@ -23,9 +23,12 @@ In line with the overall project purpose, you can build the game executable usin
 | Python 3.8 or newer | From <https://www.python.org> (or its Python install manager), on the `PATH`. It runs the build scripts, the data build's text steps and the automated playthrough tests. |
 | Visual Studio 2022 (Community or Build Tools) | The *Desktop development with C++* workload with its MSVC x64/x86 build tools, a Windows 10/11 SDK and the *C++ CMake tools for Windows* component. The build scripts take CMake and Ninja from it (or from the `PATH`, when both are there). |
 | LLVM | [LLVM](https://releases.llvm.org) at `C:\Program Files\LLVM`, or Visual Studio's *C++ Clang tools for Windows* component: the game builds with `clang-cl`. Everything else (SDL3, Vulkan headers) is fetched by CMake. |
-| *Optional:* MSYS2, installed at `C:\msys64` | Only for the PlayStation build (`port\build-psx.cmd`, section 4), until issue #98 moves it off MSYS2. Download from <https://www.msys2.org>, then in the **MSYS2 MSYS** shell: `pacman -S --needed make perl`. To install elsewhere, set `MSYS2_WIN` (Windows path). |
 
 Just a note, your GPU must support Vulkan. Most modern systems do.
+
+That is all: the data converters, the 1999 PlayStation toolchain (`tools\psyq`)
+and every build script are in the repository. MSYS2 is not needed any more
+(issues #39 and #98).
 
 The `.cmd` scripts run their Python script under `py -3`, or `python` when
 there is no launcher. The game's build runs its playthrough tests under the
@@ -47,7 +50,7 @@ remembers the setting until the script runs again with
 
 ## 2. Get the source (Powershell)
 
-**IMPORTANT:** At this point, you can use your default terminal. The correct version of git won't be in MSYS2 shell.
+Any terminal works: Command Prompt, PowerShell or Git Bash.
 
 ```bat
 git clone https://github.com/SirTangent/SBSPSS-Supercharged.git
@@ -90,10 +93,10 @@ territory only: one USA data build serves both the `debug` and `final`
 executables. EUR data (`port\build-data.cmd eur`) is only needed for the
 `eur-*` builds.
 
-The `.cmd` scripts work from cmd, PowerShell and Git Bash. `build-data.cmd`
-and `build-pc.cmd` are Python (`port\tools\data\build_data.py`,
-`port\tools\build_pc.py`) and need no MSYS2. `build-psx.cmd` still starts
-MSYS2's bash for the 1999 makefiles (issue #98).
+The `.cmd` scripts work from cmd, PowerShell and Git Bash: each runs a
+Python script (`port\tools\data\build_data.py`, `port\tools\build_pc.py`,
+`port\tools\psx\build_psx.py`) that configures and builds a CMake + Ninja
+project.
 
 ## 4. Build the game
 
@@ -160,6 +163,22 @@ The port built with MinGW g++ until issue #39. Those presets used the names
 `debug`, `final`, `eur-debug` and `eur-final`, and `build-pc.cmd`
 reconfigures such a tree from scratch the first time. The old `clangcl*`
 words are refused with their new names.
+
+### The PlayStation executable (optional)
+
+The game sources also still build as the original PlayStation executable,
+with the 1999 PSY-Q toolchain in `tools\psyq`:
+
+```bat
+port\build-psx.cmd USA DEBUG
+```
+
+(`USA` or `EUR`, `DEBUG` or `FINAL`; it needs that territory's data.) The
+output is `out\<territory>\<version>\version\CD\Spongey.cpe`. The build is a
+CMake + Ninja project, `port\psx`, that runs the same commands as the
+original `makefile.gaz`, which still lists what is compiled, and produces the
+same bytes. It exists so a change made for the PC can be checked not to
+change the PlayStation game (`port/docs/psx_byte_identity.md`).
 
 ### Continuous integration
 
