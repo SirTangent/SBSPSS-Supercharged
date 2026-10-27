@@ -3391,6 +3391,21 @@ and lands on `79f9d313...` again.  A second build has no work to do, and
 touching `enemy/nsklfish.h` recompiles exactly `nsklfish.cpp` and `npc.cpp`
 and relinks.
 
+### No MSYS2 (issue #98)
+
+With the PlayStation build on CMake, nothing in the port runs MSYS2:
+- the data build (`port/data`), the PC build (`port`) and the PS1 build
+  (`port/psx`) are CMake + Ninja projects run by Python scripts, with CMake
+  and Ninja from the `PATH` or Visual Studio, and every CI job uses the
+  runner's;
+- `build/globals.mak`'s MSYS2 section is gone.  It let MSYS2's make run
+  `makefile.gfx` and `makefile.gaz` (issues #16, #48, #87, #90), and no
+  script runs either now.  Both makefiles stay as the 1999 originals, and
+  `makefile.gaz`'s `<dir>_src` lists are what `port/psx` compiles.  The
+  section's last use was the oracle `port/psx` was held to (above): real
+  `makefile.gaz` builds.  Holding it to them again would mean restoring the
+  section from git history.
+
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 
 - String-literal → `char*` conversions (pervasive; `-Wno-write-strings`).
