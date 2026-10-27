@@ -141,71 +141,16 @@ MAKEDATA :=				MkData
 export PATH =		$(TOOL_DIR);$(CYG_BIN_DIR);$(PSYQ_BIN_DIR);$(PERL_BIN_DIR)
 export Path =		$(TOOL_DIR);$(CYG_BIN_DIR);$(PSYQ_BIN_DIR);$(PERL_BIN_DIR)
 
-#	MSYS2's make
-#	------------
-#	The tool pins and the path above are the 1999 route: tools/make.exe
-#	(GNU make 3.79, a native Win32 build; MakeUSA.bat and friends) with the
-#	cygwin b20 utilities in tools/cygwin, which no longer start on Windows
-#	10/11.  MSYS2's make (4.x, built for cygwin, so MAKE_HOST is *-cygwin,
-#	or *-msys from MSYS2 releases before the triplet changed; 3.79 has no
-#	MAKE_HOST) gets MSYS2's own utilities and a POSIX PATH:
-#	port/tools first, so its lznp.exe shadows the 16-bit tools/lznp.exe,
-#	then every tool directory the data and PS1 builds use.  PATH only, no
-#	Path: MSYS2 folds Windows' Path into PATH already.  This is the one
-#	copy - port/build-data.sh, port/build-psx.sh and a bare make from an
-#	MSYS2 shell all get it (issue #16).  Any other make stops here: a native
-#	Windows make 4.x (Git Bash's, say) can run neither set of tools, and a
-#	make older than 4.0 that isn't 3.79 (GnuWin32's 3.81) has no MAKE_HOST
-#	either but would get the 1999 tools that no longer start.
-#	LOG_NAME is the one tool whose name means something else in MSYS2:
-#	getuser.mak runs it for the login name when no USER_NAME is given, and
-#	/usr/bin's uname, first on PATH, prints the system name (MSYS_NT-...).
-#	So the name comes from the environment (issue #90): USERNAME, which
-#	Windows sets but a shell started without the Windows environment can
-#	lack, then USER, which MSYS2's login shell sets.  Only with neither
-#	does the shell run tools/uname.exe (GetUserName) by path; the $$( is
-#	the shell's command substitution, kept as text by the := here.
-#	The data converters rebuilt from source as x64 exes (issue #48) sit in
-#	port/tools/x64, ahead of the other tool directories, so they shadow
-#	their 1999 namesakes in tools/ and tools/data/bin, and port/tools'
-#	32-bit lznp.exe.  SBSP_VINTAGE_TOOLS=1 (port/build-data.sh
-#	--vintage-tools) leaves that directory off the PATH for an A/B against
-#	the old exes; port/tools stays, as the 16-bit lznp.exe cannot run at all.
-ifneq ($(filter-out 0 1,$(SBSP_VINTAGE_TOOLS)),)
-$(error SBSP_VINTAGE_TOOLS is '$(SBSP_VINTAGE_TOOLS)' - 1 runs the 1999 data converters, 0 or unset the rebuilt port/tools/x64 ones)
-endif
-ifeq ($(SBSP_VINTAGE_TOOLS),1)
-SBSP_X64_TOOLS :=
-else
-SBSP_X64_TOOLS :=		$(CURDIR)/port/tools/x64:
-endif
-ifneq ($(filter %-cygwin %-msys,$(MAKE_HOST)),)
-LOG_NAME :=				echo $(or $(USERNAME),$(USER),$$("$(CURDIR)/$(TOOL_DIR)/uname"))
-ECHO :=					echo
-RMDIR :=				rmdir
-MKDIR :=				mkdir
-LS :=					ls
-MV :=					mv
-DATE :=					date
-SED :=					sed
-ATTRIB :=				chmod +w
-unexport Path
-export PATH :=			/usr/bin:$(SBSP_X64_TOOLS)$(CURDIR)/port/tools:$(CURDIR)/$(TOOL_DIR):$(CURDIR)/$(DATA_BIN_DIR):$(CURDIR)/$(PSYQ_BIN_DIR):$(CURDIR)/$(PSYQ_BIN_DIR)/egcs
-#	MkLevel and MkActor are run by path, not found on the PATH.  MkLevel
-#	reads MkLevel.ini from beside its exe unless -c: names the directory:
-#	the x64 one reads the same tools/data/bin/MkLevel.ini as the 1999 one.
-ifneq ($(SBSP_VINTAGE_TOOLS),1)
-MKLEVEL :=				port/tools/x64/MkLevel -c:$(DATA_BIN_DIR)
-MKACTOR :=				port/tools/x64/MkActor
-endif
-else
-ifneq ($(MAKE_HOST),)
-$(error GNU make $(MAKE_VERSION) for $(MAKE_HOST) cannot run this build - use MSYS2's make: port\build-data.cmd / port\build-psx.cmd, or /usr/bin/make from an MSYS2 shell)
-endif
-ifeq ($(filter 3.79%,$(MAKE_VERSION)),)
-$(error GNU make $(MAKE_VERSION) is neither MSYS2's make nor tools/make.exe 3.79 - use MSYS2's make: port\build-data.cmd / port\build-psx.cmd, or /usr/bin/make from an MSYS2 shell)
-endif
-endif
+#	The port's builds (issue #98)
+#	-----------------------------
+#	No port script runs this makefile, makefile.gfx or makefile.gaz any more:
+#	the data build is port/data (issue #95) and the PlayStation build is
+#	port/psx (issue #98), both CMake + Ninja without MSYS2, and makefile.gaz's
+#	<dir>_src lists are what port/psx compiles.  The tool pins and the PATH
+#	above are the 1999 route - tools/make.exe (GNU make 3.79) with the cygwin
+#	b20 utilities in tools/cygwin, which no longer start on Windows 10/11.
+#	Until issue #98 a section here let MSYS2's make run both makefiles
+#	(issues #16, #48, #87, #90); git history has it.
 
 #	PsyQ Vars overidden for those who've installed PSYQ on their machine
 #	--------------------------------------------------------------------
