@@ -1,10 +1,12 @@
 """port/tools/build_pc.py's command line (issue #98), on fixed cases.
 
-build_pc.py replaced port/build-pc.sh and keeps its command line.  The table
-below is what build-pc.sh did with each argument list (its build/test/soak/
-parity64 steps stubbed out, the issue #98 comparison: 47 lines, all equal),
-so a change to the grammar shows up here.  Also: game_sources.cmake must be
-what port/cmake/gen_game_sources.py makes from makefile.gaz.
+build_pc.py replaced port/build-pc.sh with the same command line: issue #98
+held it to what build-pc.sh did with 47 argument lists (its build/test/soak/
+parity64 steps stubbed out), all equal.  Issue #39 then renamed the presets
+(x64 the plain ones, x86-* the 32-bit ones, the clangcl* words refused), and
+the table below is that grammar, so a change to it shows up here.  Also:
+game_sources.cmake must be what port/cmake/gen_game_sources.py makes from
+makefile.gaz.
 
     build_scripts_test.py
 """
@@ -31,28 +33,27 @@ CASES = [
     ('usa-final', ('build', ('final',), ())),
     ('eur-debug', ('build', ('eur-debug',), ())),
     ('eur-final', ('build', ('eur-final',), ())),
-    ('clangcl', ('build', ('clangcl-debug', 'clangcl-final'), ())),
-    ('clangcl usa', ('build', ('clangcl-debug', 'clangcl-final'), ())),
-    ('clangcl eur', ('build', ('clangcl-eur-debug', 'clangcl-eur-final'), ())),
-    ('clangcl EUR', ('build', ('clangcl-eur-debug', 'clangcl-eur-final'), ())),
-    ('clangcl64', ('build', ('clangcl-x64-debug', 'clangcl-x64-final'), ())),
-    ('clangcl64 eur', ('build', ('clangcl-x64-eur-debug', 'clangcl-x64-eur-final'), ())),
-    ('clangcl64 eur -j4', ('build', ('clangcl-x64-eur-debug', 'clangcl-x64-eur-final'), ('-j4',))),
-    ('clangcl-x64-debug -j2 -v', ('build', ('clangcl-x64-debug',), ('-j2', '-v'))),
-    ('clangcl-eur-final', ('build', ('clangcl-eur-final',), ())),
-    ('clangcl-x64-eur-debug', ('build', ('clangcl-x64-eur-debug',), ())),
-    ('debug -j1', ('build', ('debug',), ('-j1',))),
+    ('x86', ('build', ('x86-debug', 'x86-final'), ())),
+    ('x86 usa', ('build', ('x86-debug', 'x86-final'), ())),
+    ('x86 eur', ('build', ('x86-eur-debug', 'x86-eur-final'), ())),
+    ('x86 EUR', ('build', ('x86-eur-debug', 'x86-eur-final'), ())),
+    ('x86-debug', ('build', ('x86-debug',), ())),
+    ('x86-final', ('build', ('x86-final',), ())),
+    ('x86-eur-debug', ('build', ('x86-eur-debug',), ())),
+    ('x86-eur-final -j4', ('build', ('x86-eur-final',), ('-j4',))),
+    ('x86 eur -j4', ('build', ('x86-eur-debug', 'x86-eur-final'), ('-j4',))),
+    ('debug -j2 -v', ('build', ('debug',), ('-j2', '-v'))),
+    ('Debug', ('build', ('debug',), ())),
     ('test', ('test', ('debug', 'final', 'eur-debug', 'eur-final'), ())),
     ('test usa', ('test', ('debug', 'final'), ())),
     ('test eur', ('test', ('eur-debug', 'eur-final'), ())),
-    ('test clangcl', ('test', ('clangcl-debug', 'clangcl-final'), ())),
-    ('test clangcl eur', ('test', ('clangcl-eur-debug', 'clangcl-eur-final'), ())),
-    ('test clangcl64', ('test', ('clangcl-x64-debug', 'clangcl-x64-final'), ())),
-    ('test clangcl64 eur', ('test', ('clangcl-x64-eur-debug', 'clangcl-x64-eur-final'), ())),
-    ('test clangcl-debug', ('test', ('clangcl-debug',), ())),
+    ('test x86', ('test', ('x86-debug', 'x86-final'), ())),
+    ('test x86 eur', ('test', ('x86-eur-debug', 'x86-eur-final'), ())),
+    ('test x86-debug', ('test', ('x86-debug',), ())),
+    ('test final', ('test', ('final',), ())),
     ('soak', ('soak', ('debug', 'final', 'eur-debug', 'eur-final'), ())),
     ('soak eur', ('soak', ('eur-debug', 'eur-final'), ())),
-    ('soak clangcl64 eur', ('soak', ('clangcl-x64-eur-debug', 'clangcl-x64-eur-final'), ())),
+    ('soak x86 eur', ('soak', ('x86-eur-debug', 'x86-eur-final'), ())),
     ('parity64', ('parity64', ('', 'debug'), ())),
     ('parity64 eur', ('parity64', ('eur-', 'debug'), ())),
     ('parity64 final', ('parity64', ('', 'final'), ())),
@@ -60,13 +61,16 @@ CASES = [
     ('parity64 FINAL EUR', ('parity64', ('eur-', 'final'), ())),
     ('parity64 debug usa', ('parity64', ('', 'debug'), ())),
     ('bogus', None),
-    ('clangcl xyz', ('build', ('clangcl-debug', 'clangcl-final'), ('xyz',))),
+    ('x86 xyz', ('build', ('x86-debug', 'x86-final'), ('xyz',))),
     ('test bogus', None),
-    ('test clangcl xyz', None),
+    ('test x86 xyz', None),
+    ('test usa eur extra', None),
     ('parity64 eur final x', None),
     ('parity64 nope', None),
-    ('Debug', ('build', ('debug',), ())),
-    ('CLANGCL64 eur', ('build', ('clangcl-x64-eur-debug', 'clangcl-x64-eur-final'), ())),
+    ('clangcl', None),
+    ('clangcl64 eur', None),
+    ('clangcl-x64-debug', None),
+    ('test clangcl64', None),
 ]
 
 failed = 0

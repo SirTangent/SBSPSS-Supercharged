@@ -4,15 +4,16 @@ name: Build & test (release)
 #
 #   release  the full set, started by hand before a release: the Actions
 #            tab (Run workflow, pick the branch) or `gh workflow run
-#            build.yml --ref <branch>`.  Eleven jobs: USA and EUR data, the
-#            MinGW debug/final and eur-debug/eur-final legs, the three
-#            clang-cl legs, the PlayStation link.
+#            build.yml --ref <branch>`.  Ten jobs: lfs, USA and EUR data,
+#            the x64 debug/final and eur-debug/eur-final legs, the x86
+#            debug/final legs, the PlayStation link.
 #   pr       what pr.yml calls on every pull request into SBSP-Win11: five
-#            jobs - lfs, USA data, MinGW debug (asserts on), clang-cl x64
-#            FINAL (the sbsp64.exe port/package.py --x64 ships: 64-bit,
-#            asserts out, the other toolchain) and the PlayStation link.
-#            EUR, MinGW final and the clang-cl debug legs wait for a
-#            release run.
+#            jobs - lfs, USA data, x64 debug (asserts on) and final (the
+#            sbsp.exe port/package.py ships, asserts out), and the
+#            PlayStation link.  EUR and the x86 legs wait for a release run.
+#
+# Every PC leg is clang-cl (issue #39 retired MinGW and, with it, MSYS2's
+# 32-bit packages); only psx-build still uses MSYS2 (issue #98).
 #
 # One file for both so the two cannot drift apart (the YAML anchors below
 # only reach within a file).  Pushes trigger nothing.  A run costs LFS
@@ -141,19 +142,25 @@ jobs:
       TERRITORY: EUR
     steps: *data-steps
 
-  # PC (Win32) port, the shipping MinGW build: configure+build via the
-  # mingw32 CMake preset, then ctest's two labels - `unit` (the shim unit
-  # exes + the headless link proof) and `playthrough` (the M8 harness:
-  # exit-code self-test, fast Tier 1 routes, short Tier 2 sweep, all
-  # --uncapped so they run faster than real time and deterministically).
-  # sbsp.exe itself - the windowed game - is only ever driven headlessly.
+  # The PC port, clang-cl (issue #39 made it the only toolchain): LLVM under
+  # C:\Program Files, Visual Studio's MSVC build tools + Windows SDK (VS 2026
+  # under C:\Program Files\Microsoft Visual Studio\18 on windows-latest since
+  # 2026-09), the runner's CMake, Ninja and Python, and the SDL3 VC /
+  # Vulkan-Headers packages port/cmake/deps_vc.cmake fetches - no MSYS2.
+  # port/tools/build_pc.py configures and builds the preset, then ctest's two
+  # labels: `unit` (the shim unit exes + the headless link proof) and
+  # `playthrough` (the M8 harness: exit-code self-test, fast Tier 1 routes,
+  # short Tier 2 sweep, all --uncapped so they run faster than real time and
+  # deterministically).  sbsp.exe itself - the windowed game - is only ever
+  # driven headlessly.
   #
-  # Both variants (issue #64): FINAL is the exe port/package.py ships as
-  # sbsp.exe, and __VERSION_FINAL__ compiles the asserts out, so a variable
-  # used only inside an ASSERT breaks FINAL alone.  One USA data build
-  # serves both legs (the data is per territory, not per variant, #35).
-  # The pr profile runs debug only; clang-cl's x64 FINAL leg covers FINAL.
-  # pc-eur below runs these steps for EUR.
+  # debug and final are the x64 exes port/package.py ships (sbsp-debug.exe,
+  # sbsp.exe).  __VERSION_FINAL__ compiles the asserts out, so a variable
+  # used only inside an ASSERT breaks FINAL alone (issue #64): the pr profile
+  # runs both.  The release profile adds x86-debug and x86-final, the 32-bit
+  # builds parity64 holds x64 to.  One USA data build serves every leg (the
+  # data is per territory, not per variant, #35).  pc-eur below runs these
+  # steps for EUR.
   pc-build-test:
     name: pc-build-test (${{ matrix.preset }})
     needs: data
@@ -162,10 +169,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        preset: ${{ fromJSON(inputs.profile == 'pr' && '["debug"]' || '["debug", "final"]') }}
-    defaults: &msys2-defaults
+        preset: ${{ fromJSON(inputs.profile == 'pr' && '["debug", "final"]' || '["debug", "final", "x86-debug", "x86-final"]') }}
+    defaults: &pc-defaults
       run:
-        shell: msys2 {0}
+        shell: pwsh
     env:
       SDL_VIDEODRIVER: dummy
       SDL_AUDIODRIVER: dummy
@@ -186,38 +193,15 @@ jobs:
           name: sbsp-data-${{ env.TERRITORY }}-${{ env.VERSION }}
           path: out/
 
-      # The MinGW presets (issue #39 retires them): build_pc.py puts
-      # C:\msys64\mingw32\bin on the PATH for gcc's runtime DLLs, so
-      # location must be C:\.  windows-latest already has MSYS2 installed
-      # there - release: false reuses it instead of trying (and failing) a
-      # fresh install over it.  python runs build_pc.py and the playthrough
-      # tier driver (port/tests/run_tier.py): build_pc.py configures with
-      # Python3_EXECUTABLE set to itself.
-      - uses: msys2/setup-msys2@v2
-        with:
-          location: C:\
-          release: false
-          update: true
-          msystem: MINGW32
-          install: >-
-            mingw-w64-i686-gcc
-            mingw-w64-i686-cmake
-            mingw-w64-i686-ninja
-            mingw-w64-i686-vulkan-headers
-            mingw-w64-i686-python
-          cache: true
-
-      # MSYS2 is retiring the deprecated 32-bit environment and dropped
-      # mingw-w64-i686-sdl3 from the mingw32 index (242 i686 packages went
-      # between 2026-06 and 2026-09; gcc/cmake/ninja survive). The package
-      # file is still on the mirror, so pin it by URL - this also keeps CI
-      # on the same SDL3 the local toolchain builds against. Its deps
-      # (gcc-libs, libiconv, vulkan-loader) are still indexed.
-      - name: Install SDL3 (no longer in the mingw32 index)
+      - name: Toolchain versions
         run: |
-          pacman -U --noconfirm \
-            https://repo.msys2.org/mingw/mingw32/mingw-w64-i686-sdl3-3.4.10-1-any.pkg.tar.zst
+          & "C:\Program Files\LLVM\bin\clang-cl.exe" --version
+          cmake --version
+          ninja --version
+          python --version
 
+      # build_pc.py takes CMake and Ninja from the PATH (port/tools/buildenv.py)
+      # and configures with Python3_EXECUTABLE set to the runner's Python
       - name: Build PC port (${{ matrix.preset }})
         run: python port/tools/build_pc.py ${{ matrix.preset }}
 
@@ -238,7 +222,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: tier-logs-mingw-${{ matrix.preset }}-${{ env.TERRITORY }}
+          name: tier-logs-${{ matrix.preset }}-${{ env.TERRITORY }}
           path: port/build/${{ matrix.preset }}/tier-logs/
           if-no-files-found: ignore
           retention-days: 7
@@ -256,104 +240,12 @@ jobs:
       fail-fast: false
       matrix:
         preset: [eur-debug, eur-final]
-    defaults: *msys2-defaults
+    defaults: *pc-defaults
     env:
       TERRITORY: EUR
       SDL_VIDEODRIVER: dummy
       SDL_AUDIODRIVER: dummy
     steps: *pc-steps
-
-  # The same port built by clang-cl (LLVM, i686-pc-windows-msvc) against the
-  # MSVC CRT and Windows SDK - the toolchain that does not depend on MSYS2's
-  # shrinking 32-bit repository, and the one Visual Studio debugs natively.
-  # No MSYS2 here at all: the runner's cmake/ninja/python, LLVM under
-  # C:\Program Files, Visual Studio's x86 build tools + SDK (VS 2026 under
-  # C:\Program Files\Microsoft Visual Studio\18 on windows-latest since
-  # 2026-09), and the SDL3 VC /
-  # Vulkan-Headers packages port/cmake/deps_vc.cmake fetches.  A failure
-  # here fails the run like any other job (issue #41 item 7): it was
-  # advisory (continue-on-error) through the M8 PR 4 timebox, when its
-  # green tick meant nothing, and making it count is one of #39's gates.
-  #
-  # One job definition, two targets (M9): i686-pc-windows-msvc, and the
-  # same tree as a true 64-bit exe (SBSP_PC64 - 4-byte pointer fields kept
-  # in the file-overlay structs, a 16-aligned heap).  A matrix rather than
-  # two copies, so a change to the steps cannot land in one and miss the
-  # other.  The x64 FINAL leg is the sbsp64.exe `port/package.py --x64`
-  # ships (issue #64); `suffix` keeps the two older legs' check names as
-  # they were.  The pr profile runs that x64 FINAL leg alone.  The legs are
-  # picked whole by profile: an `exclude` would not do, because a matrix
-  # adds back any `include` entry that matches no remaining leg.
-  clangcl:
-    name: clangcl (${{ matrix.triple }}${{ matrix.suffix }})
-    needs: data
-    runs-on: windows-latest
-    timeout-minutes: 40
-    strategy:
-      fail-fast: false
-      matrix:
-        include: >-
-          ${{ fromJSON(inputs.profile == 'pr' && '[
-            {"preset": "clangcl-x64-final", "triple": "x86_64-pc-windows-msvc", "suffix": ", final"}
-          ]' || '[
-            {"preset": "clangcl-debug", "triple": "i686-pc-windows-msvc", "suffix": ""},
-            {"preset": "clangcl-x64-debug", "triple": "x86_64-pc-windows-msvc", "suffix": ""},
-            {"preset": "clangcl-x64-final", "triple": "x86_64-pc-windows-msvc", "suffix": ", final"}
-          ]') }}
-    defaults:
-      run:
-        shell: pwsh
-    env:
-      SDL_VIDEODRIVER: dummy
-      SDL_AUDIODRIVER: dummy
-    steps:
-      - uses: actions/checkout@v7
-
-      # lznp_exe_matches_source and datatools_exe_matches_source need the real
-      # exes (LFS), as in pc-build-test
-      - name: Fetch the rebuilt tools (LFS)
-        shell: bash
-        run: git lfs pull --include "port/tools/lznp.exe,port/tools/x64/*.exe"
-
-      - uses: actions/download-artifact@v8
-        with:
-          name: sbsp-data-${{ env.TERRITORY }}-${{ env.VERSION }}
-          path: out/
-
-      - name: Toolchain versions
-        run: |
-          & "C:\Program Files\LLVM\bin\clang-cl.exe" --version
-          cmake --version
-          ninja --version
-
-      # the presets name no make program, so CMake uses the runner's Ninja
-      # from the PATH
-      - name: Configure (clang-cl, ${{ matrix.triple }})
-        working-directory: port
-        run: cmake --preset ${{ matrix.preset }}
-
-      - name: Build
-        working-directory: port
-        run: cmake --build --preset ${{ matrix.preset }}
-
-      - name: Unit tests
-        # a data-dependent test that finds its input missing exits 1 here
-        # instead of 77/skipped: CI staged the data, so a skip is a loss
-        # (tests/test_skip.h, issue #61)
-        env:
-          SBSP_TEST_STRICT: 1
-        run: ctest --test-dir port/build/${{ matrix.preset }} --output-on-failure -L unit --no-tests=error
-
-      - name: Playthrough tiers (uncapped)
-        run: ctest --test-dir port/build/${{ matrix.preset }} --output-on-failure -L playthrough --no-tests=error
-
-      - uses: actions/upload-artifact@v7
-        if: failure()
-        with:
-          name: tier-logs-${{ matrix.preset }}-${{ env.TERRITORY }}
-          path: port/build/${{ matrix.preset }}/tier-logs/
-          if-no-files-found: ignore
-          retention-days: 7
 
   # Original PlayStation executable (Spongey.cpe), linked with the vintage
   # PSY-Q toolchain committed under tools/psyq/bin. No MinGW needed - just
