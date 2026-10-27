@@ -127,6 +127,7 @@ are the whole difference from `master`:
 | 61 | `shop/shop.cpp` | the cross and triangle glyphs back on `master`'s step (issue #56) |
 | 65 | the nine files that carried `#line` arms | DEBUG only: its line immediates move, once, to the files' true line numbers (issue #81).  FINAL and the line-insensitive DEBUG compare are unchanged |
 | #95 | `port/tools/data/lang.py` (in place of `lang.pl`), through `trans.h` | the `STR__*` ids in `data/translations/text.dat`'s order, so every use of one is renumbered, once.  The old order was Perl's hash order, which no build reproduced reliably, `master`'s included |
+| 69 | `enemy/nsklfish.cpp`, `enemy/nsklfish.h` | the skeletal fish's `m_chargeTime` starts at one second, so it patrols at the slow swim until its first charge, as after every charge.  It was read uninitialised (issue #39) |
 
 A change that alters the PS1 build on purpose adds its row here.  It also
 appends its before and after `Spongey.cpe` hashes to
