@@ -30,8 +30,9 @@ this is the tooling that goes with it.
       (PORT_LINE, source/system/dbg.h) as 0, and their objects are deleted
       afterwards so a later normal DEBUG build cannot reuse them.  Strictly
       instead with --strict, or when either side lacks the plumbing
-      (NOLINE_PLUMBING below).  Needs MSYS2 and the territory's data, a
-      committed tree, and no other PS1 build running on the machine.
+      (NOLINE_PLUMBING below).  Needs the territory's data, a committed
+      tree, and no other PS1 build running on the machine; the builds are
+      port/build-psx.cmd's (port/psx, CMake + Ninja, issue #98).
 
 --base defaults to the merge-base of HEAD and SBSP-Win11, so a branch is
 compared with where it started, not with whatever has merged since.
@@ -58,11 +59,13 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 # port/ is PC-only.
 GAME_DIRS = ["source", "tools/Data/include"]
 
-# Everything else that decides what the PS1 build produces: makefile.gaz and
-# the build/*.mak it includes (compiler flags, link), the per-user makefile
-# build/getuser.mak pulls from users/, the PSY-Q toolchain and tools under
-# tools/, and the wrapper that drives it all.
-BUILD_PATHS = GAME_DIRS + ["makefile.gaz", "build", "users", "tools", "port/build-psx.sh"]
+# Everything else that decides what the PS1 build produces: makefile.gaz (the
+# lists of what is compiled) and the build/*.mak it includes, the per-user
+# makefile build/getuser.mak pulls from users/, the PSY-Q toolchain and tools
+# under tools/, and port/psx's CMake build with the scripts that drive it
+# (issue #98; port/build-psx.sh until then).
+BUILD_PATHS = GAME_DIRS + ["makefile.gaz", "build", "users", "tools",
+                           "port/psx", "port/tools/psx", "port/build-psx.cmd"]
 
 # What the PS1 compiler (ccpsx / EGCS) has defined, as far as the port's
 # gates care.  mips comes from the compiler; PSX_MIPS_ASM from
@@ -75,10 +78,12 @@ PS1_MACROS = {
     "SBSP_PC64": False,
 }
 
-# The line-insensitive DEBUG compare (issue #81) takes three files: the header
-# that defines PORT_LINE, the makefile that turns SBSP_IDENTITY_NOLINE into a
-# -D, and the wrapper that hands it to make.  A revision has the compare only
-# if all three carry the working plumbing - these patterns, matched with the
+# The line-insensitive DEBUG compare (issue #81) takes the header that defines
+# PORT_LINE, and a build that turns SBSP_IDENTITY_NOLINE into a -D with the
+# wrapper that asks for it: makefile.gaz and port/build-psx.sh until issue
+# #98, port/psx/CMakeLists.txt and port/tools/psx/build_psx.py since (the
+# NOLINE_ROUTES, either of which will do).  A revision has the compare only
+# if its files carry the working plumbing - these patterns, matched with the
 # file's comments stripped, so a comment naming the define is not enough.
 # Against an older base, DEBUG is compared strictly.  The makefile.gaz test
 # is the ifeq that compares the variable's origin with "command line", in
@@ -99,15 +104,22 @@ NOLINE_DEFINE = "SBSP_IDENTITY_NOLINE"
 NOLINE_PLUMBING = {
     "source/system/dbg.h": [r"#\s*ifdef\s+SBSP_IDENTITY_NOLINE\b",
                             r"#\s*define\s+PORT_LINE\s+0\b"],
-    "makefile.gaz": [NOLINE_IFEQ,
-                     r"-DSBSP_IDENTITY_NOLINE\b"],
-    "port/build-psx.sh": [r"--identity-noline\)",
-                          r"SBSP_IDENTITY_NOLINE=1"],
 }
-NOLINE_FILES = list(NOLINE_PLUMBING)
+NOLINE_ROUTES = [
+    {"makefile.gaz": [NOLINE_IFEQ,
+                      r"-DSBSP_IDENTITY_NOLINE\b"],
+     "port/build-psx.sh": [r"--identity-noline\)",
+                           r"SBSP_IDENTITY_NOLINE=1"]},
+    {"port/psx/CMakeLists.txt": [r"if\(SBSP_IDENTITY_NOLINE\)",
+                                 r"-DSBSP_IDENTITY_NOLINE\b"],
+     "port/tools/psx/build_psx.py": [r"\"--identity-noline\"",
+                                     r"-DSBSP_IDENTITY_NOLINE="]},
+]
+NOLINE_FILES = list(NOLINE_PLUMBING) + [f for r in NOLINE_ROUTES for f in r]
 NOLINE_ARG = "--identity-noline"
-# What makefile.gaz prints when it takes the define.  Every line-insensitive
-# build's log must hold it, and no strict build's may.
+# What the build prints when it takes the define (makefile.gaz's $(info),
+# port/psx's configure message).  Every line-insensitive build's log must
+# hold it, and no strict build's may.
 NOLINE_MARKER = "SBSP_IDENTITY_NOLINE: PORT_LINE is 0"
 
 
@@ -550,19 +562,6 @@ def cmd_lines(args):
 
 # ---------------------------------------------------------------- build
 
-def msys_bash():
-    for p in (r"C:\msys64\usr\bin\bash.exe", "/usr/bin/bash"):
-        if os.path.exists(p):
-            return p
-    fail("MSYS2 bash not found (C:\\msys64) - the PS1 build runs under MSYS2, see psx_byte_identity.md")
-
-
-def posix(path):
-    path = path.replace("\\", "/")
-    m = re.match(r"([A-Za-z]):/(.*)", path)
-    return "/%s/%s" % (m.group(1).lower(), m.group(2)) if m else path
-
-
 def describe(path):
     """Size, CRC32 and SHA-256, read in one streaming pass: the columns of
     port/docs/psx_build_log.csv."""
@@ -577,17 +576,16 @@ def describe(path):
 
 def strip_file_comments(path, text):
     """text without its comments, by the file's language: C for headers,
-    '#' to the end of the line for the makefile and the shell script."""
+    '#' lines for the makefile, the scripts and CMakeLists.txt."""
     if path.endswith((".h", ".cpp", ".H")):
         return COMMENT_OR_LITERAL.sub(
             lambda m: " " if m.group(0)[0] == "/" else m.group(0), text)
     return "\n".join(l for l in text.split("\n") if not l.lstrip().startswith("#"))
 
 
-def knows_noline(rev):
-    """Whether rev's tree has the line-insensitive DEBUG compare end to end:
-    every pattern of NOLINE_PLUMBING in code, not only in a comment."""
-    for f, patterns in NOLINE_PLUMBING.items():
+def has_plumbing(rev, files):
+    """Every pattern of {file: patterns} in rev's code, not only in a comment."""
+    for f, patterns in files.items():
         r = git("show", "%s:%s" % (rev, f), check=False)
         if r.returncode != 0:
             return False
@@ -597,10 +595,17 @@ def knows_noline(rev):
     return True
 
 
+def knows_noline(rev):
+    """Whether rev's tree has the line-insensitive DEBUG compare end to end:
+    NOLINE_PLUMBING, and one of the NOLINE_ROUTES."""
+    return has_plumbing(rev, NOLINE_PLUMBING) and any(has_plumbing(rev, r) for r in NOLINE_ROUTES)
+
+
 def clean_tree(territory, version):
     """Delete a PS1 tree's objects, dependency files and linked Spongey.cpe,
-    so its next build recompiles every TU.  make tracks no -D flags, so this
-    also keeps a line-insensitive build's objects out of a normal one."""
+    so its next build recompiles every TU, and so a line-insensitive build's
+    objects never stand in for a normal one's (port/psx also rebuilds when
+    the -D flags change; make did not)."""
     tree = os.path.join(REPO, "out", territory, version)
     for d in (os.path.join(tree, "CD", "objs"), os.path.join(tree, "deps")):
         shutil.rmtree(d, ignore_errors=True)
@@ -614,16 +619,16 @@ def psx_build(territory, version, log, noline):
     """A clean PS1 build, with PORT_LINE as 0 if noline.  Returns the path of
     a Spongey.cpe that this build wrote: the old one is deleted first and the
     new one must be newer than the start, so a build that fails without
-    saying so cannot hand back the other side's executable (build-psx.sh
-    warns its exit status can be swallowed)."""
+    saying so cannot hand back the other side's executable."""
     cpe = clean_tree(territory, version)
     start = time.time()
-    env = dict(os.environ, MSYSTEM="MSYS")
-    env.pop(NOLINE_DEFINE, None)        # build-psx.sh ignores it; keep its warning out of the log
-    cmd = "cd '%s' && port/build-psx.sh %s %s%s" % (
-        posix(REPO), territory, version, " " + NOLINE_ARG if noline else "")
+    env = dict(os.environ)
+    env.pop(NOLINE_DEFINE, None)        # build_psx.py ignores it; keep its warning out of the log
+    cmd = [sys.executable, os.path.join(REPO, "port", "tools", "psx", "build_psx.py"), territory, version]
+    if noline:
+        cmd.append(NOLINE_ARG)
     with open(log, "wb") as f:
-        r = subprocess.run([msys_bash(), "-lc", cmd], stdout=f, stderr=subprocess.STDOUT, env=env)
+        r = subprocess.run(cmd, cwd=REPO, stdout=f, stderr=subprocess.STDOUT, env=env)
     if r.returncode != 0 or not os.path.exists(cpe) or os.path.getmtime(cpe) < start - 2:
         fail("PS1 build failed (%s %s) - see %s" % (territory, version, log))
     marked = NOLINE_MARKER in open(log, "rb").read().decode(errors="replace")
