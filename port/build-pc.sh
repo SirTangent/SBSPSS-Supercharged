@@ -180,8 +180,8 @@ soak_one()
 #
 # Every leg runs even if an earlier one fails, and the combined result is the
 # exit status: leg 3 is the only thing that exercises the cross-exe replay and
-# the card compare, so a known divergence in leg 2 - FINAL has one, see
-# conv_pc.md - must not be what stops it from ever being reached.
+# the card compare, so a divergence in leg 2 (USA FINAL had one until
+# conv_pc.md entry 69) must not be what stops it from ever being reached.
 #
 # The territory picks the trees (clangcl-<v> / clangcl-eur-<v> and their x64
 # pair) and the runner's --territory, which adds the EUR-only routes
@@ -222,11 +222,10 @@ case "$what" in
         for p in $list; do soak_one "$p"; done
         ;;
     parity64)
-        # [usa|eur] [debug|final]: USA and DEBUG by default, the variant the
-        # A/B is green on.  USA FINAL has a known 39-frame divergence
-        # (campaign 6858-6897, an uninitialised read - conv_pc.md, issue
-        # #39), so `parity64 final` is expected to report a failure; EUR
-        # FINAL does not show it.
+        # [usa|eur] [debug|final]: USA and DEBUG by default.  USA FINAL
+        # diverged on 39 campaign frames (6858-6897) until conv_pc.md entry
+        # 69 initialised the skeletal fish's m_chargeTime (issue #39); it
+        # passes now, as EUR FINAL always did.
         [ $# -le 2 ] || usage
         t=usa
         v=debug

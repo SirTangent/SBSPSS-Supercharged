@@ -3212,6 +3212,12 @@ nothing runs it.  The PS1 build keeps its own make + Perl (`makefile.gaz`,
       differ between the variants, before and after alike, and aren't the
       fish: `pause_quit` from frame 462 and level 2 from frame 1869.
 
+    The PS1 exe grows by 44 bytes, the new `init()`: USA DEBUG-NOLINE
+    `D1CB3B3D` -> `F3EBC48E`, FINAL `8ACD4D77` -> `4DEFF69E`, on the same
+    `trans.h` (`psx_build_log.csv`).  `build-pc.sh parity64 usa final`
+    passes all three legs, which it hadn't since PR #45: the x86 and x64
+    FINAL exes now draw the campaign's 6858-6897 alike.
+
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 
 - String-literal → `char*` conversions (pervasive; `-Wno-write-strings`).
