@@ -130,7 +130,7 @@ def main():
         ok = got == want
         failed += not ok
         print("%s  lines: %s -> %s" % ("pass" if ok else "FAIL", name, "ok" if got else "DIFF"))
-    pattern = tool.NOLINE_PLUMBING["makefile.gaz"][0]
+    pattern = tool.NOLINE_IFEQ
     for text, want in [(t, True) for t in NOLINE_YES] + [(t, False) for t in NOLINE_NO]:
         got = re.search(pattern, text, re.M) is not None
         ok = got == want

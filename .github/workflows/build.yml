@@ -12,8 +12,9 @@ name: Build & test (release)
 #            sbsp.exe port/package.py ships, asserts out), and the
 #            PlayStation link.  EUR and the x86 legs wait for a release run.
 #
-# Every PC leg is clang-cl (issue #39 retired MinGW and, with it, MSYS2's
-# 32-bit packages); only psx-build still uses MSYS2 (issue #98).
+# Every PC leg is clang-cl (issue #39 retired MinGW), and no job uses MSYS2
+# (issue #98): the data, PC and PlayStation builds all run on the runner's
+# CMake, Ninja and Python.
 #
 # One file for both so the two cannot drift apart (the YAML anchors below
 # only reach within a file).  Pushes trigger nothing.  A run costs LFS
@@ -27,10 +28,9 @@ name: Build & test (release)
 # matrix legs of data / pc-build-test, because `needs` waits for every leg:
 # an EUR failure must not hold up the USA jobs, nor the reverse.  Both data
 # jobs need only the lfs job, which fetches the LFS objects into the cache
-# once for both.  The EUR data failure #42
-# was filed for was Git Bash's native make cutting the parkgrab command
-# line short, which build/globals.mak now refuses (PR #87); the runner
-# uses MSYS2's make.
+# once for both.  The EUR data failure #42 was filed for was Git Bash's
+# native make cutting the parkgrab command line short; the data build has
+# not used make since issue #95.
 on:
   workflow_dispatch:
     inputs:
@@ -247,18 +247,19 @@ jobs:
       SDL_AUDIODRIVER: dummy
     steps: *pc-steps
 
-  # Original PlayStation executable (Spongey.cpe), linked with the vintage
-  # PSY-Q toolchain committed under tools/psyq/bin. No MinGW needed - just
-  # MSYS2 base driving those 32-bit PE console tools directly. Only links
-  # (`dirs link`); pressing a disc image needs 16-bit tools that cannot run
-  # on 64-bit Windows at all, so that stays a local/manual step.
+  # Original PlayStation executable (Spongey.cpe), compiled and linked with
+  # the vintage PSY-Q toolchain committed under tools/psyq/bin: 32-bit PE
+  # console tools that port/psx's CMake + Ninja build drives directly, with
+  # the runner's CMake, Ninja and Python - no MSYS2 (issue #98).  Only the
+  # executable; pressing a disc image needs 16-bit tools that cannot run on
+  # 64-bit Windows at all, so that stays a local/manual step.
   psx-build:
     needs: data
     runs-on: windows-latest
     timeout-minutes: 20
     defaults:
       run:
-        shell: msys2 {0}
+        shell: cmd
     steps:
       - uses: actions/checkout@v7
 
@@ -267,14 +268,8 @@ jobs:
           name: sbsp-data-${{ env.TERRITORY }}-${{ env.VERSION }}
           path: out/
 
-      - uses: msys2/setup-msys2@v2
-        with:
-          msystem: MSYS
-          install: make perl
-          cache: true
-
       - name: Build PSX executable (Spongey.cpe)
-        run: bash port/build-psx.sh "$TERRITORY" "$VERSION"
+        run: port\build-psx.cmd %TERRITORY% %VERSION%
 
       - uses: actions/upload-artifact@v7
         with:

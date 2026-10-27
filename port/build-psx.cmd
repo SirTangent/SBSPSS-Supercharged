@@ -1,16 +1,14 @@
 @echo off
-rem Build the original PlayStation executable (Spongey.cpe) on Windows.
-rem Requires MSYS2 (C:\msys64) with make installed, and a prior data build
-rem (the generated headers in out\<TERRITORY>\include are compile inputs).
-rem Usage: port\build-psx.cmd [USA^|EUR] [DEBUG^|FINAL]    (defaults: USA DEBUG)
-rem The entry point from cmd, PowerShell or Git Bash: build-psx.sh itself only
-rem runs in MSYS2's bash (issue #51), which this starts as an MSYS login shell
-rem whatever MSYSTEM the caller has (Git Bash sets MINGW64).
+rem Build the original PlayStation executable (Spongey.cpe) on Windows:
+rem port\tools\psx\build_psx.py, which builds port\psx's CMake + Ninja project
+rem over the 1999 PSY-Q toolchain in tools\psyq (issue #98; until then this
+rem started MSYS2's bash for build-psx.sh and makefile.gaz).  Needs Python
+rem 3.8+, CMake + Ninja from the PATH or Visual Studio's "C++ CMake tools
+rem for Windows", and a prior data build (the generated headers in
+rem out\<TERRITORY>\include are compile inputs).
+rem Usage: port\build-psx.cmd [USA^|EUR] [DEBUG^|FINAL] [--identity-noline]    (defaults: USA DEBUG)
 setlocal
-if not defined MSYS2_WIN set "MSYS2_WIN=C:\msys64"
-set "MSYSTEM=MSYS"
-set "SCRIPT=%~dp0build-psx.sh"
-set "SCRIPT=%SCRIPT:\=/%"
-"%MSYS2_WIN%\usr\bin\bash.exe" -l "%SCRIPT%" %*
+call "%~dp0findpy.cmd" || exit /b 1
+%PY% -I "%~dp0tools\psx\build_psx.py" %*
 rem propagate the build's exit code to the caller
 endlocal & exit /b %ERRORLEVEL%

@@ -3322,6 +3322,75 @@ New recordings come from the x64 exes.
     external linkage, the declaration's symbol, so the alias is gone.
     Nothing writes to the table.
 
+## The PlayStation build on CMake + Ninja (issue #98)
+
+`port\build-psx.cmd` no longer starts MSYS2's bash for `build-psx.sh` and
+`makefile.gaz`.  It runs `port/tools/psx/build_psx.py`, which builds
+`port/psx`: a CMake project with no compiler (`project(... NONE)`), whose
+custom commands run the 1999 PSY-Q tools in `tools/psyq` as `makefile.gaz`
+did.  With it, no build and no CI job needs MSYS2.
+
+- **What is compiled** still comes from `makefile.gaz`.
+  `port/tools/psx/psx_manifest.py` reads its `<dir>_src` and
+  `<dir>_src_mip` lists at configure time and resolves them as make did: the
+  directories in `$(wildcard source/*)`'s NTFS order (case-insensitive:
+  `... projectl PsxBoot save ...`), the `.mip` objects first, then the C++
+  ones, with `$($(FILE_SYSTEM)_FILESYS_SRC)` and the generated
+  `$(VERSION)/$(TERRITORY)/$(FILE_SYSTEM)/info`.  A game-source change still
+  edits `makefile.gaz`, and the CMake build reconfigures when it changes.
+- **How it is compiled** is transcribed into `port/psx/CMakeLists.txt`:
+  `ccopt.mak`'s flags for the CD build and user CDBUILD, the assembler
+  options, `lnk.mak`'s link flags.  `port/tools/psx/psxstep.py` runs each
+  step from the repository root with make's relative paths (DEBUG bakes
+  `__FILE__` in): `ccpsx -c`, `dmpsx -b` and `objbodge` per object,
+  `asmpsx`, `slink` and `symmunge`.  It writes `info.mip` and the linker
+  command file `Spongey.ln` as `tools/glecho.exe` did (a line per item,
+  CRLF, `&` for a double quote).
+- **Found while porting:**
+  - `ccpsx` reads `sn.ini` from the directory `SN_PATH` names, not from its
+    current directory (the root copy `build-psx.sh` made was not what it
+    read).  `psxstep.py` sets `SN_PATH` to `tools/psyq/bin/egcs`.
+  - Windows starts a child exe found on the parent's `PATH`, not the
+    child's, so `psxstep.py` resolves each tool against the tool `PATH`.
+  - The assembler `ccpsx` runs crashes on a long absolute `TEMP`.  Each
+    compile gets a short, relative one, `out/<T>/<V>/CD/temp/<8 hex>`, like
+    make's `TEMP` (`out/<T>/<V>/CD/temp`).
+- **Parallel.**  make shared one `a.o`, one `dep.tmp` and, under MSYS2, one
+  `C:/msys64/tmp/PQ3` between all compiles, so builds ran one file at a
+  time.  Each compile now has its own `TEMP`, intermediate `a.o` and
+  `DEPENDENCIES_OUTPUT`, and Ninja runs them side by side: a clean build
+  takes about 6 seconds (one to two minutes under make).  The compiler's
+  dependency output becomes a Ninja depfile, in place of `dep.pl` and the
+  `deps/` tree.  The `-D` flags are part of each command, so switching
+  `--identity-noline` on or off rebuilds every object (make needed a clean
+  tree and `build-psx.sh`'s `identity-mode` stamp).  `build_psx.py` holds a
+  lock in `%TEMP%`, so a second PS1 build waits for the first: two trees
+  share `info.mip` under `source/system/`.
+- **`psx_identity.py`** runs `build_psx.py` with its own Python, and counts
+  `port/psx`, `port/tools/psx` and `port/build-psx.cmd` as build inputs.
+  Its line-insensitive check accepts either build route (`NOLINE_ROUTES`):
+  this one, or `makefile.gaz` with `build-psx.sh` before it.
+- **Gone:** `port/build-psx.sh`, `port/require-msys2.sh`, and CI's MSYS2
+  step in `psx-build`, which now runs `port\build-psx.cmd` from cmd.
+
+Proof: against real `makefile.gaz` builds of the same tree (MSYS2's make,
+`build-psx.sh`), with every `C:\msys64` entry removed from the calling
+`PATH`:
+
+| | objects | `Spongey.ln` | `.cpe` | `.sym` | `.map` |
+|---|---|---|---|---|---|
+| USA DEBUG | 295/295 identical | identical | identical (`79f9d313...`) | identical | identical |
+| USA FINAL | 295/295 | identical | identical (`4437eca0...`, FINAL `4DEFF69E`) | identical | identical |
+| EUR DEBUG | 295/295 | identical | identical (`240e02e0...`) | identical | identical |
+| EUR FINAL | 295/295 | identical | identical (`714022fb...`) | identical | identical |
+
+`--identity-noline` USA DEBUG prints the marker and links
+`8627c51e...`, the line-insensitive DEBUG `psx_identity.py` built through
+make (DEBUG-NOLINE `F3EBC48E`); the next normal build rebuilds every object
+and lands on `79f9d313...` again.  A second build has no work to do, and
+touching `enemy/nsklfish.h` recompiles exactly `nsklfish.cpp` and `npc.cpp`
+and relinks.
+
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 
 - String-literal → `char*` conversions (pervasive; `-Wno-write-strings`).
