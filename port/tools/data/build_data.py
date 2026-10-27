@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Build the game data, out/<T>/ (issue #95): port/build-data.cmd and
-port/build-data.sh run this.
+"""Build the game data, out/<T>/ (issue #95): port/build-data.cmd runs this.
 
 It configures and builds the CMake data project, port/data (presets
 data-usa / data-eur), with Ninja.  The command line is build-data's as it
@@ -16,15 +15,18 @@ variant, and a DEBUG and a FINAL exe read the same out/<T>/cd.  Each
 build passes the converter set and clears the test-only final.dat
 override, so neither carries over from an earlier configure.
 
-CMake and Ninja are MSYS2's mingw32 ones (the PC build's, port/CMakePresets.json)
-when they are there, else the ones on the PATH.
+CMake and Ninja come from port/tools/buildenv.py, as for the PC build: the
+PATH, else Visual Studio's "C++ CMake tools for Windows" (issue #98).
 """
 import os
-import shutil
 import subprocess
 import sys
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(HERE))      # port/tools: buildenv, also under python -I
+import buildenv                                 # noqa: E402
+
+ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 TOOLS = ["MkData", "Tga2Gfx", "scripter", "lznp", "MkActor", "MkLevel", "parkgrab", "transtext"]
 
 
@@ -61,18 +63,6 @@ def parse(argv):
     return territory, vintage
 
 
-def find(name):
-    msys2 = os.environ.get("MSYS2_WIN", r"C:\msys64")
-    exe = os.path.join(msys2, "mingw32", "bin", name + ".exe")
-    if os.path.isfile(exe):
-        return exe
-    exe = shutil.which(name)
-    if not exe:
-        sys.exit("build-data: no %s - install MSYS2's mingw-w64-i686-%s (pacman -S --needed "
-                 "mingw-w64-i686-cmake mingw-w64-i686-ninja) or put one on the PATH" % (name, name))
-    return exe
-
-
 def check_tools():
     for t in TOOLS:
         exe = os.path.join(ROOT, "port", "tools", "x64", t + ".exe")
@@ -104,8 +94,8 @@ def main(argv):
     env = dict(os.environ)
     env.setdefault("COMSPEC", os.path.join(os.environ.get("SYSTEMROOT", r"C:\Windows"), "System32", "cmd.exe"))
 
-    cmake = find("cmake")
-    ninja = find("ninja")
+    cmake = buildenv.find_cmake()
+    ninja = buildenv.find_ninja()
     src = os.path.join(ROOT, "port", "data")
     configure = [cmake, "--preset", preset, "-DCMAKE_MAKE_PROGRAM=" + ninja.replace("\\", "/"),
                  "-DSBSP_DATA_TOOLS=" + ("vintage" if vintage else "x64"), "-DSBSP_DATA_FINAL_DAT="]

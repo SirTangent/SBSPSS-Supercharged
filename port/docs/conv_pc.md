@@ -3218,6 +3218,59 @@ nothing runs it.  The PS1 build keeps its own make + Perl (`makefile.gaz`,
     passes all three legs, which it hadn't since PR #45: the x86 and x64
     FINAL exes now draw the campaign's 6858-6897 alike.
 
+## Build scripts in Python (issue #98)
+
+The first step of retiring MSYS2: the PC and data builds no longer need it,
+except for the MinGW presets' gcc (issue #39 retires those).  The PS1 build
+still runs `makefile.gaz` under MSYS2's bash and make until its own step.
+
+- **`port/tools/build_pc.py`** replaces `port/build-pc.sh`, with the same
+  command line (`<preset>`, `usa`/`eur`, `clangcl [usa|eur]`,
+  `clangcl64 [usa|eur]`, `all`, `test ...`, `soak ...`,
+  `parity64 [usa|eur] [debug|final]`, Ninja arguments after the word).
+  `port\build-pc.cmd` runs it.  `port/tests/build_scripts_test.py`
+  (ctest `build_scripts_rules`, unit) holds the grammar to what
+  `build-pc.sh` did with 47 argument lists, measured with its steps stubbed
+  out: all 47 equal.
+- **`port/tools/buildenv.py`** finds CMake (3.28 or newer) and Ninja for
+  both builds: `SBSP_CMAKE`/`SBSP_NINJA`, then the `PATH`, then Visual
+  Studio's "C++ CMake tools for Windows" component through `vswhere.exe`,
+  newest install first.  Visual Studio 2022's are CMake 3.31 and Ninja
+  1.12; 2019's CMake (3.20) is too old for the schema-8 presets and is
+  skipped.  ctest is the one beside the CMake used.
+- **The presets name no make program.**  `msys2-ninja` and its hard-coded
+  `C:/msys64/mingw32/bin/ninja.exe` are gone, from `port/data`'s presets too:
+  both scripts pass `-DCMAKE_MAKE_PROGRAM` with the Ninja they found.  A
+  hand configure needs Ninja on the `PATH` (a Developer PowerShell for VS).
+- **MinGW presets:** `build_pc.py` puts `C:\msys64\mingw32\bin` (or
+  `%MSYS2_WIN%`'s) on the `PATH` for them only, as `build-pc.sh` did for
+  every preset.  The clang-cl presets run without it.
+- **Python:** every tree is configured with `Python3_EXECUTABLE` set to the
+  Python running `build_pc.py`, so the playthrough tests run under it, not
+  whatever `find_package` meets first (MSYS2's, before).  The `.cmd`
+  launchers call `port\findpy.cmd`, which takes `py -3`, else `python`,
+  each only if it runs: the Microsoft Store's `python.exe` alias is on the
+  `PATH` but only opens the Store.  `package.cmd` no longer uses MSYS2's
+  python3.
+- **Generators:** `gen_game_sources.py` (with `extract_tus.awk`'s rules) and
+  `gen_spv.py` replace their `.sh` versions.  Each writes the committed file
+  byte for byte apart from its own name in the header, and each takes
+  `--check`.  `build_scripts_rules` also runs `gen_game_sources.py
+  --check`, so a `makefile.gaz` TU list change without a regenerated
+  manifest fails a unit test.
+- **CI:** `data` and `data-eur` drop `setup-msys2` and use the runner's
+  CMake and Ninja.  The clang-cl job configures without
+  `-DCMAKE_MAKE_PROGRAM=ninja`.  The MinGW jobs keep MSYS2 (issue #39) and
+  run `build_pc.py`.  `build-data.sh` (a bash hand-over to `build-data.cmd`)
+  is deleted.
+
+Checked with every `C:\msys64` entry removed from the calling `PATH`:
+- `build-data.cmd usa` through Visual Studio's CMake and Ninja: all 385
+  files of `out/USA` identical to the MSYS2-tool build, `trans.h` included;
+- `build-pc.cmd test clangcl-x64-debug` and `test debug` (MinGW): unit
+  29/29 and playthrough 3/3 each.  Both trees were last configured by
+  MSYS2's CMake 4.3; Visual Studio's 3.31 reconfigured them in place.
+
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 
 - String-literal → `char*` conversions (pervasive; `-Wno-write-strings`).

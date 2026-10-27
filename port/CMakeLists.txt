@@ -56,25 +56,24 @@ find_package(Python3 COMPONENTS Interpreter)
 # register none of them (issue #41): skipping them has to be asked for.
 option(SBSP_PLAYTHROUGH "Register the playthrough tests (needs Python 3)" ON)
 if(SBSP_BUILD_GAME AND SBSP_PLAYTHROUGH AND NOT Python3_Interpreter_FOUND)
-    # name the command that reaches configure: build-pc.sh/.cmd hand their
-    # extra args to the build, so the opt-out is an environment variable there
+    # name the command that reaches configure: build-pc.cmd hands its extra
+    # args to the build, so the opt-out is an environment variable there.
+    # build_pc.py passes its own Python, so this is a hand configure's error.
     get_filename_component(_sbsp_tree "${CMAKE_BINARY_DIR}" NAME)
     get_filename_component(_sbsp_tree_parent "${CMAKE_BINARY_DIR}" DIRECTORY)
     if(NOT _sbsp_tree_parent STREQUAL "${CMAKE_CURRENT_SOURCE_DIR}/build")
         set(_sbsp_tree "<preset>")
     endif()
     if(MINGW)
-        set(_sbsp_py_hint "Install it (MSYS2: pacman -S mingw-w64-i686-python)")
-        set(_sbsp_hand "from an MSYS2 MINGW32 shell in port/")
+        set(_sbsp_hand "in port/, with C:\\msys64\\mingw32\\bin on the PATH")
     else()
-        set(_sbsp_py_hint "Install Python 3 for Windows (python.org) and put it on PATH")
         set(_sbsp_hand "in port/")
     endif()
     message(FATAL_ERROR
         "Python 3 not found, and the playthrough tests (tests/run_tier.py) need it.  "
-        "${_sbsp_py_hint}, or build without registering them:\n"
-        "  SBSP_PLAYTHROUGH=OFF port/build-pc.sh ${_sbsp_tree}\n"
-        "  (Command Prompt: set SBSP_PLAYTHROUGH=OFF, then port\\build-pc.cmd ${_sbsp_tree})\n"
+        "Install Python 3 for Windows (python.org) and put it on PATH, or build without registering them:\n"
+        "  set SBSP_PLAYTHROUGH=OFF, then port\\build-pc.cmd ${_sbsp_tree}\n"
+        "  (PowerShell: $env:SBSP_PLAYTHROUGH = \"OFF\")\n"
         "or, configuring by hand ${_sbsp_hand}:\n"
         "  cmake --preset ${_sbsp_tree} -DSBSP_PLAYTHROUGH=OFF")
 endif()
@@ -407,7 +406,7 @@ function(sbsp_shim_test name)
     target_link_libraries(${name} PRIVATE psyq_shim)
     add_test(NAME ${name} COMMAND ${name} WORKING_DIRECTORY ${SBSP_ROOT})
     # 77: a layer whose inputs are absent (tests/test_skip.h) - ctest then
-    # reports the test as skipped, never as passed; build-pc.sh test and CI
+    # reports the test as skipped, never as passed; build-pc.cmd test and CI
     # set SBSP_TEST_STRICT=1, under which the same case exits 1 (issue #61)
     set_tests_properties(${name} PROPERTIES LABELS unit SKIP_RETURN_CODE 77)
 endfunction()
@@ -520,11 +519,17 @@ if(Python3_Interpreter_FOUND)
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/lang_test.py
              WORKING_DIRECTORY ${SBSP_ROOT})
     set_tests_properties(data_text_rules PROPERTIES LABELS unit)
+    # port/tools/build_pc.py's command line, as build-pc.sh's was, and
+    # game_sources.cmake in step with makefile.gaz (issue #98).
+    add_test(NAME build_scripts_rules
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/build_scripts_test.py
+             WORKING_DIRECTORY ${SBSP_ROOT})
+    set_tests_properties(build_scripts_rules PROPERTIES LABELS unit)
 endif()
 
 # M8 playthrough harness (tests/run_tier.py): the exit-code self-test, the
 # fast Tier 1 routes and the short Tier 2 sweep, all --uncapped.  The full
-# tiers are `port/build-pc.sh soak`.  Every run's log lands in
+# tiers are `port/build-pc.cmd soak`.  Every run's log lands in
 # <build>/tier-logs (CI uploads that directory when a tier fails).
 if(SBSP_BUILD_GAME AND SBSP_PLAYTHROUGH)
     set(SBSP_TIER ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_tier.py

@@ -20,18 +20,20 @@ In line with the overall project purpose, you can build the game executable usin
 |---|---|
 | Windows 10 or 11, 64-bit | The shipping game is a 32-bit executable; it runs fine on 64-bit Windows using WoW64 translation. (A 64-bit build exists too, section 4.) |
 | Git with Git LFS | Install [Git for Windows](https://git-scm.com/install/windows), then `git lfs install` once. |
-| MSYS2, installed at `C:\msys64` | Needed to substitute parts of the 1999 cygwin toolchain. Download from <https://www.msys2.org>. The default install path matters as `port/CMakePresets.json` hard-codes `C:/msys64/mingw32/bin/ninja.exe`. If you must install elsewhere, edit the `CMAKE_MAKE_PROGRAM` line of its `msys2-ninja` preset (every other preset inherits it) and set `MSYS2_WIN` (Windows path) before running the `.cmd` scripts. |
-| *Optional:* LLVM + Visual Studio 2022/2026 C++ x64/x86 build tools | Only for the `clangcl-*` presets (section 4): [LLVM](https://releases.llvm.org) at `C:\Program Files\LLVM` (or the "C++ Clang tools for Windows" VS component) plus the MSVC x64/x86 build tools and a Windows 10/11 SDK. Everything else (SDL3, Vulkan headers) is fetched by CMake. |
+| Python 3.8 or newer | From <https://www.python.org> (or its Python install manager), on the `PATH`. It runs the build scripts, the data build's text steps and the automated playthrough tests. |
+| Visual Studio 2022 with "C++ CMake tools for Windows" | Community or Build Tools, the *Desktop development with C++* workload with its *C++ CMake tools for Windows* component. The build scripts take CMake and Ninja from it (or from the `PATH`, when both are there). |
+| MSYS2, installed at `C:\msys64` | For now only for the MinGW presets (`debug`, `final`, `eur-*`; issue #39 retires them) and the PlayStation build (issue #98). Download from <https://www.msys2.org>. To install elsewhere, set `MSYS2_WIN` (Windows path) before running the `.cmd` scripts. |
+| *Optional:* LLVM + the MSVC x64/x86 build tools | Only for the `clangcl-*` presets (section 4): [LLVM](https://releases.llvm.org) at `C:\Program Files\LLVM` (or the "C++ Clang tools for Windows" VS component) plus Visual Studio's MSVC x64/x86 build tools and a Windows 10/11 SDK. Everything else (SDL3, Vulkan headers) is fetched by CMake. |
 
 Just a note, your GPU must support Vulkan. Most modern systems do.
 
 ### MSYS2 packages (MSYS2 Shell)
 
-Open the **MSYS2 MSYS** shell and install the 32-bit toolchain. Its CMake
-and Ninja build the game data as well as the game:
+Open the **MSYS2 MSYS** shell and install the 32-bit toolchain the MinGW
+presets compile with (CMake and Ninja come from Visual Studio):
 
 ```bash
-pacman -S --needed mingw-w64-i686-gcc mingw-w64-i686-cmake mingw-w64-i686-ninja mingw-w64-i686-vulkan-headers mingw-w64-i686-python
+pacman -S --needed mingw-w64-i686-gcc mingw-w64-i686-vulkan-headers
 ```
 
 The PlayStation build (`port\build-psx.cmd`, section 4) also needs the 1999
@@ -41,10 +43,9 @@ makefiles' runtime, in the same shell:
 pacman -S --needed make perl
 ```
 
-Python runs the data build's text steps and the automated playthrough
-tests. The data build also needs a Windows Python 3 on the `PATH`, the one
-`python` finds in a Command Prompt. The game's configure stops if Python is
-missing. To build without those tests, set `SBSP_PLAYTHROUGH=OFF` in the
+The `.cmd` scripts run their Python script under `py -3`, or `python` when
+there is no launcher. The game's build runs its playthrough tests under the
+same Python. To build without those tests, set `SBSP_PLAYTHROUGH=OFF` in the
 environment before running the build script (section 4):
 
 ```bat
@@ -52,13 +53,13 @@ set SBSP_PLAYTHROUGH=OFF
 port\build-pc.cmd test usa
 ```
 
-In PowerShell that is `$env:SBSP_PLAYTHROUGH = "OFF"`, and in a bash shell
-`SBSP_PLAYTHROUGH=OFF port/build-pc.sh test usa`. `test` then runs the unit
-tests and skips the playthrough tests with a note. Each build directory
+In PowerShell that is `$env:SBSP_PLAYTHROUGH = "OFF"`. `test` then runs the
+unit tests and skips the playthrough tests with a note. Each build directory
 remembers the setting until the script runs again with
 `SBSP_PLAYTHROUGH=ON`. Configuring by hand instead, the switch is
-`cmake --preset debug -DSBSP_PLAYTHROUGH=OFF`, run in `port\` from an
-**MSYS2 MINGW32** shell.
+`cmake --preset debug -DSBSP_PLAYTHROUGH=OFF`, run in `port\` from a
+*Developer PowerShell for VS 2022* (which puts CMake and Ninja on the
+`PATH`), with `C:\msys64\mingw32\bin` on the `PATH` too for a MinGW preset.
 
 SDL3 needs special handling. MSYS2 is retiring its 32-bit environment and has
 removed `mingw-w64-i686-sdl3` from the package index, but the package file is
@@ -113,10 +114,10 @@ territory only: one USA data build serves both the `debug` and `final`
 executables. EUR data (`port\build-data.cmd eur`) is only needed for the
 `eur-*` builds.
 
-From a bash shell (Git Bash or MSYS2's), `port/build-data.sh usa` does the
-same. The game builds' `.cmd` scripts start MSYS2's bash themselves, so they
-work from Git Bash too. The `.sh` scripts behind them run only in MSYS2's bash
-and say what to run instead if started anywhere else.
+The `.cmd` scripts work from cmd, PowerShell and Git Bash. `build-data.cmd`
+and `build-pc.cmd` are Python (`port\tools\data\build_data.py`,
+`port\tools\build_pc.py`) and need no MSYS2. `build-psx.cmd` still starts
+MSYS2's bash for the 1999 makefiles (issue #98).
 
 ## 4. Build the game
 
