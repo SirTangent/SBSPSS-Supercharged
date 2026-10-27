@@ -45,7 +45,12 @@ def tool_env(tmp=None):
     # ccpsx reads its sn.ini (compiler_path, assembler_path) from the
     # directory SN_PATH names; that is the one in tools/psyq/bin/egcs
     env["SN_PATH"] = env["PSYQ_PATH"] = os.path.join(PSYQ, "bin", "egcs")
-    for v in ("COMPILER_PATH", "ASSEMBLER_PATH", "LIBRARY_PATH", "C_PLUS_INCLUDE_PATH"):
+    # globals.mak exported every search variable SN's and GNU's tools read as
+    # empty, so a machine's own (an SDK's C_INCLUDE_PATH, say) cannot reach
+    # the 1999 compiler
+    for v in ("COMPILER_PATH", "ASSEMBLER_PATH", "LIBRARY_PATH", "C_PLUS_INCLUDE_PATH",
+              "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "OBJC_INCLUDE_PATH", "GCC_EXEC_PREFIX",
+              "LINKER_PATH"):
         env[v] = ""
     env.pop("DEPENDENCIES_OUTPUT", None)
     env.pop("SUNPRO_DEPENDENCIES", None)
