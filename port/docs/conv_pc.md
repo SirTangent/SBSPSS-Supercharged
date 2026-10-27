@@ -1043,15 +1043,20 @@ What differs is two things, neither of them floating point:
    on both toolchains, and the level differs from DEBUG in periodic
    windows (285-337, 542-606, ...) on MinGW and clang-cl alike.
    Initialising `m_chargeTime` is a game-source change and a choice
-   between the two speeds; not made here.
+   between the two speeds; entry 69 makes it, at the DEBUG speed.
 
 Gate 2 ran on USA only; MinGW against clang-cl is not measured on EUR.  The
 tester zip pairs the two toolchains on both territories: `package.py`
 takes its 32-bit exes from the MinGW trees (`final`/`debug`,
 `eur-final`/`eur-debug`) and its `--x64` exes from the clang-cl ones, so
-in a zip's FINAL pair (`sbsp.exe`, `sbsp64.exe`) item 2's fish can swim at
-a different speed.  The DEBUG pair agrees (the `0x3d3d3d3d` fill), and
-the tester README says so.
+until entry 69, in a zip's FINAL pair (`sbsp.exe`, `sbsp64.exe`), item 2's
+fish could swim at a different speed.  The DEBUG pair always agreed (the
+`0x3d3d3d3d` fill).
+
+On 2026-10-27 issue #39 replaced the rest of gate 2 with a decision: the
+port moves to clang-cl and re-baselines on it, so MinGW recordings are not
+carried across the ABI (item 1 stays as measured), and item 2 is fixed
+(entry 69).
 
 ### Replaying a tester session (issue #58)
 
@@ -3179,6 +3184,33 @@ nothing runs it.  The PS1 build keeps its own make + Perl (`makefile.gaz`,
   - `--vintage-tools`: identical against a vintage make build except the 26
     `.Lvl` and 6 `.SBK` files whose stray bytes vary between any two
     vintage runs, and the lump that packs them.
+
+## Game-source changes (skeletal fish, issue #39)
+
+69. **`source/enemy/nsklfish.cpp`, `nsklfish.h` (`m_chargeTime`)** -
+    changes the PS1 build on purpose.  `CNpcSkeletalFishEnemy::getFrameShift`
+    animates the swim at full speed while `m_chargeTime` is under one
+    second and at quarter speed otherwise, but nothing wrote `m_chargeTime`
+    before the fish's sensor first fired, so until then it was whatever
+    its heap block held (gate 2's item 2, under "EUR clang-cl presets and
+    cross-toolchain identity" above).  The fish gets an `init()` override,
+    as `CNpcSeaSnakeEnemy` has, that calls `CNpcEnemy::init()` and sets
+    `m_chargeTime = GameState::getOneSecondInFrames()`: the value
+    `processClose` gives it after every charge, so the fish patrols at the
+    slow swim before its first charge too.  DEBUG builds already swam that
+    way on every toolchain (`USE_MEM_GUARDS` fills each new block with
+    `0x3d3d3d3d`, over one second), so the fix moves FINAL onto DEBUG's
+    behaviour and leaves DEBUG unchanged.  `init()` is already virtual
+    (`CThing`), so the class's size and `RamUsed` don't change.  On
+    clang-cl x64, USA, seed 1, every Tier 1 route and Tier 2 level (34
+    runs, `run_tier.py --tier1 --tier2 --compare-frames` against the exe
+    before the change):
+    - DEBUG: 34/34 `[scene]`/`[frame]`/`[audio]` streams identical;
+    - FINAL: 33/34 identical; Tier 2 level 13 (3-4, booted directly)
+      differs from frame 285, gate 2's first window;
+    - FINAL against DEBUG: level 13 is now identical.  Two runs still
+      differ between the variants, before and after alike, and aren't the
+      fish: `pause_quit` from frame 462 and level 2 from frame 1869.
 
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 

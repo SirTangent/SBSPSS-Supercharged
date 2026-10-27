@@ -16,6 +16,8 @@
 
 class CNpcSkeletalFishEnemy : public CNpcEnemy
 {
+public:
+	void				init();
 protected:
 	bool				processSensor();
 	void				processClose( int _frames );
