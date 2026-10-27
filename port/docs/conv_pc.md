@@ -3271,6 +3271,57 @@ Checked with every `C:\msys64` entry removed from the calling `PATH`:
   29/29 and playthrough 3/3 each.  Both trees were last configured by
   MSYS2's CMake 4.3; Visual Studio's 3.31 reconfigured them in place.
 
+## clang-cl only, x64 ships (issue #39)
+
+MinGW g++ built the shipping exe from M1 to here.  On 2026-10-27 issue #39
+retired it, and with it everything the port took from MSYS2's 32-bit
+repository (gcc, the SDL3 package pinned by URL since the index dropped
+it).  clang-cl is the only toolchain, and the x64 build is the one that
+ships.  Gate 2's two findings ("EUR clang-cl presets and cross-toolchain
+identity", above) were decided rather than carried: item 2 is entry 69,
+and item 1, the C++ ABI's `RamUsed`, is not bridged.  A MinGW recording
+still replays on the x64 exe, which skips `ram` across pointer sizes
+(`# abi ptr`); on the x86 exe it exits 13 on `ram`, as gate 2 measured.
+New recordings come from the x64 exes.
+
+- **Presets.**  `debug`, `final`, `eur-debug` and `eur-final` are clang-cl
+  x64 (the `clangcl-x64-*` trees under the plain names).  `x86-debug`,
+  `x86-final`, `x86-eur-debug` and `x86-eur-final` are clang-cl x86 (the
+  `clangcl-*` trees), kept for parity64.  `build_pc.py` follows: `usa`,
+  `eur` and `all` name x64 trees, `x86 [usa|eur]` the x86 pairs, and
+  parity64 compares `x86-<v>` with `<v>`.  The old `clangcl*` words are
+  refused with their new names.  A tree configured by another toolchain
+  or for another architecture (the old MinGW `build/debug` and friends) is
+  reconfigured `--fresh`.
+- **CMake.**  `cmake/mingw32-toolchain.cmake`, the `SBSP_MSVC` switch and
+  every GNU arm are gone: `-static`, `-Wall`, `-g`/`-gcodeview`,
+  `-idirafter`, `SDL3::SDL3-static`, `sbsp_plain_exe_link`, and the
+  `SBSP_CODEVIEW` option (clang-cl always writes a PDB).  A configure with
+  another compiler stops and says so.  `datatools.cmake` builds every
+  converter unconditionally.  `psyq/host/compiler.h` keeps the MSVC
+  spellings and `#error`s on anything else.
+- **Packaging.**  The tester zip holds the x64 pair as `sbsp.exe` and
+  `sbsp-debug.exe`, with `SDL3.dll`; `--x64` is accepted and changes
+  nothing, as is `run-test-session.cmd`'s `x64` word.  The tester README
+  says the exes are 64-bit and that older builds' saves and `sbsp.ini`
+  carry over.
+- **CI.**  `pc-build-test` runs clang-cl on the runner (no MSYS2): `debug`
+  and `final` in the PR profile, plus `x86-debug` and `x86-final` in a
+  release run; `pc-eur` runs `eur-debug` and `eur-final`.  The separate
+  `clangcl` job is folded in.  `SBSP-Win11` has no required checks, so the
+  renamed jobs block nothing.
+
+70. **`source/utils/sincos.cpp` (`SinTable`)** - PC only, the PS1 sees the
+    same tokens.  mathtab.H declares `extern const s16 SinTable[1024]` and
+    sincos.cpp defined it non-const: one symbol under the Itanium ABI, two
+    under MSVC's, which mangles the type into the name, so the clang-cl
+    exes linked through `/alternatename:?SinTable@@3QBFB=?SinTable@@3PAFA`.
+    The definition is now `PC_PS1(extern const s16,s16) SinTable[1024]`:
+    the PS1 compiles `s16 SinTable[1024]` as before (`psx_identity.py
+    lines`: same tokens), and the PC gets a `const` definition with
+    external linkage, the declaration's symbol, so the alias is gone.
+    Nothing writes to the table.
+
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 
 - String-literal → `char*` conversions (pervasive; `-Wno-write-strings`).

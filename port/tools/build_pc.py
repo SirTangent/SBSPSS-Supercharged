@@ -2,42 +2,37 @@
 """Configure + build the PC port; port/build-pc.cmd runs this (issue #98,
 which replaced port/build-pc.sh with it, same command line).
 
-    build-pc [<preset>|usa|eur|clangcl [usa|eur]|clangcl64 [usa|eur]|all] [extra ninja args...]
-    build-pc test [usa|eur|clangcl [usa|eur]|clangcl64 [usa|eur]]  build, then ctest -L unit and -L playthrough on each tree
+    build-pc [<preset>|usa|eur|x86 [usa|eur]|all] [extra ninja args...]
+    build-pc test [usa|eur|x86 [usa|eur]|<preset>]  build, then ctest -L unit and -L playthrough on each tree
                      (playthrough skipped, with a note, for a tree configured SBSP_PLAYTHROUGH=OFF)
-    build-pc soak [usa|eur|clangcl [usa|eur]|clangcl64 [usa|eur]]  build, then the full Tier 1 + Tier 2 sweep on each tree
-    build-pc parity64 [usa|eur] [debug|final]  build clang-cl x86 + x64, then the x64 A/B (streams, cross replay, cards)
+    build-pc soak [usa|eur|x86 [usa|eur]|<preset>]  build, then the full Tier 1 + Tier 2 sweep on each tree
+    build-pc parity64 [usa|eur] [debug|final]  build x86 + x64, then the x64 A/B (streams, cross replay, cards)
 
-Presets (port/CMakePresets.json): debug, final (USA; usa-debug / usa-final
-are accepted aliases) and eur-debug, eur-final (EUR, PAL 50Hz); `usa` /
-`eur` name a territory's pair and `all` (the default) is every MinGW tree.
+Every preset is clang-cl (port/CMakePresets.json, cmake/clangcl-toolchain.cmake;
+issue #39 retired MinGW).  debug, final (USA; usa-debug / usa-final are
+accepted aliases), eur-debug and eur-final (EUR, PAL 50Hz) are x64, the
+exes that ship; `usa` / `eur` name a territory's pair and `all` (the
+default) is all four.  x86-debug, x86-final, x86-eur-debug and x86-eur-final
+build the same code for 32-bit, which parity64 holds x64 to; `x86 [usa|eur]`
+names a pair.  The words of the clangcl-* presets those replace are refused
+with their new names.
+
 Each tree needs its territory's data first (one build serves DEBUG and
 FINAL, issue #35):
     port\\build-data.cmd usa            (out/USA/include + out/USA/cd)
     port\\build-data.cmd eur            (out/EUR/include + out/EUR/cd)
-build_one checks for both and names the missing command.
-
-clangcl-debug / clangcl-final (`clangcl` = both) are the same USA trees
-built by clang-cl against the MSVC CRT (cmake/clangcl-toolchain.cmake:
-LLVM + Visual Studio's build tools).  clangcl-x64-debug / clangcl-x64-final
-(`clangcl64` = both) target x86_64 (M9).  clangcl-eur-* and
-clangcl-x64-eur-* are their EUR trees: `clangcl eur` and `clangcl64 eur`
-name those pairs (`clangcl usa` = `clangcl`).  None of them is in `all`.
+build_one checks for both and names the missing command.  A tree that was
+configured for another toolchain or architecture (the MinGW trees that used
+the names debug, final, eur-debug and eur-final) is reconfigured --fresh.
 
 CMake, ctest and Ninja come from port/tools/buildenv.py: the PATH, else
-Visual Studio's CMake component.  The MinGW presets also need MSYS2's
-mingw32 gcc and its runtime DLLs, so for them C:\\msys64\\mingw32\\bin (or
-%MSYS2_WIN%\\mingw32\\bin) goes on the PATH; issue #39 retires those
-presets.  The playthrough tests run under the Python running this script
-(Python3_EXECUTABLE).
+Visual Studio's CMake component.  The playthrough tests run under the
+Python running this script (Python3_EXECUTABLE).
 
-Environment switches, passed at configure:
-  SBSP_CODEVIEW=1     the MinGW trees with -DSBSP_CODEVIEW=ON (a .pdb
-                      beside every exe, for Visual Studio / WinDbg)
-  SBSP_PLAYTHROUGH=OFF  every tree with -DSBSP_PLAYTHROUGH=OFF (no
-                      playthrough tests registered).  Only passed when
-                      set, so a tree keeps what it was last configured
-                      with; SBSP_PLAYTHROUGH=ON turns them back on.
+SBSP_PLAYTHROUGH=OFF in the environment configures every tree with
+-DSBSP_PLAYTHROUGH=OFF (no playthrough tests registered).  It is only
+passed when set, so a tree keeps what it was last configured with;
+SBSP_PLAYTHROUGH=ON turns them back on.
 """
 import os
 import shutil
@@ -52,16 +47,20 @@ PORT = os.path.dirname(HERE)
 REPO = os.path.dirname(PORT)
 
 USAGE = ("usage: port\\build-pc.cmd [debug|final|usa-debug|usa-final|eur-debug|eur-final|"
-         "clangcl-debug|clangcl-final|clangcl-eur-debug|clangcl-eur-final|"
-         "clangcl-x64-debug|clangcl-x64-final|clangcl-x64-eur-debug|clangcl-x64-eur-final|"
-         "usa|eur|clangcl [usa|eur]|clangcl64 [usa|eur]|all|"
-         "test [usa|eur|clangcl [usa|eur]|clangcl64 [usa|eur]]|"
-         "soak [usa|eur|clangcl [usa|eur]|clangcl64 [usa|eur]]|"
+         "x86-debug|x86-final|x86-eur-debug|x86-eur-final|usa|eur|x86 [usa|eur]|all|"
+         "test [usa|eur|x86 [usa|eur]|<preset>]|"
+         "soak [usa|eur|x86 [usa|eur]|<preset>]|"
          "parity64 [usa|eur] [debug|final]] [ninja args]")
 
 SINGLE = ["debug", "final", "eur-debug", "eur-final",
-          "clangcl-debug", "clangcl-final", "clangcl-eur-debug", "clangcl-eur-final",
-          "clangcl-x64-debug", "clangcl-x64-final", "clangcl-x64-eur-debug", "clangcl-x64-eur-final"]
+          "x86-debug", "x86-final", "x86-eur-debug", "x86-eur-final"]
+
+# the clang-cl words before issue #39 made clang-cl the only toolchain
+RENAMED = {"clangcl": "x86", "clangcl64": "usa / eur",
+           "clangcl-debug": "x86-debug", "clangcl-final": "x86-final",
+           "clangcl-eur-debug": "x86-eur-debug", "clangcl-eur-final": "x86-eur-final",
+           "clangcl-x64-debug": "debug", "clangcl-x64-final": "final",
+           "clangcl-x64-eur-debug": "eur-debug", "clangcl-x64-eur-final": "eur-final"}
 
 # the false spellings CMake accepts for a BOOL, as test_one reads the cache
 CMAKE_FALSE = ("0", "OFF", "NO", "FALSE", "N", "IGNORE", "NOTFOUND")
@@ -73,20 +72,21 @@ class Usage(Exception):
 
 def presets_for(word, territory=None):
     """The preset list a word (or `all`) stands for; `territory` is the word
-    that may follow `clangcl` / `clangcl64` (USA when None)."""
+    that may follow `x86` (USA when None)."""
     w = (word or "").lower()
     t = (territory or "usa").lower()
     if t not in ("usa", "eur"):
         raise Usage()
     e = "eur-" if t == "eur" else ""
+    if w in RENAMED:
+        raise Usage("'%s' is '%s' now: issue #39 made clang-cl the only toolchain, "
+                    "x64 the plain presets and x86 the x86-* ones" % (word, RENAMED[w]))
     if w == "usa":
         return ["debug", "final"]
     if w == "eur":
         return ["eur-debug", "eur-final"]
-    if w == "clangcl":
-        return ["clangcl-%sdebug" % e, "clangcl-%sfinal" % e]
-    if w == "clangcl64":
-        return ["clangcl-x64-%sdebug" % e, "clangcl-x64-%sfinal" % e]
+    if w == "x86":
+        return ["x86-%sdebug" % e, "x86-%sfinal" % e]
     if w in ("all", ""):
         return ["debug", "final", "eur-debug", "eur-final"]
     if w in SINGLE:
@@ -103,8 +103,20 @@ def territory_of(preset):
     return "EUR" if preset.startswith("eur-") or "-eur-" in preset else "USA"
 
 
-def is_mingw(preset):
-    return not preset.startswith("clangcl-")
+def arch_of(preset):
+    return "x86" if preset.startswith("x86-") else "x64"
+
+
+def cache_value(tree, key):
+    """A CMakeCache.txt entry's value (any type), or None."""
+    try:
+        with open(os.path.join(tree, "CMakeCache.txt"), errors="replace") as f:
+            for line in f:
+                if line.startswith(key + ":"):
+                    return line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return None
 
 
 class Builder:
@@ -112,16 +124,26 @@ class Builder:
         self.cmake = buildenv.find_cmake()
         self.ctest = buildenv.ctest_for(self.cmake)
         self.ninja = buildenv.find_ninja()
-        msys2 = os.environ.get("MSYS2_WIN", r"C:\msys64")
-        self.mingw_bin = os.path.join(msys2, "mingw32", "bin")
 
     def env(self, preset, **extra):
         env = dict(os.environ)
-        if is_mingw(preset):
-            # cc1plus and ninja's gcc steps need the mingw32 runtime DLLs
-            env["PATH"] = self.mingw_bin + os.pathsep + env.get("PATH", "")
         env.update(extra)
         return env
+
+    def stale(self, preset):
+        """Why build/<preset> must be configured --fresh, or None: its cache
+        is another toolchain's or architecture's (the MinGW trees had the
+        names debug, final, eur-debug and eur-final until issue #39)."""
+        tree = os.path.join(PORT, "build", preset)
+        if not os.path.isfile(os.path.join(tree, "CMakeCache.txt")):
+            return None
+        toolchain = cache_value(tree, "CMAKE_TOOLCHAIN_FILE") or ""
+        if not toolchain.endswith("clangcl-toolchain.cmake"):
+            return "configured with %s" % (os.path.basename(toolchain) or "no toolchain file")
+        arch = cache_value(tree, "SBSP_ARCH")
+        if arch != arch_of(preset):
+            return "configured for %s" % arch
+        return None
 
     def run(self, cmd, preset, cwd=PORT, **extra):
         return subprocess.run(cmd, cwd=cwd, env=self.env(preset, **extra)).returncode
@@ -137,14 +159,14 @@ class Builder:
     def build_one(self, preset, ninja_args=()):
         self.check_data(preset)
         print("=== configure+build: %s ===" % preset, flush=True)
-        if is_mingw(preset) and not os.path.isfile(os.path.join(self.mingw_bin, "g++.exe")):
-            sys.exit("%s is a MinGW preset and %s has no g++.exe (MSYS2's mingw-w64-i686-gcc; "
-                     "set MSYS2_WIN for another MSYS2 root)" % (preset, self.mingw_bin))
         configure = [self.cmake, "--preset", preset,
                      "-DCMAKE_MAKE_PROGRAM=" + self.ninja.replace("\\", "/"),
                      "-DPython3_EXECUTABLE=" + sys.executable.replace("\\", "/")]
-        if is_mingw(preset):
-            configure.append("-DSBSP_CODEVIEW=" + os.environ.get("SBSP_CODEVIEW", "0"))
+        why = self.stale(preset)
+        if why:
+            print("build/%s was %s: configuring it --fresh as clang-cl %s" % (preset, why, arch_of(preset)),
+                  flush=True)
+            configure.append("--fresh")
         if os.environ.get("SBSP_PLAYTHROUGH"):
             configure.append("-DSBSP_PLAYTHROUGH=" + os.environ["SBSP_PLAYTHROUGH"])
         if self.run(configure, preset) or \
@@ -196,11 +218,11 @@ class Builder:
             sys.exit(1)
 
     def parity64(self, e, v):
-        """The x64 A/B (M9): the 32-bit clang-cl exe plays every Tier 1 route
+        """The x64 A/B (M9): the x86 exe (x86-<v>) plays every Tier 1 route
         and Tier 2 level and keeps its logs, recordings and memory cards; the
-        x64 exe must then (1) produce the same [scene]/[frame] streams playing
-        the same tiers itself and (2) replay the 32-bit recordings without a
-        desync, to the same streams and byte-identical cards.
+        x64 exe (<v>) must then (1) produce the same [scene]/[frame] streams
+        playing the same tiers itself and (2) replay the 32-bit recordings
+        without a desync, to the same streams and byte-identical cards.
 
         Every leg runs even if an earlier one fails, and the combined result
         is the exit status: leg 3 is the only thing that exercises the
@@ -208,7 +230,7 @@ class Builder:
         FINAL had one until conv_pc.md entry 69) must not be what stops it
         from ever being reached.  A USA A/B keeps its old directory,
         build/parity64-<v>; EUR adds the EUR-only routes (play_trailer)."""
-        x86, x64 = "clangcl-%s%s" % (e, v), "clangcl-x64-%s%s" % (e, v)
+        x86, x64 = "x86-%s%s" % (e, v), "%s%s" % (e, v)
         terr = territory_of(x86)
         d = "build/parity64-%s%s" % (e, v)
         rc = 0
@@ -251,10 +273,10 @@ def plan(argv):
             else:
                 raise Usage()
         return "parity64", ("eur-" if t == "eur" else "", v), []
-    # `clangcl` / `clangcl64` may be followed by a territory word; what comes
-    # after that is ninja's
+    # `x86` may be followed by a territory word; what comes after that is
+    # ninja's
     terr = None
-    if lw in ("clangcl", "clangcl64") and rest and rest[0].lower() in ("usa", "eur"):
+    if lw == "x86" and rest and rest[0].lower() in ("usa", "eur"):
         terr, rest = rest[0], rest[1:]
     return "build", presets_for(what, terr), rest
 
@@ -263,14 +285,16 @@ def main(argv):
     sys.stdout.reconfigure(line_buffering=True)
     try:
         mode, presets, extra = plan(argv)
-    except Usage:
+    except Usage as e:
+        if e.args:
+            print("build-pc: %s" % e.args[0], file=sys.stderr)
         print(USAGE, file=sys.stderr)
         return 1
     b = Builder()
     if mode == "parity64":
         e, v = presets
-        b.build_one("clangcl-%s%s" % (e, v))
-        b.build_one("clangcl-x64-%s%s" % (e, v))
+        b.build_one("x86-%s%s" % (e, v))
+        b.build_one("%s%s" % (e, v))
         if b.parity64(e, v):
             return 1
     else:
