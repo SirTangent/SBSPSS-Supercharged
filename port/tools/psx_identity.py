@@ -67,10 +67,12 @@ GAME_DIRS = ["source", "tools/Data/include"]
 DRIVER_PATHS = ["port/psx", "port/tools/psx", "port/build-psx.cmd"]
 
 # Everything else that decides what the PS1 build produces: makefile.gaz (the
-# lists of what is compiled) and the build/*.mak it includes, the per-user
-# makefile build/getuser.mak pulls from users/, the PSY-Q toolchain and tools
-# under tools/, and the driver.
-BUILD_PATHS = GAME_DIRS + ["makefile.gaz", "build", "users", "tools"] + DRIVER_PATHS
+# lists of what is compiled), the PSY-Q toolchain, libraries and tools under
+# tools/, and the driver.  Not build/*.mak or users/: port/psx reads neither
+# (ccopt.mak's and lnk.mak's values are transcribed into its CMakeLists.txt),
+# so an edit there changes nothing and is no reason to rebuild (PR #103
+# review).
+BUILD_PATHS = GAME_DIRS + ["makefile.gaz", "tools"] + DRIVER_PATHS
 
 # What the PS1 compiler (ccpsx / EGCS) has defined, as far as the port's
 # gates care.  mips comes from the compiler; PSX_MIPS_ASM from

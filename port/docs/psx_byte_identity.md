@@ -345,10 +345,12 @@ default) it:
 1. Does a clean PS1 build of `HEAD`.
 2. Checks out the base revision's copy of every changed PS1 build input and
    does a clean build of that. The inputs are the game source,
-   `makefile.gaz` (the lists of what is compiled) and the `build/*.mak` it
-   includes, the per-user makefile under `users/`, the toolchain under
-   `tools/`, and the build itself: `port/psx`, `port/tools/psx` and
-   `port/build-psx.cmd`.  So a change to compiler flags is compared too.
+   `makefile.gaz` (the lists of what is compiled), the toolchain and
+   libraries under `tools/`, and the build itself: `port/psx`,
+   `port/tools/psx` and `port/build-psx.cmd`.  So a change to compiler
+   flags is compared too.  `build/*.mak` and `users/` are not inputs:
+   `port/psx` reads neither (their values are transcribed into its
+   `CMakeLists.txt`).
    A base from before the build itself existed (before #102) is built with
    `HEAD`'s driver, which is held byte-identical to `makefile.gaz`'s route;
    any other file added or deleted against the base is refused, since
