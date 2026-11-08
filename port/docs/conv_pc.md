@@ -3200,15 +3200,24 @@ nothing runs it.  The PS1 build keeps its own make + Perl (`makefile.gaz`,
     second and at quarter speed otherwise, but nothing wrote `m_chargeTime`
     before the fish's sensor first fired, so until then it was whatever
     its heap block held (gate 2's item 2, under "EUR clang-cl presets and
-    cross-toolchain identity" above).  The fish gets an `init()` override,
-    as `CNpcSeaSnakeEnemy` has, that calls `CNpcEnemy::init()` and sets
+    cross-toolchain identity" above).  The fish gets an `init()` override
+    that calls `CNpcEnemy::init()` and sets
     `m_chargeTime = GameState::getOneSecondInFrames()`: the value
     `processClose` gives it after every charge, so the fish patrols at the
     slow swim before its first charge too.  DEBUG builds already swam that
     way on every toolchain (`USE_MEM_GUARDS` fills each new block with
     `0x3d3d3d3d`, over one second), so the fix moves FINAL onto DEBUG's
-    behaviour and leaves DEBUG unchanged.  `init()` is already virtual
-    (`CThing`), so the class's size and `RamUsed` don't change.  On
+    behaviour and leaves DEBUG unchanged.  What a retail PlayStation showed
+    before the first charge was never measured: the heap bytes there were
+    deterministic on the disc but unknown, and the slow swim is the state
+    `processClose` puts the fish in after every charge, so the fix makes
+    the designed steady state the initial one.  No other `CNpcEnemy`
+    subclass overrides `init()` (the hierarchy's usual per-class hook is
+    `postInit()`, 26 overrides; `nssnake.cpp`'s and `nworm.cpp`'s `init()`
+    belong to their segment helpers, not to enemies), but `CNpcEnemy::Create`
+    calls `init()` first and a member's default belongs there.  `init()` is
+    already virtual (`CThing`), so the class's size and `RamUsed` don't
+    change.  On
     clang-cl x64, USA, seed 1, every Tier 1 route and Tier 2 level (34
     runs, `run_tier.py --tier1 --tier2 --compare-frames` against the exe
     before the change):
