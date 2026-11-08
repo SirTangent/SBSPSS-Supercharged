@@ -144,6 +144,8 @@ bool ScriptFile::getNextNonBlankLine(char * line,int lineLen)
 {
 	checkIsOpen();
 
+	line[0]=0;		// a false return leaves an empty line, not the caller's uninitialised buffer (issue #48 review)
+
 	do
 		{
 		if (m_inStream.eof())
@@ -249,9 +251,14 @@ GString ScriptFile::peekNextCommand(void)
 
 		thisPos=m_inStream.tellg();
 
-		getNextNonBlankLine(line,lineLength);
-		stripTrailingSpace(line);
-		retStr=getCommandString(line);
+		// false only when the command is the file's unterminated last
+		// line: the peek above left eof() set, so the file ends there
+		// (seekBack) and getCommandString must not see an empty line
+		if (getNextNonBlankLine(line,lineLength))
+			{
+			stripTrailingSpace(line);
+			retStr=getCommandString(line);
+			}
 
 		seekBack(m_inStream,thisPos);
 	
