@@ -415,9 +415,11 @@ sprites:	$(SPRITES_ALL_DEP)
 #	started by a native program gets only the first ~8K of its command
 #	line: this one is ~9K, so the last sprites and -t/-l/-o never arrived,
 #	parkgrab wrote nothing, and the build stopped at the mv with "cannot
-#	stat sprites.h" (issue #42).  Only MSYS2's make runs this build now
-#	(build/globals.mak), but check for the header anyway, name the tool,
-#	and drop the texture so the next run cannot take it as up to date.
+#	stat sprites.h" (issue #42).  Nothing runs this build now (port/data
+#	makes the data, issue #95; the MSYS2 make route went with issue #98,
+#	build/globals.mak), but the recipe kept its check for the header,
+#	names the tool, and drops the texture so the next run cannot take it
+#	as up to date.
 #
 #	A cut inside the file list would still have written sprites.h, minus
 #	some sprites.  So make 4 (MSYS2's: it has MAKE_HOST) writes the list

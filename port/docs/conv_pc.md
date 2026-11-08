@@ -2286,7 +2286,8 @@ and base: USA DEBUG-NOLINE `1084A321` and FINAL `367F237E`).
 cygwin binaries in `tools/cygwin` and exports a `;`-separated `PATH` and
 `Path` for them.  Those binaries crash on Windows 10/11, and both wrappers
 used to override all of it on the make command line.  One guarded block
-in `globals.mak` now does it instead, keyed on `MAKE_HOST`:
+in `globals.mak` did it instead, keyed on `MAKE_HOST` (removed by #98's
+last step, "No MSYS2" below: nothing runs the makefiles now):
 - **MSYS2's make** (4.x, built for cygwin: `x86_64-pc-cygwin`, or
   `x86_64-pc-msys` from MSYS2 releases before the triplet changed) gets
   MSYS2's own utilities and a POSIX `PATH`: `/usr/bin`, `port/tools`,
@@ -2799,7 +2800,8 @@ The rest touches no game source:
   the login name when no `USER_NAME` is given, to read
   `users/<name>/makefile`.  Under MSYS2's make, `/usr/bin` comes first on
   `PATH` and its `uname` printed `MSYS_NT-10.0-26200`.  The MSYS2 block
-  now takes the name from the environment: `USERNAME` (Windows sets it,
+  (gone with #98's last step, below) took the name from the environment
+  instead: `USERNAME` (Windows sets it,
   but a shell started without the Windows environment can lack it), then
   `USER` (MSYS2's login shell sets it), and only with neither runs
   `tools/uname.exe` (the 1999 one, `GetUserName`) by path.  Both scripts
@@ -2878,9 +2880,11 @@ All eight converters of the data build are rebuilt from their sources in
   (`.Lvl`, `.tex`, `.Lbm`, the level headers), over the shared libraries in
   `Utils/Libs` (GLib, GinLib, DaveLib, Maths, TexGrab).  These build with
   clang-cl only (`port/cmake/datatools.cmake` returns before them under
-  MinGW, where g++ rejects much more of the 1999 code).  globals.mak runs
-  them by path, not through the PATH, so `MKLEVEL`/`MKACTOR` follow
-  `SBSP_VINTAGE_TOOLS` too.  MkLevel reads `MkLevel.ini` from beside its
+  MinGW, where g++ rejects much more of the 1999 code).  globals.mak's
+  MSYS2 section ran them by path, not through the PATH, so
+  `MKLEVEL`/`MKACTOR` followed `SBSP_VINTAGE_TOOLS` too (the section is
+  gone with #98's last step, below; `port/data`'s `--vintage-tools` is the
+  switch now).  MkLevel reads `MkLevel.ini` from beside its
   exe, so it gained `-c:<dir>`: the x64 one reads the same
   `tools/data/bin/MkLevel.ini` as the 1999 one.
 - **parkgrab**: the sprite banks (`Sprites.Spr` + `Sprites.h`, shop,
@@ -3133,9 +3137,10 @@ CMake project, `port/data`:
 
 The command line is unchanged: `usa|eur`, the preset words, `USA DEBUG`,
 `--vintage-tools`.  The no-argument default is USA again; under make, the
-territory came out empty.  `makefile.gfx` stays as the 1999 original, but
-nothing runs it.  The PS1 build keeps its own make + Perl (`makefile.gaz`,
-`dep.pl`).
+territory came out empty.  `makefile.gfx` stays, with the port's edits to
+it, but nothing runs it.  The PS1 build kept its own make + Perl
+(`makefile.gaz`, `dep.pl`) until `port/psx` replaced that too (issue #98,
+below).
 
 - **The same commands.** `port/data/lists.cmake` transcribes makefile.gfx's
   input lists: the same names, order, spellings and switch placement.
@@ -3420,11 +3425,17 @@ With the PlayStation build on CMake, nothing in the port runs MSYS2:
   runner's;
 - `build/globals.mak`'s MSYS2 section is gone.  It let MSYS2's make run
   `makefile.gfx` and `makefile.gaz` (issues #16, #48, #87, #90), and no
-  script runs either now.  Both makefiles stay as the 1999 originals, and
-  `makefile.gaz`'s `<dir>_src` lists are what `port/psx` compiles.  The
-  section's last use was the oracle `port/psx` was held to (above): real
-  `makefile.gaz` builds.  Holding it to them again would mean restoring the
-  section from git history.
+  script runs either now.  Both makefiles stay, as a record and because
+  `makefile.gaz`'s `<dir>_src` lists are what `port/psx` compiles, but
+  they are not the 1999 originals: `makefile.gfx`'s `$(file)` response
+  file and key caps and `makefile.gaz`'s padicon list and
+  `SBSP_IDENTITY_NOLINE` are the port's, and only ever ran under that
+  section.  `globals.mak` now stops any make but `tools/make.exe` (3.79)
+  with one message naming the port scripts, as the section's two guards
+  did.  The section's last use was the oracle `port/psx` was held to
+  (above): real `makefile.gaz` builds.  Holding it to them again means
+  restoring the section from `git show b18af743b:build/globals.mak` and
+  using MSYS2's make 4.x, which the makefiles' port edits need.
 
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 
