@@ -65,6 +65,13 @@ CASES = [
     ('test bogus', None),
     ('test x86 xyz', None),
     ('test usa eur extra', None),
+    # a territory word only follows x86; after anything else it would be
+    # dropped without a word (PR #100 / #101 reviews)
+    ('test usa eur', None),
+    ('test debug eur', None),
+    ('soak eur usa', None),
+    ('soak x y z', None),
+    ('test x86 usa eur', None),
     ('parity64 eur final x', None),
     ('parity64 nope', None),
     ('clangcl', None),

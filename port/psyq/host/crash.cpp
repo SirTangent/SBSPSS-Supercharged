@@ -161,37 +161,35 @@ static void __cdecl onInvalidParameter(const wchar_t *expr, const wchar_t *func,
 	crashReport("invalid-parameter");
 }
 
-#if defined(_MSC_VER)
 static void __cdecl onPurecall(void)
 {
 	crashReport("purecall");
 }
-#endif
 
 extern "C" void Port_CrashInit(void)
 {
 	readLinkBase();
 	SetUnhandledExceptionFilter(crashFilter);
 
-	/*	Both CRTs (MinGW's msvcrt.dll, clang-cl's static UCRT).  SIGABRT is
-		process-wide; the MSVC terminate handler is per-thread, but a thread
-		without one calls abort(), which lands in SIGABRT anyway.  */
+	/*	The CRT is the static UCRT (clang-cl, /MT; issue #39 retired the
+		MinGW exes and their msvcrt.dll, which had no purecall or
+		abort-behavior hooks).  SIGABRT is process-wide; the MSVC terminate
+		handler is per-thread, but a thread without one calls abort(),
+		which lands in SIGABRT anyway.  */
 	signal(SIGABRT, onSigabrt);
 	std::set_terminate(onTerminate);
 	_set_invalid_parameter_handler(onInvalidParameter);
-#if defined(_MSC_VER)
-	/*	msvcrt.dll has neither.  The UCRT's abort() raises SIGABRT before
-		it looks at the abort-behavior flags, so onSigabrt sees every
-		abort() while it is armed; the flags only decide what happens when
-		no handler is installed (the instant between the CRT's reset and
-		onSigabrt's re-arm).  Clearing _CALL_REPORTFAULT makes that an
-		_exit(3) instead of a __fastfail to Windows Error Reporting that
-		prints nothing.  _WRITE_ABORT_MSG's "abort() has been called"
-		report exists only in the debug CRT, and these builds link the
-		release one (/MT), so clearing it changes nothing here.  */
+	/*	The UCRT's abort() raises SIGABRT before it looks at the
+		abort-behavior flags, so onSigabrt sees every abort() while it is
+		armed; the flags only decide what happens when no handler is
+		installed (the instant between the CRT's reset and onSigabrt's
+		re-arm).  Clearing _CALL_REPORTFAULT makes that an _exit(3) instead
+		of a __fastfail to Windows Error Reporting that prints nothing.
+		_WRITE_ABORT_MSG's "abort() has been called" report exists only in
+		the debug CRT, and these builds link the release one, so clearing
+		it changes nothing here.  */
 	_set_purecall_handler(onPurecall);
 	_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
-#endif
 
 	/*	Room for the filter to run on after EXCEPTION_STACK_OVERFLOW: the
 		guard page is gone by then, and formatting the report needs more
