@@ -5,9 +5,13 @@
     python port/psyq/vk/shaders/gen_spv.py --check    exit 1 if either is out of date
 
 Needs glslc, which the Windows Vulkan SDK ships (SPIR-V is
-architecture-independent, so any glslc works): %GLSLC%, else glslc on the
-PATH, else %VULKAN_SDK%\\Bin\\glslc.exe, else the SDK the headers were made
-with.  The .spv.h files are committed; run this only after editing a shader.
+architecture-independent, so any glslc works): %GLSLC%, else the SDK the
+headers were made with (PINNED), else glslc on the PATH, else
+%VULKAN_SDK%\\Bin\\glslc.exe.  PINNED comes before the PATH because another
+glslc version can emit different SPIR-V for the same source, which would
+make --check report a shader edit that touched nothing as stale, and a
+plain run rewrite both headers (PR #100 review).  The .spv.h files are
+committed; run this only after editing a shader.
 Issue #98 ported it from gen_spv.sh: one line per 16 bytes, four
 little-endian 32-bit words, as `od -An -tx4` printed them.
 """
@@ -21,9 +25,11 @@ PINNED = r"C:\VulkanSDK\1.4.350.0\Bin\glslc.exe"
 
 
 def glslc():
-    for exe in (os.environ.get("GLSLC"), shutil.which("glslc"),
-                os.path.join(os.environ["VULKAN_SDK"], "Bin", "glslc.exe") if os.environ.get("VULKAN_SDK") else None,
-                PINNED):
+    explicit = os.environ.get("GLSLC")
+    if explicit and not os.path.isfile(explicit):
+        sys.exit("GLSLC=%s: no such file" % explicit)
+    for exe in (explicit, PINNED, shutil.which("glslc"),
+                os.path.join(os.environ["VULKAN_SDK"], "Bin", "glslc.exe") if os.environ.get("VULKAN_SDK") else None):
         if exe and os.path.isfile(exe):
             return exe
     sys.exit("no glslc: install the Vulkan SDK (https://vulkan.lunarg.com) or set GLSLC")

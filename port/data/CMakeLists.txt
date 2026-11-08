@@ -1,10 +1,10 @@
 # The game data build: out/<T>/ (BIGLUMP.BIN, the generated headers, the CD
 # files the PC exe reads), on CMake + Ninja (issue #95).
 #
-# This replaces the 1999 makefile.gfx route (MSYS2 make + Perl, through
-# port/build-data.sh).  The converters and their arguments are the ones that
-# makefile ran (lists.cmake), so the output is the same, byte for byte.  What
-# changes is around them:
+# This replaces the 1999 makefile.gfx route (MSYS2 make + Perl, which the
+# since-deleted port/build-data.sh drove).  The converters and their
+# arguments are the ones that makefile ran (lists.cmake), so the output is
+# the same, byte for byte.  What changes is around them:
 # - every step declares what it reads and writes, its converter included,
 #   so a rebuild redoes exactly what changed;
 # - steps run in parallel: no temp file is shared (each screen's is its
