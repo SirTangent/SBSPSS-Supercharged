@@ -3137,8 +3137,12 @@ nothing runs it.  The PS1 build keeps its own make + Perl (`makefile.gaz`,
   - Every converter runs from the repo root, as under make. The scripts
     `#include` their defs by repo-relative path, MkLevel.ini's `BackGfxDir`
     is relative, and parkgrab sorts by the paths it is given.
-  - `sprites.rsp` is one of the outputs, written `file(CONFIGURE)` with LF,
-    as make's `$(file)` did, so it is byte-identical.
+  - `sprites.rsp` is one of the outputs, written with LF as make's `$(file)`
+    did, so it is byte-identical: `file(GENERATE ... NEWLINE_STYLE UNIX)`,
+    which expands generator expressions only and keeps an unchanged file's
+    timestamp.  Not `file(CONFIGURE)`, which would substitute a `${VAR}` or
+    `@VAR@` inside a sprite path, and not `file(WRITE)`, which writes CRLF
+    on Windows (PR #97 review).
   - The x64 MkLevel takes `-c:tools/data/bin`; the 1999 one reads its ini
     beside its exe.
 - **Every dependency declared.** Each step depends on its converter exe and
@@ -3147,7 +3151,10 @@ nothing runs it.  The PS1 build keeps its own make + Perl (`makefile.gaz`,
     `AnimList.Txt`);
   - levels: their folder, plus `graphics/hazards`, `graphics/Platforms`,
     `graphics/levels/BackGfx`, `MkLevel.ini` and `Sprites.h`;
-  - scripts: `data/Scripts/defs/*.scr`;
+  - scripts: the five `data/Scripts/defs/` files, listed as `SCRIPT_DEFS`
+    rather than globbed, because the build writes `trans.scr` into that
+    directory and a `CONFIGURE_DEPENDS` glob that sees its own output
+    appear reconfigures everything on the next run (PR #97 review);
   - the lump: `data/DataCache.scr` and everything it packs;
   - shop and party: their bitmaps. Under make they had no prerequisites at
     all, through an undefined variable.
