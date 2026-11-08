@@ -123,8 +123,11 @@ list(APPEND ALL_OUTPUTS ${TR}/final.dat ${_dats} ${TRANS_H} ${TRANS_SCR})
 list(APPEND PACKED ${_dats})
 
 # --- Scripts (scripter) ------------------------------------------------------
-file(GLOB _defs CONFIGURE_DEPENDS ${SBSP_ROOT}/data/Scripts/defs/*.scr)
-list(FILTER _defs EXCLUDE REGEX "/[Tt][Rr][Aa][Nn][Ss]\\.[Ss][Cc][Rr]$")
+# SCRIPT_DEFS is a list, not a glob of data/Scripts/defs/: the build writes
+# trans.scr there, and a CONFIGURE_DEPENDS glob that sees its own output
+# appear reconfigures the whole project on the next run (PR #97 review)
+list(TRANSFORM SCRIPT_DEFS PREPEND ${SBSP_ROOT}/data/Scripts/defs/ OUTPUT_VARIABLE _defs)
+list(TRANSFORM _defs APPEND .scr)
 foreach(_s IN LISTS SCRIPTS_LIST)
     set(_o ${OUT}/data/scripts/${_s}.dat)
     add_custom_command(OUTPUT ${_o}
@@ -140,9 +143,13 @@ endforeach()
 # --- The sprite bank, shop and party (parkgrab) ------------------------------------
 # sprites.rsp is the file list makefile.gfx wrote with $(file): parkgrab reads
 # @file as the words of one line, switches included, and expands the
-# sprite actors' globs itself.
+# sprite actors' globs itself.  file(GENERATE), not file(CONFIGURE): that
+# would substitute a ${VAR} or @VAR@ inside a sprite path; GENERATE expands
+# generator expressions only, writes LF, and leaves an unchanged file's
+# timestamp alone (PR #97 review).  file(WRITE) is no use here: on Windows
+# it writes "\n" as CRLF.
 string(JOIN " " _rsp ${SPRITES_WORDS})
-file(CONFIGURE OUTPUT ${CMAKE_BINARY_DIR}/sprites.rsp CONTENT "${_rsp}\n" NEWLINE_STYLE UNIX)
+file(GENERATE OUTPUT ${CMAKE_BINARY_DIR}/sprites.rsp CONTENT "${_rsp}\n" NEWLINE_STYLE UNIX)
 set(SPRITES_H ${OUT}/include/Sprites.h)
 set(_spr ${OUT_REL}/data/sprites)
 list(TRANSFORM SPRITES_FILES PREPEND ${SBSP_ROOT}/ OUTPUT_VARIABLE _sprDeps)
