@@ -3369,7 +3369,7 @@ did.  With it, no build and no CI job needs MSYS2.
   - Windows starts a child exe found on the parent's `PATH`, not the
     child's, so `psxstep.py` resolves each tool against the tool `PATH`.
   - The assembler `ccpsx` runs crashes on a long absolute `TEMP`.  Each
-    compile gets a short, relative one, `out/<T>/<V>/CD/temp/<8 hex>`, like
+    compile gets a short, relative one, `out/<T>/<V>/CD/temp/<16 hex>`, like
     make's `TEMP` (`out/<T>/<V>/CD/temp`).
 - **Parallel.**  make shared one `a.o`, one `dep.tmp` and, under MSYS2, one
   `C:/msys64/tmp/PQ3` between all compiles, so builds ran one file at a
@@ -3380,10 +3380,14 @@ did.  With it, no build and no CI job needs MSYS2.
   `deps/` tree.  The `-D` flags are part of each command, so switching
   `--identity-noline` on or off rebuilds every object (make needed a clean
   tree and `build-psx.sh`'s `identity-mode` stamp).  `build_psx.py` holds a
-  lock in `%TEMP%`, so a second PS1 build waits for the first: two trees
-  share `info.mip` under `source/system/`.
+  lock per configuration in `%TEMP%`, so a second build of the same `<T>
+  <V>` waits for the first (Ninja has no lock of its own); builds of
+  different configurations share nothing and may overlap.  The assembler
+  writes no dependency output, so a `.mip`'s `include`s are read at
+  configure time and listed as the object's dependencies.
 - **`psx_identity.py`** runs `build_psx.py` with its own Python, and counts
-  `port/psx`, `port/tools/psx` and `port/build-psx.cmd` as build inputs.
+  `port/psx`, `port/tools/psx` and `port/build-psx.cmd` as build inputs; a
+  base from before they existed is built with `HEAD`'s copies.
   Its line-insensitive check accepts either build route (`NOLINE_ROUTES`):
   this one, or `makefile.gaz` with `build-psx.sh` before it.
 - **Gone:** `port/build-psx.sh`, `port/require-msys2.sh`, and CI's MSYS2
