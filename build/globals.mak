@@ -150,7 +150,16 @@ export Path =		$(TOOL_DIR);$(CYG_BIN_DIR);$(PSYQ_BIN_DIR);$(PERL_BIN_DIR)
 #	above are the 1999 route - tools/make.exe (GNU make 3.79) with the cygwin
 #	b20 utilities in tools/cygwin, which no longer start on Windows 10/11.
 #	Until issue #98 a section here let MSYS2's make run both makefiles
-#	(issues #16, #48, #87, #90); git history has it.
+#	(issues #16, #48, #87, #90), and the port's edits to them (makefile.gfx's
+#	response file and key caps, makefile.gaz's padicon list and
+#	SBSP_IDENTITY_NOLINE) only ever ran under it: to run either makefile
+#	again, restore that section from `git show b18af743b:build/globals.mak`
+#	and use MSYS2's make 4.x.  Any other make stops here with one message,
+#	as the section's two guards made it, instead of failing on the 1999
+#	tools one recipe at a time.
+ifeq ($(filter 3.79%,$(MAKE_VERSION)),)
+$(error no port script runs this makefile, issue #98: the data build is port/build-data.cmd and the PlayStation build port/build-psx.cmd - see build/globals.mak)
+endif
 
 #	PsyQ Vars overidden for those who've installed PSYQ on their machine
 #	--------------------------------------------------------------------
