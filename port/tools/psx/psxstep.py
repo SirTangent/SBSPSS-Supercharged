@@ -92,7 +92,9 @@ def split(argv):
 
 def depfile(dep_tmp, obj, out):
     """The compiler's make-style dependency list, as an absolute-path depfile
-    for Ninja: the object first, then every file it read."""
+    for Ninja: the object first, then every file it read.  CMake passes the
+    object as it spelled the OUTPUT, so the depfile's target is the string
+    Ninja compares it with, not one re-derived from ROOT (PR #102 review)."""
     text = open(dep_tmp, errors="replace").read().replace("\\\r\n", " ").replace("\\\n", " ")
     files = text.split(":", 1)[1].split() if ":" in text else []
     def absolute(p):
@@ -107,9 +109,12 @@ def cmd_cc(argv):
     (src, obj, dep), flags = split(argv)
     # Short and relative, as make's TEMP (out/<T>/<V>/CD/temp) was: the 1999
     # assembler that ccpsx runs on its temporary files crashes on a long path.
-    # One directory per object under the tree's temp/, named by a hash.
+    # One directory per object under the tree's temp/, named by a hash: 16
+    # hex digits, since two objects sharing a directory would delete each
+    # other's a.o mid-compile when Ninja runs them side by side (PR #102
+    # review; 8 digits made that a one-in-10^5 chance per build).
     objs_root, _, rest = rel(obj).partition("/objs/")
-    tmp = "%s/temp/%s" % (objs_root, hashlib.sha1(rest.encode()).hexdigest()[:8])
+    tmp = "%s/temp/%s" % (objs_root, hashlib.sha1(rest.encode()).hexdigest()[:16])
     shutil.rmtree(os.path.join(ROOT, tmp), ignore_errors=True)
     os.makedirs(os.path.join(ROOT, tmp))
     a_o = tmp + "/a.o"

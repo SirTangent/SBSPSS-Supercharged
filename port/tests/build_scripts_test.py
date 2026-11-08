@@ -108,7 +108,7 @@ for t in ("USA", "EUR"):
             ok = info in asm and not missing and len(set(asm + cpp)) == len(asm + cpp)
             why = "missing %s" % missing[:3] if missing else ""
         except SystemExit as e:
-            ok, why = False, str(e)
+            ok, why, asm, cpp = False, str(e), [], []
         failed += not ok
         print("%s  psx_manifest %s %s: %d asm + %d cpp %s" % ("pass" if ok else "FAIL", t, v, len(asm), len(cpp), why))
 
