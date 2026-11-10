@@ -147,7 +147,7 @@ def main():
 
     def check(name, a, b):
         nonlocal ok
-        same = a == b and len(a) > 0
+        same = a == b       # an empty file both tools write is a match too (issue #48 review)
         print(f"{name:28s} built={len(a):8d} committed={len(b):8d}  {'OK' if same else 'MISMATCH'}")
         ok = ok and same
 

@@ -92,13 +92,40 @@ add_custom_command(OUTPUT ${SBSP_ROOT}/${INFO_MIP}
     WORKING_DIRECTORY ${SBSP_ROOT}
     COMMENT "info.mip" VERBATIM)
 
+# What a .mip `include`s, resolved as asmpsx resolves it (the /j directories
+# in PSX_ASM_OPTS), so editing an included file reassembles the object: the
+# assembler writes no dependency output, so the includes are read here, at
+# configure time, and the .mip is a configure dependency for a new include
+# line (PR #102 review).  Today two files include tools/psyq/include/gtereg.h.
+set(PSX_ASM_INCLUDE_DIRS tools/psyq/include source .)
+function(psx_asm_includes mip out)
+    set(_deps)
+    if(EXISTS ${mip})
+        file(STRINGS ${mip} _lines REGEX "^[ \t]*include[ \t]")
+        foreach(_l IN LISTS _lines)
+            string(REGEX REPLACE "^[ \t]*include[ \t]+([^ \t;]+).*$" "\\1" _f "${_l}")
+            foreach(_d IN LISTS PSX_ASM_INCLUDE_DIRS)
+                if(EXISTS ${SBSP_ROOT}/${_d}/${_f})
+                    list(APPEND _deps ${SBSP_ROOT}/${_d}/${_f})
+                    break()
+                endif()
+            endforeach()
+        endforeach()
+    endif()
+    set(${out} ${_deps} PARENT_SCOPE)
+endfunction()
+
 set(PSX_OBJS)
 set(PSX_ASM_LINK_NAMES)
 foreach(_s IN LISTS PSX_ASM_SOURCES)
     set(_obj ${SBSP_ROOT}/${OBJ_DIR}/${_s}.o)
+    psx_asm_includes(${SBSP_ROOT}/source/${_s}.mip _incs)
+    if(NOT ${SBSP_ROOT}/source/${_s}.mip STREQUAL ${SBSP_ROOT}/${INFO_MIP})
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${SBSP_ROOT}/source/${_s}.mip)
+    endif()
     add_custom_command(OUTPUT ${_obj}
         COMMAND ${STEP} asm source/${_s}.mip ${OBJ_DIR}/${_s}.o -- ${PSX_ASM_OPTS}
-        DEPENDS ${SBSP_ROOT}/source/${_s}.mip ${PSX_TOOLS}/psxstep.py
+        DEPENDS ${SBSP_ROOT}/source/${_s}.mip ${_incs} ${PSX_TOOLS}/psxstep.py
         WORKING_DIRECTORY ${SBSP_ROOT}
         COMMENT "Assembling source/${_s}.mip" VERBATIM)
     list(APPEND PSX_OBJS ${_obj})
@@ -107,8 +134,9 @@ endforeach()
 foreach(_s IN LISTS PSX_CPP_SOURCES)
     set(_obj ${SBSP_ROOT}/${OBJ_DIR}/${_s}.o)
     set(_dep ${CMAKE_CURRENT_BINARY_DIR}/deps/${_s}.d)
+    # the object is passed as this OUTPUT is spelled: the depfile names it so
     add_custom_command(OUTPUT ${_obj}
-        COMMAND ${STEP} cc source/${_s}.cpp ${OBJ_DIR}/${_s}.o ${_dep} -- ${PSX_CCFLAGS}
+        COMMAND ${STEP} cc source/${_s}.cpp ${_obj} ${_dep} -- ${PSX_CCFLAGS}
         DEPENDS ${SBSP_ROOT}/source/${_s}.cpp ${SN_INI} ${PSX_TOOLS}/psxstep.py
         DEPFILE ${_dep}
         WORKING_DIRECTORY ${SBSP_ROOT}

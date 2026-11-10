@@ -59,13 +59,20 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 # port/ is PC-only.
 GAME_DIRS = ["source", "tools/Data/include"]
 
+# The build itself: port/psx's CMake project and the scripts that drive it
+# (issue #98; port/build-psx.sh until then).  A base from before it has none
+# of these files, and the base side is then built with HEAD's driver, which
+# is held byte-identical to makefile.gaz's route: a driver file that is
+# added against the base is no reason to refuse (PR #102 review).
+DRIVER_PATHS = ["port/psx", "port/tools/psx", "port/build-psx.cmd"]
+
 # Everything else that decides what the PS1 build produces: makefile.gaz (the
-# lists of what is compiled) and the build/*.mak it includes, the per-user
-# makefile build/getuser.mak pulls from users/, the PSY-Q toolchain and tools
-# under tools/, and port/psx's CMake build with the scripts that drive it
-# (issue #98; port/build-psx.sh until then).
-BUILD_PATHS = GAME_DIRS + ["makefile.gaz", "build", "users", "tools",
-                           "port/psx", "port/tools/psx", "port/build-psx.cmd"]
+# lists of what is compiled), the PSY-Q toolchain, libraries and tools under
+# tools/, and the driver.  Not build/*.mak or users/: port/psx reads neither
+# (ccopt.mak's and lnk.mak's values are transcribed into its CMakeLists.txt),
+# so an edit there changes nothing and is no reason to rebuild (PR #103
+# review).
+BUILD_PATHS = GAME_DIRS + ["makefile.gaz", "tools"] + DRIVER_PATHS
 
 # What the PS1 compiler (ccpsx / EGCS) has defined, as far as the port's
 # gates care.  mips comes from the compiler; PSX_MIPS_ASM from
@@ -602,13 +609,13 @@ def knows_noline(rev):
 
 
 def clean_tree(territory, version):
-    """Delete a PS1 tree's objects, dependency files and linked Spongey.cpe,
-    so its next build recompiles every TU, and so a line-insensitive build's
-    objects never stand in for a normal one's (port/psx also rebuilds when
-    the -D flags change; make did not)."""
+    """Delete a PS1 tree's objects and linked Spongey.cpe, so its next build
+    recompiles every TU, and so a line-insensitive build's objects never
+    stand in for a normal one's (port/psx also rebuilds when the -D flags
+    change; make did not).  The depfiles live in port/build/psx-<t>-<v>/deps
+    and only describe objects, so they stay."""
     tree = os.path.join(REPO, "out", territory, version)
-    for d in (os.path.join(tree, "CD", "objs"), os.path.join(tree, "deps")):
-        shutil.rmtree(d, ignore_errors=True)
+    shutil.rmtree(os.path.join(tree, "CD", "objs"), ignore_errors=True)
     cpe = os.path.join(tree, "version", "CD", "Spongey.cpe")
     if os.path.exists(cpe):
         os.remove(cpe)
@@ -653,11 +660,16 @@ def cmd_build(args):
     r = git("diff", "-z", "--no-renames", "--name-status", base, "HEAD", "--", *BUILD_PATHS)
     fields = [p for p in r.stdout.decode().split("\0") if p]
     changes = list(zip(fields[0::2], fields[1::2]))
-    odd = [c for c in changes if c[0] != "M"]
+
+    def driver_added(status, path):
+        # the base predates this file of the build driver: its side is built
+        # with HEAD's copy (DRIVER_PATHS)
+        return status == "A" and any(path == d or path.startswith(d + "/") for d in DRIVER_PATHS)
+    odd = [c for c in changes if c[0] != "M" and not driver_added(*c)]
     if odd:
         fail("files added or removed against the base - swapping in the base copies cannot rebuild it:\n  "
              + "\n  ".join("%s\t%s" % c for c in odd))
-    files = [c[1] for c in changes]
+    files = [c[1] for c in changes if c[0] == "M"]
     if not files:
         print("no PS1 build inputs changed against %s - nothing to compare" % base[:10])
         return 0

@@ -17,7 +17,10 @@ where the 1999 makefile's shell lines could not.
 
   run <dir> -- <command...>
       The command with <dir> first on its PATH: MkActor packs every frame
-      through system("lznp.exe ...") and finds it there.
+      through system("lznp.exe ...") and finds it there.  One at a time per
+      working directory, across build trees: MkActor's Actor.Tmp and
+      Actor.Pak live in the directory it runs from, and the JOB_POOL only
+      serialises one tree, not a USA and an EUR build running together.
 
   stage <source> <destination>
       Copy a CD file the PC exe reads into out/<T>/cd, as build-data.sh's
@@ -25,14 +28,51 @@ where the 1999 makefile's shell lines could not.
       unmaterialised Git LFS pointer, a truncated movie), and copy only when
       the destination is missing or older.
 """
+import contextlib
+import hashlib
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 
 class StepError(Exception):
     pass
+
+
+@contextlib.contextmanager
+def directory_lock():
+    """Held around a `run` step, keyed on the working directory, so the
+    data-usa and data-eur trees never run MkActor in the repo root at once
+    (PR #97 review): its Actor.Tmp / Actor.Pak live there, and CMake's
+    JOB_POOL serialises one tree only."""
+    key = hashlib.sha1(os.path.normcase(os.getcwd()).encode("utf-8")).hexdigest()[:16]
+    fd = os.open(os.path.join(tempfile.gettempdir(), "sbsp-datastep-%s.lock" % key),
+                 os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        if os.name == "nt":
+            while True:
+                try:
+                    msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                    break
+                except OSError:
+                    pass            # LK_LOCK gives up after ten seconds: keep waiting
+        else:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        if os.name == "nt":
+            try:
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            except OSError:
+                pass
+        os.close(fd)
 
 
 def call(cmd, **kw):
@@ -73,7 +113,8 @@ def parkgrab(written, header, cmd):
 def run(path_dir, cmd):
     env = dict(os.environ)
     env["PATH"] = os.path.abspath(path_dir) + os.pathsep + env.get("PATH", "")
-    call(cmd, env=env)
+    with directory_lock():
+        call(cmd, env=env)
 
 
 def stage(src, dst):

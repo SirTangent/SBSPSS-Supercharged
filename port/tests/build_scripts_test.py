@@ -67,6 +67,13 @@ CASES = [
     ('test bogus', None),
     ('test x86 xyz', None),
     ('test usa eur extra', None),
+    # a territory word only follows x86; after anything else it would be
+    # dropped without a word (PR #100 / #101 reviews)
+    ('test usa eur', None),
+    ('test debug eur', None),
+    ('soak eur usa', None),
+    ('soak x y z', None),
+    ('test x86 usa eur', None),
     ('parity64 eur final x', None),
     ('parity64 nope', None),
     ('clangcl', None),
@@ -108,7 +115,7 @@ for t in ("USA", "EUR"):
             ok = info in asm and not missing and len(set(asm + cpp)) == len(asm + cpp)
             why = "missing %s" % missing[:3] if missing else ""
         except SystemExit as e:
-            ok, why = False, str(e)
+            ok, why, asm, cpp = False, str(e), [], []
         failed += not ok
         print("%s  psx_manifest %s %s: %d asm + %d cpp %s" % ("pass" if ok else "FAIL", t, v, len(asm), len(cpp), why))
 

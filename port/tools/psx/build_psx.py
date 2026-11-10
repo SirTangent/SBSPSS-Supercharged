@@ -11,9 +11,12 @@ drove it, without MSYS2.  The territory's data must be built first
 compile inputs.  --identity-noline builds with PORT_LINE as 0, for
 port/tools/psx_identity.py's line-insensitive DEBUG compare only.
 
-One PS1 build at a time: the trees share sn.ini at the repository root and
-info.mip under source/system, so a second build waits for the first
-(a lock file in %TEMP%).  CMake and Ninja come from port/tools/buildenv.py.
+One build of a configuration at a time: Ninja has no lock of its own, and
+two builds of the same <T> <V> would write the same objects, so the second
+waits for the first (a lock file per configuration in %TEMP%).  Builds of
+different configurations share nothing - each has its own objects, temp,
+info.mip (source/system/<V>/<T>) and CMake tree - and may overlap.  CMake
+and Ninja come from port/tools/buildenv.py.
 """
 import msvcrt
 import os
@@ -26,7 +29,10 @@ sys.path.insert(0, os.path.dirname(HERE))      # port/tools: buildenv, also unde
 import buildenv                                 # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
-LOCK = os.path.join(os.environ.get("TEMP", ROOT), "sbsp-psx.lock")
+
+
+def lock_path(territory, version):
+    return os.path.join(os.environ.get("TEMP", ROOT), "sbsp-psx-%s-%s.lock" % (territory.lower(), version.lower()))
 
 
 def usage():
@@ -52,12 +58,13 @@ def parse(argv):
     return territory, version, noline
 
 
-def lock():
-    f = open(LOCK, "a+")
+def lock(path):
+    f = open(path, "a+")
     try:
         msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
     except OSError:
-        print("Another PS1 build holds %s - waiting for it to finish..." % LOCK, file=sys.stderr)
+        print("Another PS1 build of this configuration holds %s - waiting for it to finish..." % path,
+              file=sys.stderr)
         while True:
             try:
                 msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
@@ -76,7 +83,7 @@ def main(argv):
     if not os.path.isfile(os.path.join(ROOT, "out", territory, "include", "trans.h")):
         sys.exit("PSX BUILD FAILED: out/%s/include is missing - run: port\\build-data.cmd %s"
                  % (territory, territory.lower()))
-    held = lock()
+    held = lock(lock_path(territory, version))
     cmake, ninja = buildenv.find_cmake(), buildenv.find_ninja()
     preset = "psx-%s-%s" % (territory.lower(), version.lower())
     src = os.path.join(ROOT, "port", "psx")

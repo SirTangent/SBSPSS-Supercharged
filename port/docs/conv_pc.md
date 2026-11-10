@@ -3147,8 +3147,12 @@ below).
   - Every converter runs from the repo root, as under make. The scripts
     `#include` their defs by repo-relative path, MkLevel.ini's `BackGfxDir`
     is relative, and parkgrab sorts by the paths it is given.
-  - `sprites.rsp` is one of the outputs, written `file(CONFIGURE)` with LF,
-    as make's `$(file)` did, so it is byte-identical.
+  - `sprites.rsp` is one of the outputs, written with LF as make's `$(file)`
+    did, so it is byte-identical: `file(GENERATE ... NEWLINE_STYLE UNIX)`,
+    which expands generator expressions only and keeps an unchanged file's
+    timestamp.  Not `file(CONFIGURE)`, which would substitute a `${VAR}` or
+    `@VAR@` inside a sprite path, and not `file(WRITE)`, which writes CRLF
+    on Windows (PR #97 review).
   - The x64 MkLevel takes `-c:tools/data/bin`; the 1999 one reads its ini
     beside its exe.
 - **Every dependency declared.** Each step depends on its converter exe and
@@ -3157,7 +3161,10 @@ below).
     `AnimList.Txt`);
   - levels: their folder, plus `graphics/hazards`, `graphics/Platforms`,
     `graphics/levels/BackGfx`, `MkLevel.ini` and `Sprites.h`;
-  - scripts: `data/Scripts/defs/*.scr`;
+  - scripts: the five `data/Scripts/defs/` files, listed as `SCRIPT_DEFS`
+    rather than globbed, because the build writes `trans.scr` into that
+    directory and a `CONFIGURE_DEPENDS` glob that sees its own output
+    appear reconfigures everything on the next run (PR #97 review);
   - the lump: `data/DataCache.scr` and everything it packs;
   - shop and party: their bitmaps. Under make they had no prerequisites at
     all, through an undefined variable.
@@ -3198,15 +3205,24 @@ below).
     second and at quarter speed otherwise, but nothing wrote `m_chargeTime`
     before the fish's sensor first fired, so until then it was whatever
     its heap block held (gate 2's item 2, under "EUR clang-cl presets and
-    cross-toolchain identity" above).  The fish gets an `init()` override,
-    as `CNpcSeaSnakeEnemy` has, that calls `CNpcEnemy::init()` and sets
+    cross-toolchain identity" above).  The fish gets an `init()` override
+    that calls `CNpcEnemy::init()` and sets
     `m_chargeTime = GameState::getOneSecondInFrames()`: the value
     `processClose` gives it after every charge, so the fish patrols at the
     slow swim before its first charge too.  DEBUG builds already swam that
     way on every toolchain (`USE_MEM_GUARDS` fills each new block with
     `0x3d3d3d3d`, over one second), so the fix moves FINAL onto DEBUG's
-    behaviour and leaves DEBUG unchanged.  `init()` is already virtual
-    (`CThing`), so the class's size and `RamUsed` don't change.  On
+    behaviour and leaves DEBUG unchanged.  What a retail PlayStation showed
+    before the first charge was never measured: the heap bytes there were
+    deterministic on the disc but unknown, and the slow swim is the state
+    `processClose` puts the fish in after every charge, so the fix makes
+    the designed steady state the initial one.  No other `CNpcEnemy`
+    subclass overrides `init()` (the hierarchy's usual per-class hook is
+    `postInit()`, 26 overrides; `nssnake.cpp`'s and `nworm.cpp`'s `init()`
+    belong to their segment helpers, not to enemies), but `CNpcEnemy::Create`
+    calls `init()` first and a member's default belongs there.  `init()` is
+    already virtual (`CThing`), so the class's size and `RamUsed` don't
+    change.  On
     clang-cl x64, USA, seed 1, every Tier 1 route and Tier 2 level (34
     runs, `run_tier.py --tier1 --tier2 --compare-frames` against the exe
     before the change):
@@ -3358,7 +3374,7 @@ did.  With it, no build and no CI job needs MSYS2.
   - Windows starts a child exe found on the parent's `PATH`, not the
     child's, so `psxstep.py` resolves each tool against the tool `PATH`.
   - The assembler `ccpsx` runs crashes on a long absolute `TEMP`.  Each
-    compile gets a short, relative one, `out/<T>/<V>/CD/temp/<8 hex>`, like
+    compile gets a short, relative one, `out/<T>/<V>/CD/temp/<16 hex>`, like
     make's `TEMP` (`out/<T>/<V>/CD/temp`).
 - **Parallel.**  make shared one `a.o`, one `dep.tmp` and, under MSYS2, one
   `C:/msys64/tmp/PQ3` between all compiles, so builds ran one file at a
@@ -3369,10 +3385,14 @@ did.  With it, no build and no CI job needs MSYS2.
   `deps/` tree.  The `-D` flags are part of each command, so switching
   `--identity-noline` on or off rebuilds every object (make needed a clean
   tree and `build-psx.sh`'s `identity-mode` stamp).  `build_psx.py` holds a
-  lock in `%TEMP%`, so a second PS1 build waits for the first: two trees
-  share `info.mip` under `source/system/`.
+  lock per configuration in `%TEMP%`, so a second build of the same `<T>
+  <V>` waits for the first (Ninja has no lock of its own); builds of
+  different configurations share nothing and may overlap.  The assembler
+  writes no dependency output, so a `.mip`'s `include`s are read at
+  configure time and listed as the object's dependencies.
 - **`psx_identity.py`** runs `build_psx.py` with its own Python, and counts
-  `port/psx`, `port/tools/psx` and `port/build-psx.cmd` as build inputs.
+  `port/psx`, `port/tools/psx` and `port/build-psx.cmd` as build inputs; a
+  base from before they existed is built with `HEAD`'s copies.
   Its line-insensitive check accepts either build route (`NOLINE_ROUTES`):
   this one, or `makefile.gaz` with `build-psx.sh` before it.
 - **Gone:** `port/build-psx.sh`, `port/require-msys2.sh`, and CI's MSYS2
