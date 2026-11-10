@@ -3173,9 +3173,11 @@ below).
   what depends on it: a shop bitmap → shop + lump, a sprite → the bank, all
   27 levels and the lump.
 - **Parallel.** Each screen's temp file is `<out>.gfx.tmp`, not one `a.tmp`
-  in the repo root (`port/tools/data/datastep.py gfx`). MkActor runs in a
+  in the repo root (`port/tools/data/datastep.py gfx`). MkActor ran in a
   Ninja pool of one, since its `Actor.Tmp`/`Actor.Pak` live in its working
-  directory. The translation step is one command declaring all its outputs:
+  directory; each one has a directory of its own now and they run together
+  ("MkActor in parallel", below). The translation step is one command
+  declaring all its outputs:
   `final.dat`, the ten `.dat`s, `trans.h` and `trans.scr`.
 - **No Perl.** `port/tools/data/lang.py` and `trans_scr.py` port `lang.pl` and
   `text_extract.pl`, rules included (`data_text_rules`). CMake loops replace
@@ -3436,6 +3438,41 @@ With the PlayStation build on CMake, nothing in the port runs MSYS2:
   (above): real `makefile.gaz` builds.  Holding it to them again means
   restoring the section from `git show b18af743b:build/globals.mak` and
   using MSYS2's make 4.x, which the makefiles' port edits need.
+
+## MkActor in parallel
+
+The data build's 40 MkActor steps ran one at a time, and they were the
+build: 54.1 of its 54.8 seconds.  MkActor packs each frame by writing
+`Actor.Tmp`, running `lznp.exe` on it through `system()` and reading
+`Actor.Pak` back.  Both names are fixed and both files go in its working
+directory, which was the repo root for every actor.
+
+Each actor now runs in a directory of its own,
+`port/build/data-<t>/actors/<actor>/` (`datastep.py run <path dir> <work
+dir>` makes it), so:
+- all 40 run at once.  A clean USA build takes 14 seconds, not 55; what is
+  left is SpongeBob's own bank, 10 seconds alone and 13.5 beside the others;
+- a USA and an EUR build no longer wait on each other.  The directory is
+  per build tree, so the lock `datastep.py` held across trees (PR #97
+  review) and the Ninja pool are gone.  Both together from clean take 20
+  seconds;
+- MkActor's paths (`-r:`, `-o:`, `-i:`) are absolute, since it no longer
+  runs from the repo root.  They do not reach the output: a `.SBK` holds no
+  path and an `_Anim.h` only the actor's name.
+
+No converter changed, so the 1999 MkActor (`--vintage-tools`) runs the
+same way.
+
+Checked against a build of the tree before this change:
+- the x64 converters: 380 of 380 files identical, for USA built alone and
+  for USA and EUR built both at once;
+- `--vintage-tools`: all 40 banks build.  34 are identical, and the other
+  six are the ones whose stray bytes vary between any two vintage runs
+  (above), one or two bytes each;
+- touching one frame of Gary's rebuilds Gary's bank and the lump, and the
+  build after that is `ninja: no work to do`;
+- an output and a working directory with spaces in their paths give the
+  same bank.
 
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 

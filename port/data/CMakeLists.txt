@@ -7,18 +7,18 @@
 # the same, byte for byte.  What changes is around them:
 # - every step declares what it reads and writes, its converter included,
 #   so a rebuild redoes exactly what changed;
-# - steps run in parallel: no temp file is shared (each screen's is its
-#   own), and MkActor - whose Actor.Tmp/Actor.Pak live in its working
-#   directory - runs one at a time;
+# - steps run in parallel: no temp file is shared.  Each screen's is its
+#   own, and each MkActor - whose Actor.Tmp/Actor.Pak go in its working
+#   directory - runs in a directory of its own;
 # - the string order is the English file's (port/tools/data/lang.py), not
 #   Perl's hash order;
 # - there are no generated makefiles to rebuild every other run.
 #
 # No compiler: the converters are the committed port/tools/x64 exes (or,
 # with SBSP_DATA_TOOLS=vintage, the 1999 ones), built by port/CMakeLists.txt
-# ahead of time.  Each one runs from the repo root, as under make: scripts
-# #include their defs by repo-relative path, MkLevel.ini's BackGfxDir is
-# relative, and parkgrab sorts by the paths it is given.
+# ahead of time.  Each one but MkActor runs from the repo root, as under
+# make: scripts #include their defs by repo-relative path, MkLevel.ini's
+# BackGfxDir is relative, and parkgrab sorts by the paths it is given.
 #
 # port/build-data.cmd / .sh drive it (port/tools/data/build_data.py):
 #   cmake --preset data-usa && cmake --build --preset data-usa
@@ -81,7 +81,6 @@ include(lists.cmake)
 set(OUT_REL out/${SBSP_TERRITORY})
 set(OUT ${SBSP_ROOT}/${OUT_REL})
 set(MKDIR ${CMAKE_COMMAND} -E make_directory)
-set_property(GLOBAL PROPERTY JOB_POOLS mkactor=1)
 set(ALL_OUTPUTS)		# what `data` builds
 set(PACKED)				# what BIGLUMP.BIN is built after (data/DataCache.scr lists it)
 
@@ -219,6 +218,13 @@ foreach(_ch IN LISTS LEVELS_CHAPTERS)
 endforeach()
 
 # --- Actors (MkActor) --------------------------------------------------------
+# MkActor packs every frame through two files it names itself, Actor.Tmp and
+# Actor.Pak, in its working directory.  Run from the repo root the 40 of
+# them had to take turns, and that was the build: 54 of its 55 seconds.
+# Each one runs in a directory of its own in the build tree instead, so
+# they run together, and a USA and an EUR build no longer wait on each
+# other.  Its paths are absolute for that.  They do not reach the output: a
+# .SBK holds no path, and an _Anim.h only the actor's name.
 foreach(_a IN LISTS ACTOR_LIST)
     string(TOUPPER ${_a} _A)
     file(GLOB_RECURSE _actorDeps CONFIGURE_DEPENDS ${SBSP_ROOT}/graphics/Characters/${_a}/*)
@@ -226,12 +232,11 @@ foreach(_a IN LISTS ACTOR_LIST)
     add_custom_command(OUTPUT ${_o}
         BYPRODUCTS ${OUT}/include/ACTOR_${_A}_Anim.h
         COMMAND ${MKDIR} ${OUT}/data/Actors ${OUT}/include
-        COMMAND ${PY} ${DATA_PY}/datastep.py run ${LZNP_DIR} --
-                ${EXE_MkActor} -r:graphics/Characters -s:Render/Psx -o:${OUT_REL}/data/Actors
-                -i:${OUT_REL}/include ${_a} -c:16
+        COMMAND ${PY} ${DATA_PY}/datastep.py run ${LZNP_DIR} ${CMAKE_BINARY_DIR}/actors/${_a} --
+                ${EXE_MkActor} -r:${SBSP_ROOT}/graphics/Characters -s:Render/Psx -o:${OUT}/data/Actors
+                -i:${OUT}/include ${_a} -c:16
         DEPENDS ${_actorDeps} ${EXE_MkActor} ${EXE_lznp} ${DATA_PY}/datastep.py
         WORKING_DIRECTORY ${SBSP_ROOT} VERBATIM
-        JOB_POOL mkactor
         COMMENT "MkActor ${_a}")
     list(APPEND ALL_OUTPUTS ${_o})
     list(APPEND PACKED ${_o})
