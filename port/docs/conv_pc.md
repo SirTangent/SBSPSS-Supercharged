@@ -3460,6 +3460,25 @@ dir>` makes it), so:
   runs from the repo root.  They do not reach the output: a `.SBK` holds no
   path and an `_Anim.h` only the actor's name.
 
+Two things that follow from it (PR #107 review):
+- **The checkout's path is upper-cased.**  MkActor upper-cases the whole of
+  its `-r:` and `-o:` arguments (`RootPath.Upper()`, `OutPath.Upper()`), and
+  with absolute paths that now includes the directories above the
+  repository.  Windows opens the upper-cased path all the same, with two
+  exceptions: a checkout under a directory set case-sensitive (`fsutil file
+  setCaseSensitiveInfo`, or a directory WSL created), and a path that is not
+  single-byte text under a DBCS code page (932, 936), where upper-casing a
+  trail byte changes the character.  There MkActor finds no `AnimList.Txt`,
+  says nothing and exits 0 with an empty bank.  Not fixed: no checkout of
+  this project is either, and the fix is in the converter or in relative
+  paths worked out per working directory.  Build from an ordinary path.
+- **The working directory starts empty.**  `datastep.py run` deletes the
+  files it finds there before it runs the command.  MkActor ignores what
+  `system("lznp ...")` returns, so an `Actor.Pak` left by a build that was
+  killed would be read back as the frame the next time one pack failed,
+  with exit 0.  That was as true in the repo root; a directory of its own
+  is what makes clearing it safe.
+
 No converter changed, so the 1999 MkActor (`--vintage-tools`) runs the
 same way.
 
