@@ -5,6 +5,7 @@ held it to what build-pc.sh did with 47 argument lists (its build/test/soak/
 parity64 steps stubbed out), all equal.  Issue #39 then renamed the presets
 (x64 the plain ones, x86-* the 32-bit ones, the clangcl* words refused), and
 the table below is that grammar, so a change to it shows up here.  Also:
+--no-data and the territories whose data a command line builds first;
 game_sources.cmake must be what port/cmake/gen_game_sources.py makes from
 makefile.gaz, and the PS1 build's object list must resolve.
 
@@ -20,6 +21,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "tools"))
 sys.path.insert(0, os.path.join(HERE, "..", "tools", "psx"))
 import build_pc  # noqa: E402
+import buildenv  # noqa: E402
 import psx_manifest  # noqa: E402
 
 # (command line, (mode, presets, ninja args)) - None is a usage error.
@@ -40,6 +42,13 @@ CASES = [
     ('x86 usa', ('build', ('x86-debug', 'x86-final'), ())),
     ('x86 eur', ('build', ('x86-eur-debug', 'x86-eur-final'), ())),
     ('x86 EUR', ('build', ('x86-eur-debug', 'x86-eur-final'), ())),
+    # both territories for 32-bit, as `all` is for x64
+    ('x86 all', ('build', ('x86-debug', 'x86-final', 'x86-eur-debug', 'x86-eur-final'), ())),
+    ('x86 ALL -j4', ('build', ('x86-debug', 'x86-final', 'x86-eur-debug', 'x86-eur-final'), ('-j4',))),
+    ('test x86 all', ('test', ('x86-debug', 'x86-final', 'x86-eur-debug', 'x86-eur-final'), ())),
+    ('soak x86 all', ('soak', ('x86-debug', 'x86-final', 'x86-eur-debug', 'x86-eur-final'), ())),
+    ('test usa all', None),
+    ('test x86 all eur', None),
     ('x86-debug', ('build', ('x86-debug',), ())),
     ('x86-final', ('build', ('x86-final',), ())),
     ('x86-eur-debug', ('build', ('x86-eur-debug',), ())),
@@ -96,6 +105,209 @@ for line, want in CASES:
     if not ok:
         print("      got:  %r" % (got,))
         print("      want: %r" % (want,))
+
+# --no-data comes out of the command line wherever it stands, before plan()
+# sees it (Ninja has no such option to lose), and SBSP_NO_DATA says the same
+# from the environment, where a false spelling means "build the data" (PR
+# #108 review).  (command line, variable, (what plan() gets, why skipped))
+ARG = buildenv.NO_DATA_ARG
+
+
+def from_env(value):
+    return "%s=%s in the environment" % (buildenv.NO_DATA_ENV, value)
+
+
+NO_DATA_CASES = [
+    ('debug', None, ('debug', '')),
+    ('--no-data debug', None, ('debug', ARG)),
+    ('debug --no-data', None, ('debug', ARG)),
+    ('debug -j2 --no-data -v', None, ('debug -j2 -v', ARG)),
+    ('test --no-data x86 eur', None, ('test x86 eur', ARG)),
+    ('parity64 eur final --no-data', None, ('parity64 eur final', ARG)),
+    ('--no-data', None, ('', ARG)),
+    ('debug --no-data --no-data', None, ('debug', ARG)),
+    ('debug --nodata', None, ('debug --nodata', '')),      # Ninja's to refuse
+    ('debug', '1', ('debug', from_env('1'))),
+    ('debug', 'ON', ('debug', from_env('ON'))),
+    ('debug', 'yes', ('debug', from_env('yes'))),
+    ('debug', '0', ('debug', '')),
+    ('debug', '', ('debug', '')),
+    ('debug', 'OFF', ('debug', '')),
+    ('debug', 'off', ('debug', '')),
+    ('debug', 'false', ('debug', '')),
+    ('debug', 'No', ('debug', '')),
+    ('debug', 'n', ('debug', '')),
+    ('debug', ' 0 ', ('debug', '')),
+    ('debug --no-data', '0', ('debug', ARG)),
+    ('debug --no-data', '1', ('debug', ARG)),
+]
+saved = os.environ.pop(buildenv.NO_DATA_ENV, None)
+for line, var, want in NO_DATA_CASES:
+    if var is None:
+        os.environ.pop(buildenv.NO_DATA_ENV, None)
+    else:
+        os.environ[buildenv.NO_DATA_ENV] = var
+    rest, why = buildenv.no_data(shlex.split(line))
+    got = (" ".join(rest), why)
+    ok = got == want
+    failed += not ok
+    print("%s  no_data %s%s" % ("pass" if ok else "FAIL", line,
+                                "" if var is None else "  (%s=%r)" % (buildenv.NO_DATA_ENV, var)))
+    if not ok:
+        print("      got:  %r" % (got,))
+        print("      want: %r" % (want,))
+os.environ.pop(buildenv.NO_DATA_ENV, None)
+if saved is not None:
+    os.environ[buildenv.NO_DATA_ENV] = saved
+
+# What a command line builds, in order: a territory's data once, ahead of
+# its first tree and not before another territory's trees.
+STEP_CASES = [
+    ('', 'data:USA debug final data:EUR eur-debug eur-final'),
+    ('all', 'data:USA debug final data:EUR eur-debug eur-final'),
+    ('usa', 'data:USA debug final'),
+    ('eur', 'data:EUR eur-debug eur-final'),
+    ('final', 'data:USA final'),
+    ('eur-debug', 'data:EUR eur-debug'),
+    ('x86', 'data:USA x86-debug x86-final'),
+    ('x86 eur', 'data:EUR x86-eur-debug x86-eur-final'),
+    ('x86 all', 'data:USA x86-debug x86-final data:EUR x86-eur-debug x86-eur-final'),
+    ('x86-eur-final', 'data:EUR x86-eur-final'),
+    ('test', 'data:USA debug final data:EUR eur-debug eur-final'),
+    ('test x86 eur', 'data:EUR x86-eur-debug x86-eur-final'),
+    ('soak eur', 'data:EUR eur-debug eur-final'),
+    ('parity64', 'data:USA x86-debug debug'),
+    ('parity64 final', 'data:USA x86-final final'),
+    ('parity64 eur', 'data:EUR x86-eur-debug eur-debug'),
+    ('parity64 FINAL EUR', 'data:EUR x86-eur-final eur-final'),
+]
+for line, want in STEP_CASES:
+    mode, presets, _ = build_pc.plan(shlex.split(line))
+    got = " ".join("data:" + w if s == "data" else w for s, w in build_pc.build_steps(mode, presets))
+    ok = got == want
+    failed += not ok
+    print("%s  steps of build-pc %s: %s" % ("pass" if ok else "FAIL", line or "(no arguments)", got))
+    if not ok:
+        print("      want: %r" % (want,))
+
+# A Ninja dry run must not start a real data build.
+for line, want in (('debug', False), ('debug -j4 -v', False), ('debug -- -n', True), ('debug -n', True),
+                   ('debug -- --dry-run', True), ('x86 eur -- -j2 -n', True), ('debug -- -nv', False)):
+    _, _, extra = build_pc.plan(shlex.split(line))
+    ok = build_pc.dry_run(extra) == want
+    failed += not ok
+    print("%s  dry run: build-pc %s is %sone" % ("pass" if ok else "FAIL", line, "" if want else "not "))
+
+# The reasons a build leaves the data alone without being asked, and the
+# lock (buildenv; PR #108 review).
+with tempfile.TemporaryDirectory() as tmp:
+    # out\ or out\<T> as a junction to another checkout's: that data is not
+    # this checkout's to rebuild
+    def junction(link, target):
+        return subprocess.run(["cmd", "/c", "mklink", "/J", link, target],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
+    other = os.path.join(tmp, "other", "out")
+    os.makedirs(os.path.join(other, "USA"))
+    plain = os.path.join(tmp, "plain")
+    os.makedirs(os.path.join(plain, "out", "USA"))
+    whole = os.path.join(tmp, "whole")
+    os.mkdir(whole)
+    part = os.path.join(tmp, "part")
+    os.makedirs(os.path.join(part, "out"))
+    made = junction(os.path.join(whole, "out"), other) and junction(os.path.join(part, "out", "USA"),
+                                                                    os.path.join(other, "USA"))
+    for label, got, want in (
+            ("junctions can be made here", made, True),
+            ("an ordinary out is this checkout's", buildenv.shared_out(plain, "USA"), ""),
+            ("no out at all is this checkout's", buildenv.shared_out(os.path.join(tmp, "none"), "USA"), ""),
+            ("out as a junction is not", buildenv.shared_out(whole, "USA"), "out"),
+            ("out/USA as a junction is not", buildenv.shared_out(part, "usa"), os.path.join("out", "USA")),
+            ("out/EUR beside a linked out/USA is", buildenv.shared_out(part, "EUR"), "")):
+        ok = got == want
+        failed += not ok
+        print("%s  shared out: %s" % ("pass" if ok else "FAIL", label))
+        if not ok:
+            print("      got %r, want %r" % (got, want))
+    for name in ("whole/out", "part/out/USA"):          # a junction is removed as a directory, target untouched
+        if os.path.lexists(os.path.join(tmp, name)):
+            os.rmdir(os.path.join(tmp, name))
+
+    # cache_value, which the data step reads SBSP_DATA_TOOLS and
+    # SBSP_DATA_FINAL_DAT with
+    with open(os.path.join(tmp, "CMakeCache.txt"), "w") as f:
+        f.write("# comment\nSBSP_DATA_TOOLS:STRING=vintage\nSBSP_DATA_FINAL_DAT:FILEPATH=\n"
+                "SBSP_OTHER:FILEPATH=C:/a=b/final.dat\nSBSP_DATA_TOOLS_X:STRING=no\n")
+    for key, want in (("SBSP_DATA_TOOLS", "vintage"), ("SBSP_DATA_FINAL_DAT", ""),
+                      ("SBSP_OTHER", "C:/a=b/final.dat"), ("SBSP_MISSING", None)):
+        got = buildenv.cache_value(tmp, key)
+        ok = got == want
+        failed += not ok
+        print("%s  cache_value %s%s" % ("pass" if ok else "FAIL", key, "" if ok else ": got %r" % (got,)))
+    ok = buildenv.cache_value(os.path.join(tmp, "nowhere"), "SBSP_DATA_TOOLS") is None
+    failed += not ok
+    print("%s  cache_value of a tree that is not there" % ("pass" if ok else "FAIL"))
+
+    # what the caller asked for comes back as the reason, whatever else holds
+    ok = buildenv.data_left_alone("USA", "--no-data") == "--no-data"
+    failed += not ok
+    print("%s  data_left_alone: the caller's reason comes first" % ("pass" if ok else "FAIL"))
+
+    # hold_lock: a byte another process holds is waited for; any other
+    # error stops the build, where it used to wait for ever
+    real_locking, real_sleep = buildenv.msvcrt.locking, buildenv.time.sleep
+    real_stderr = sys.stderr
+    calls = []
+
+    def fake_locking(errors):
+        def locking(fd, mode, nbytes):
+            calls.append(mode)
+            if len(calls) <= len(errors):
+                raise OSError(errors[len(calls) - 1], "test")
+        return locking
+
+    buildenv.time.sleep = lambda s: None
+    sys.stderr = open(os.devnull, "w")
+    try:
+        for label, errors, want in (
+                ("free: taken at once", [], 1),
+                ("held twice (EACCES), then free: waits", [buildenv.errno.EACCES] * 2, 3),
+                ("held (EDEADLOCK), then free: waits", [buildenv.LOCK_HELD[1]], 2),
+                ("an error that is not contention stops the build", [buildenv.errno.EINVAL], SystemExit),
+                ("held, then an error: stops", [buildenv.errno.EACCES, buildenv.errno.EBADF], SystemExit)):
+            del calls[:]
+            buildenv.msvcrt.locking = fake_locking(errors)
+            try:
+                buildenv.hold_lock(os.path.join(tmp, "test.lock"), "test").close()
+                got = len(calls)
+            except SystemExit:
+                got = SystemExit
+            ok = got == want
+            failed += not ok
+            real_stderr.flush()
+            print("%s  hold_lock: %s" % ("pass" if ok else "FAIL", label))
+    finally:
+        sys.stderr.close()
+        sys.stderr = real_stderr
+        buildenv.msvcrt.locking, buildenv.time.sleep = real_locking, real_sleep
+
+    # and for real: a second process waits for the first to let go
+    lock = os.path.join(tmp, "real.lock")
+    held = buildenv.hold_lock(lock, "test")
+    waiter = subprocess.Popen(
+        [sys.executable, "-c",
+         "import sys; sys.path.insert(0, sys.argv[1]); import buildenv; buildenv.hold_lock(sys.argv[2], 'test').close()",
+         os.path.join(HERE, "..", "tools"), lock], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    said = waiter.stderr.readline().decode(errors="replace")       # its "Another ... holds" line
+    still = waiter.poll() is None
+    held.close()
+    rc = waiter.wait(timeout=30)
+    waiter.stderr.close()
+    ok = "waiting" in said and still and rc == 0
+    failed += not ok
+    print("%s  hold_lock: a second process waits, then gets it" % ("pass" if ok else "FAIL"))
+    if not ok:
+        print("      said %r, still waiting %r, exit %r" % (said, still, rc))
 
 r = subprocess.run([sys.executable, os.path.join(HERE, "..", "cmake", "gen_game_sources.py"), "--check"])
 failed += r.returncode != 0

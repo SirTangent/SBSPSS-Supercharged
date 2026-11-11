@@ -201,9 +201,12 @@ jobs:
           python --version
 
       # build_pc.py takes CMake and Ninja from the PATH (port/tools/buildenv.py)
-      # and configures with Python3_EXECUTABLE set to the runner's Python
+      # and configures with Python3_EXECUTABLE set to the runner's Python.
+      # --no-data: it would otherwise build the territory's data first, and
+      # here that is the data job's artifact, downloaded above - this
+      # checkout has neither the data build's tree nor its LFS inputs
       - name: Build PC port (${{ matrix.preset }})
-        run: python port/tools/build_pc.py ${{ matrix.preset }}
+        run: python port/tools/build_pc.py ${{ matrix.preset }} --no-data
 
       - name: Unit tests
         # a data-dependent test that finds its input missing exits 1 here
@@ -268,8 +271,9 @@ jobs:
           name: sbsp-data-${{ env.TERRITORY }}-${{ env.VERSION }}
           path: out/
 
+      # --no-data: the headers are the data job's artifact (as for the PC legs)
       - name: Build PSX executable (Spongey.cpe)
-        run: port\build-psx.cmd %TERRITORY% %VERSION%
+        run: port\build-psx.cmd %TERRITORY% %VERSION% --no-data
 
       - uses: actions/upload-artifact@v7
         with:
