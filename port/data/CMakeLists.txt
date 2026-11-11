@@ -226,6 +226,17 @@ endforeach()
 # they run together, and a USA and an EUR build no longer wait on each
 # other.  Its paths are absolute for that.  They do not reach the output: a
 # .SBK holds no path, and an _Anim.h only the actor's name.
+#
+# MkActor upper-cases the whole of its -r: and -o: arguments, so absolute
+# paths put the checkout's own path through that too.  Windows opens the
+# upper-cased path all the same, except from a directory set case-sensitive
+# (fsutil, or one WSL made) or with a path whose bytes are not single-byte
+# text (a DBCS code page): there MkActor finds no AnimList.Txt and exits 0
+# with an empty bank.  Build from an ordinary path (conv_pc.md, "MkActor in
+# parallel").
+#
+# No WORKING_DIRECTORY: every path here is absolute, and datastep.py run
+# starts MkActor in the directory it is given.
 foreach(_a IN LISTS ACTOR_LIST)
     string(TOUPPER ${_a} _A)
     file(GLOB_RECURSE _actorDeps CONFIGURE_DEPENDS ${SBSP_ROOT}/graphics/Characters/${_a}/*)
@@ -237,7 +248,7 @@ foreach(_a IN LISTS ACTOR_LIST)
                 ${EXE_MkActor} -r:${SBSP_ROOT}/graphics/Characters -s:Render/Psx -o:${OUT}/data/Actors
                 -i:${OUT}/include ${_a} -c:16
         DEPENDS ${_actorDeps} ${EXE_MkActor} ${EXE_lznp} ${DATA_PY}/datastep.py
-        WORKING_DIRECTORY ${SBSP_ROOT} VERBATIM
+        VERBATIM
         COMMENT "MkActor ${_a}")
     list(APPEND ALL_OUTPUTS ${_o})
     list(APPEND PACKED ${_o})

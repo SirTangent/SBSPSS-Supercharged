@@ -15,6 +15,7 @@ import os
 import shlex
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "tools"))
@@ -194,6 +195,56 @@ for t in ("USA", "EUR"):
             ok, why, asm, cpp = False, str(e), [], []
         failed += not ok
         print("%s  psx_manifest %s %s: %d asm + %d cpp %s" % ("pass" if ok else "FAIL", t, v, len(asm), len(cpp), why))
+
+# The data build's `datastep.py run <path dir> <work dir> -- <command>`
+# (port/tools/data): the 40 MkActor steps run side by side only because
+# each one's command starts in a working directory of its own, with nothing
+# an earlier run left in it (PR #107 review).  The probe writes down where
+# it ran, the first directory on its PATH and whether the old file was
+# still there.
+DATASTEP = os.path.join(HERE, "..", "tools", "data", "datastep.py")
+PROBE = ("import os, sys; open(sys.argv[1], 'w').write('\\n'.join("
+         "[os.getcwd(), os.environ['PATH'].split(os.pathsep)[0], str(os.path.exists('Actor.Pak'))]))")
+
+
+def datastep_run(args):
+    return subprocess.run([sys.executable, DATASTEP, "run"] + args,
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
+
+
+def same_dir(a, b):
+    return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    path_dir = os.path.join(tmp, "path dir")
+    os.mkdir(path_dir)
+    for label, work, stale in (("a working directory that does not exist yet", os.path.join(tmp, "new", "Gary"), False),
+                               ("one with an Actor.Pak left in it", os.path.join(tmp, "old work"), True)):
+        if stale:
+            os.mkdir(work)
+            open(os.path.join(work, "Actor.Pak"), "w").close()
+        report = os.path.join(tmp, "report.txt")
+        if os.path.exists(report):
+            os.remove(report)
+        rc = datastep_run([path_dir, work, "--", sys.executable, "-c", PROBE, report])
+        got = open(report).read().split("\n") if os.path.exists(report) else []
+        ok = rc == 0 and len(got) == 3 and same_dir(got[0], work) and same_dir(got[1], path_dir) and got[2] == "False"
+        failed += not ok
+        print("%s  datastep run: %s" % ("pass" if ok else "FAIL", label))
+        if not ok:
+            print("      exit %d, the probe saw: %r" % (rc, got))
+    # the form before the working directory was an argument, and a command
+    # that fails
+    for label, args in (("one directory, not two, is refused", [path_dir, "--", sys.executable, "-c", "pass"]),
+                        ("no command is refused", [path_dir, os.path.join(tmp, "w"), "--"]),
+                        ("no -- is refused", [path_dir, os.path.join(tmp, "w"), sys.executable]),
+                        ("the command's failure is the step's", [path_dir, os.path.join(tmp, "w"), "--",
+                                                                 sys.executable, "-c", "import sys; sys.exit(3)"])):
+        rc = datastep_run(args)
+        ok = rc == 1
+        failed += not ok
+        print("%s  datastep run: %s%s" % ("pass" if ok else "FAIL", label, "" if ok else " (exit %d)" % rc))
 
 print("%d failed" % failed)
 sys.exit(1 if failed else 0)

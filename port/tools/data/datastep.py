@@ -16,8 +16,9 @@ where the 1999 makefile's shell lines could not.
       to the include directory as makefile.gfx's mv did.
 
   run <path dir> <work dir> -- <command...>
-      The command, run in <work dir> (made if missing, removed afterwards
-      if the command left it empty) with <path dir> first on its PATH.  MkActor packs every frame through
+      The command, run in <work dir> (made if missing, emptied of any
+      files an earlier run left, and removed afterwards if the command left
+      it empty) with <path dir> first on its PATH.  MkActor packs every frame through
       system("lznp.exe ..."), which it finds on the PATH, by way of two
       files it names itself in its working directory, Actor.Tmp and
       Actor.Pak.  CMake gives each actor a <work dir> of its own, so they
@@ -78,6 +79,14 @@ def run(path_dir, work_dir, cmd):
     env = dict(os.environ)
     env["PATH"] = os.path.abspath(path_dir) + os.pathsep + env.get("PATH", "")
     os.makedirs(work_dir, exist_ok=True)
+    # The directory is the command's alone, and starts empty.  A build that
+    # was killed can leave MkActor's Actor.Pak behind; MkActor does not
+    # check that lznp ran, so one failed pack later would read that old
+    # file back as its frame and exit 0 (PR #107 review)
+    for name in os.listdir(work_dir):
+        path = os.path.join(work_dir, name)
+        if os.path.isfile(path):
+            os.remove(path)
     try:
         call(cmd, env=env, cwd=work_dir)
     finally:
