@@ -221,7 +221,8 @@ endforeach()
 # MkActor packs every frame through two files it names itself, Actor.Tmp and
 # Actor.Pak, in its working directory.  Run from the repo root the 40 of
 # them had to take turns, and that was the build: 54 of its 55 seconds.
-# Each one runs in a directory of its own in the build tree instead, so
+# Each one runs in a directory of its own in the build tree instead
+# (MkActor.<actor>, which datastep.py removes when the step is done), so
 # they run together, and a USA and an EUR build no longer wait on each
 # other.  Its paths are absolute for that.  They do not reach the output: a
 # .SBK holds no path, and an _Anim.h only the actor's name.
@@ -243,7 +244,7 @@ foreach(_a IN LISTS ACTOR_LIST)
     add_custom_command(OUTPUT ${_o}
         BYPRODUCTS ${OUT}/include/ACTOR_${_A}_Anim.h
         COMMAND ${MKDIR} ${OUT}/data/Actors ${OUT}/include
-        COMMAND ${PY} ${DATA_PY}/datastep.py run ${LZNP_DIR} ${CMAKE_BINARY_DIR}/actors/${_a} --
+        COMMAND ${PY} ${DATA_PY}/datastep.py run ${LZNP_DIR} ${CMAKE_BINARY_DIR}/MkActor.${_a} --
                 ${EXE_MkActor} -r:${SBSP_ROOT}/graphics/Characters -s:Render/Psx -o:${OUT}/data/Actors
                 -i:${OUT}/include ${_a} -c:16
         DEPENDS ${_actorDeps} ${EXE_MkActor} ${EXE_lznp} ${DATA_PY}/datastep.py

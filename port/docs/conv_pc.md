@@ -3448,8 +3448,8 @@ build: 54.1 of its 54.8 seconds.  MkActor packs each frame by writing
 directory, which was the repo root for every actor.
 
 Each actor now runs in a directory of its own,
-`port/build/data-<t>/actors/<actor>/` (`datastep.py run <path dir> <work
-dir>` makes it), so:
+`port/build/data-<t>/MkActor.<actor>/` (`datastep.py run <path dir> <work
+dir>` makes it, and removes it once the step has left it empty), so:
 - all 40 run at once.  A clean USA build takes 14 seconds, not 55; what is
   left is SpongeBob's own bank, 10 seconds alone and 13.5 beside the others;
 - a USA and an EUR build no longer wait on each other.  The directory is
