@@ -72,7 +72,9 @@ class Usage(Exception):
 
 def presets_for(word, territory=None):
     """The preset list a word (or `all`) stands for; `territory` is the word
-    that may follow `x86` (USA when None)."""
+    that may follow `x86` (USA when None).  A territory after any other
+    word is a usage error: `test usa eur` would otherwise test USA alone
+    and say nothing (PR #101 review)."""
     w = (word or "").lower()
     t = (territory or "usa").lower()
     if t not in ("usa", "eur"):
@@ -81,6 +83,8 @@ def presets_for(word, territory=None):
     if w in RENAMED:
         raise Usage("'%s' is '%s' now: issue #39 made clang-cl the only toolchain, "
                     "x64 the plain presets and x86 the x86-* ones" % (word, RENAMED[w]))
+    if territory is not None and w != "x86":
+        raise Usage()
     if w == "usa":
         return ["debug", "final"]
     if w == "eur":
@@ -125,7 +129,7 @@ class Builder:
         self.ctest = buildenv.ctest_for(self.cmake)
         self.ninja = buildenv.find_ninja()
 
-    def env(self, preset, **extra):
+    def env(self, **extra):
         env = dict(os.environ)
         env.update(extra)
         return env
@@ -145,8 +149,8 @@ class Builder:
             return "configured for %s" % arch
         return None
 
-    def run(self, cmd, preset, cwd=PORT, **extra):
-        return subprocess.run(cmd, cwd=cwd, env=self.env(preset, **extra)).returncode
+    def run(self, cmd, cwd=PORT, **extra):
+        return subprocess.run(cmd, cwd=cwd, env=self.env(**extra)).returncode
 
     def check_data(self, preset):
         # CMake only gates on the generated headers; out/<T>/cd is what
@@ -169,8 +173,8 @@ class Builder:
             configure.append("--fresh")
         if os.environ.get("SBSP_PLAYTHROUGH"):
             configure.append("-DSBSP_PLAYTHROUGH=" + os.environ["SBSP_PLAYTHROUGH"])
-        if self.run(configure, preset) or \
-           self.run([self.cmake, "--build", "--preset", preset] + list(ninja_args), preset):
+        if self.run(configure) or \
+           self.run([self.cmake, "--build", "--preset", preset] + list(ninja_args)):
             sys.exit(1)
 
     def test_one(self, preset):
@@ -181,7 +185,7 @@ class Builder:
         # fails instead - a skip here is a lost input (tests/test_skip.h, #61)
         print("=== ctest (%s): unit ===" % preset, flush=True)
         if self.run([self.ctest, "--test-dir", tree, "--output-on-failure", "-L", "unit", "--no-tests=error"],
-                    preset, SBSP_TEST_STRICT="1"):
+                    SBSP_TEST_STRICT="1"):
             sys.exit(1)
         # --no-tests=error turns "the label matched nothing" into a failure.
         # A shim-only tree (-DSBSP_BUILD_GAME=OFF) has no playthrough tests,
@@ -190,26 +194,19 @@ class Builder:
         if not os.path.isfile(os.path.join(tree, "sbsp.exe")):
             print("=== ctest (%s): playthrough SKIPPED - no sbsp.exe (SBSP_BUILD_GAME=OFF?) ===" % preset)
             return
-        pt = ""
-        try:
-            with open(os.path.join(tree, "CMakeCache.txt"), errors="replace") as f:
-                for line in f:
-                    if line.startswith("SBSP_PLAYTHROUGH:BOOL="):
-                        pt = line.split("=", 1)[1].strip().upper()
-        except OSError:
-            pass
+        pt = (cache_value(tree, "SBSP_PLAYTHROUGH") or "").upper()
         if pt in CMAKE_FALSE or pt.endswith("-NOTFOUND"):
             print("=== ctest (%s): playthrough SKIPPED - opted out with SBSP_PLAYTHROUGH=OFF "
                   "(SBSP_PLAYTHROUGH=ON to re-enable) ===" % preset)
             return
         print("=== ctest (%s): playthrough ===" % preset, flush=True)
         if self.run([self.ctest, "--test-dir", tree, "--output-on-failure", "-L", "playthrough", "--no-tests=error"],
-                    preset, SBSP_TEST_STRICT="1"):
+                    SBSP_TEST_STRICT="1"):
             sys.exit(1)
 
     def tier(self, preset, *args):
         return self.run([sys.executable, os.path.join("tests", "run_tier.py"),
-                         "--territory", territory_of(preset)] + list(args), preset)
+                         "--territory", territory_of(preset)] + list(args))
 
     def soak_one(self, preset):
         print("=== soak (%s): tier 1 + tier 2, all routes / all levels ===" % preset, flush=True)

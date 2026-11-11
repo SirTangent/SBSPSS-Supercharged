@@ -245,6 +245,7 @@ class SprPal : public Palette
 {
 public:
 	SprPal(void)
+		: PalIndex(0), TpBase(0), BaseTpX(0), BaseTpY(0), ZeroColZero(false), PlusColZero(false)
 		{}
 	
 	SprPal(SprPal const & Pal)

@@ -46,6 +46,10 @@ def cmake_version(exe):
 
 def _candidates(name, env_var, vs_subdir):
     if os.environ.get(env_var):
+        # an explicit choice that isn't there is an error, not a fall-through
+        # to whatever the PATH has (PR #100 review)
+        if not os.path.isfile(os.environ[env_var]):
+            sys.exit("%s=%s: no such file" % (env_var, os.environ[env_var]))
         yield os.environ[env_var], env_var
     exe = shutil.which(name)
     if exe:

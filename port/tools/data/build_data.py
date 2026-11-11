@@ -97,7 +97,11 @@ def main(argv):
     cmake = buildenv.find_cmake()
     ninja = buildenv.find_ninja()
     src = os.path.join(ROOT, "port", "data")
+    # Python3_EXECUTABLE pinned to this interpreter, the one findpy.cmd checked
+    # is 3.8+, as build_pc.py does: otherwise find_package(Python3) takes the
+    # first python on the PATH, which may be another one (PR #100 review)
     configure = [cmake, "--preset", preset, "-DCMAKE_MAKE_PROGRAM=" + ninja.replace("\\", "/"),
+                 "-DPython3_EXECUTABLE=" + sys.executable.replace("\\", "/"),
                  "-DSBSP_DATA_TOOLS=" + ("vintage" if vintage else "x64"), "-DSBSP_DATA_FINAL_DAT="]
     for cmd in (configure, [cmake, "--build", "--preset", preset]):
         r = subprocess.run(cmd, cwd=src, env=env)

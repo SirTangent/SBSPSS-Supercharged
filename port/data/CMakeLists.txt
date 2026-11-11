@@ -1,24 +1,24 @@
 # The game data build: out/<T>/ (BIGLUMP.BIN, the generated headers, the CD
 # files the PC exe reads), on CMake + Ninja (issue #95).
 #
-# This replaces the 1999 makefile.gfx route (MSYS2 make + Perl, through
-# port/build-data.sh).  The converters and their arguments are the ones that
-# makefile ran (lists.cmake), so the output is the same, byte for byte.  What
-# changes is around them:
+# This replaces the 1999 makefile.gfx route (MSYS2 make + Perl, which the
+# since-deleted port/build-data.sh drove).  The converters and their
+# arguments are the ones that makefile ran (lists.cmake), so the output is
+# the same, byte for byte.  What changes is around them:
 # - every step declares what it reads and writes, its converter included,
 #   so a rebuild redoes exactly what changed;
-# - steps run in parallel: no temp file is shared (each screen's is its
-#   own), and MkActor - whose Actor.Tmp/Actor.Pak live in its working
-#   directory - runs one at a time;
+# - steps run in parallel: no temp file is shared.  Each screen's is its
+#   own, and each MkActor - whose Actor.Tmp/Actor.Pak go in its working
+#   directory - runs in a directory of its own;
 # - the string order is the English file's (port/tools/data/lang.py), not
 #   Perl's hash order;
 # - there are no generated makefiles to rebuild every other run.
 #
 # No compiler: the converters are the committed port/tools/x64 exes (or,
 # with SBSP_DATA_TOOLS=vintage, the 1999 ones), built by port/CMakeLists.txt
-# ahead of time.  Each one runs from the repo root, as under make: scripts
-# #include their defs by repo-relative path, MkLevel.ini's BackGfxDir is
-# relative, and parkgrab sorts by the paths it is given.
+# ahead of time.  Each one but MkActor runs from the repo root, as under
+# make: scripts #include their defs by repo-relative path, MkLevel.ini's
+# BackGfxDir is relative, and parkgrab sorts by the paths it is given.
 #
 # port/build-data.cmd / .sh drive it (port/tools/data/build_data.py):
 #   cmake --preset data-usa && cmake --build --preset data-usa
@@ -81,7 +81,6 @@ include(lists.cmake)
 set(OUT_REL out/${SBSP_TERRITORY})
 set(OUT ${SBSP_ROOT}/${OUT_REL})
 set(MKDIR ${CMAKE_COMMAND} -E make_directory)
-set_property(GLOBAL PROPERTY JOB_POOLS mkactor=1)
 set(ALL_OUTPUTS)		# what `data` builds
 set(PACKED)				# what BIGLUMP.BIN is built after (data/DataCache.scr lists it)
 
@@ -123,8 +122,11 @@ list(APPEND ALL_OUTPUTS ${TR}/final.dat ${_dats} ${TRANS_H} ${TRANS_SCR})
 list(APPEND PACKED ${_dats})
 
 # --- Scripts (scripter) ------------------------------------------------------
-file(GLOB _defs CONFIGURE_DEPENDS ${SBSP_ROOT}/data/Scripts/defs/*.scr)
-list(FILTER _defs EXCLUDE REGEX "/[Tt][Rr][Aa][Nn][Ss]\\.[Ss][Cc][Rr]$")
+# SCRIPT_DEFS is a list, not a glob of data/Scripts/defs/: the build writes
+# trans.scr there, and a CONFIGURE_DEPENDS glob that sees its own output
+# appear reconfigures the whole project on the next run (PR #97 review)
+list(TRANSFORM SCRIPT_DEFS PREPEND ${SBSP_ROOT}/data/Scripts/defs/ OUTPUT_VARIABLE _defs)
+list(TRANSFORM _defs APPEND .scr)
 foreach(_s IN LISTS SCRIPTS_LIST)
     set(_o ${OUT}/data/scripts/${_s}.dat)
     add_custom_command(OUTPUT ${_o}
@@ -140,9 +142,13 @@ endforeach()
 # --- The sprite bank, shop and party (parkgrab) ------------------------------------
 # sprites.rsp is the file list makefile.gfx wrote with $(file): parkgrab reads
 # @file as the words of one line, switches included, and expands the
-# sprite actors' globs itself.
+# sprite actors' globs itself.  file(GENERATE), not file(CONFIGURE): that
+# would substitute a ${VAR} or @VAR@ inside a sprite path; GENERATE expands
+# generator expressions only, writes LF, and leaves an unchanged file's
+# timestamp alone (PR #97 review).  file(WRITE) is no use here: on Windows
+# it writes "\n" as CRLF.
 string(JOIN " " _rsp ${SPRITES_WORDS})
-file(CONFIGURE OUTPUT ${CMAKE_BINARY_DIR}/sprites.rsp CONTENT "${_rsp}\n" NEWLINE_STYLE UNIX)
+file(GENERATE OUTPUT ${CMAKE_BINARY_DIR}/sprites.rsp CONTENT "${_rsp}\n" NEWLINE_STYLE UNIX)
 set(SPRITES_H ${OUT}/include/Sprites.h)
 set(_spr ${OUT_REL}/data/sprites)
 list(TRANSFORM SPRITES_FILES PREPEND ${SBSP_ROOT}/ OUTPUT_VARIABLE _sprDeps)
@@ -212,6 +218,24 @@ foreach(_ch IN LISTS LEVELS_CHAPTERS)
 endforeach()
 
 # --- Actors (MkActor) --------------------------------------------------------
+# MkActor packs every frame through two files it names itself, Actor.Tmp and
+# Actor.Pak, in its working directory.  Run from the repo root the 40 of
+# them had to take turns, and that was the build: 54 of its 55 seconds.
+# Each one runs in a directory of its own in the build tree instead, so
+# they run together, and a USA and an EUR build no longer wait on each
+# other.  Its paths are absolute for that.  They do not reach the output: a
+# .SBK holds no path, and an _Anim.h only the actor's name.
+#
+# MkActor upper-cases the whole of its -r: and -o: arguments, so absolute
+# paths put the checkout's own path through that too.  Windows opens the
+# upper-cased path all the same, except from a directory set case-sensitive
+# (fsutil, or one WSL made) or with a path whose bytes are not single-byte
+# text (a DBCS code page): there MkActor finds no AnimList.Txt and exits 0
+# with an empty bank.  Build from an ordinary path (conv_pc.md, "MkActor in
+# parallel").
+#
+# No WORKING_DIRECTORY: every path here is absolute, and datastep.py run
+# starts MkActor in the directory it is given.
 foreach(_a IN LISTS ACTOR_LIST)
     string(TOUPPER ${_a} _A)
     file(GLOB_RECURSE _actorDeps CONFIGURE_DEPENDS ${SBSP_ROOT}/graphics/Characters/${_a}/*)
@@ -219,12 +243,11 @@ foreach(_a IN LISTS ACTOR_LIST)
     add_custom_command(OUTPUT ${_o}
         BYPRODUCTS ${OUT}/include/ACTOR_${_A}_Anim.h
         COMMAND ${MKDIR} ${OUT}/data/Actors ${OUT}/include
-        COMMAND ${PY} ${DATA_PY}/datastep.py run ${LZNP_DIR} --
-                ${EXE_MkActor} -r:graphics/Characters -s:Render/Psx -o:${OUT_REL}/data/Actors
-                -i:${OUT_REL}/include ${_a} -c:16
+        COMMAND ${PY} ${DATA_PY}/datastep.py run ${LZNP_DIR} ${CMAKE_BINARY_DIR}/actors/${_a} --
+                ${EXE_MkActor} -r:${SBSP_ROOT}/graphics/Characters -s:Render/Psx -o:${OUT}/data/Actors
+                -i:${OUT}/include ${_a} -c:16
         DEPENDS ${_actorDeps} ${EXE_MkActor} ${EXE_lznp} ${DATA_PY}/datastep.py
-        WORKING_DIRECTORY ${SBSP_ROOT} VERBATIM
-        JOB_POOL mkactor
+        VERBATIM
         COMMENT "MkActor ${_a}")
     list(APPEND ALL_OUTPUTS ${_o})
     list(APPEND PACKED ${_o})

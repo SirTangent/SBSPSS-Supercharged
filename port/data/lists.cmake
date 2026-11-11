@@ -175,6 +175,9 @@ set(SCRIPTS_LIST
     triggerspeech_151 triggerspeech_152 triggerspeech_153 triggerspeech_154
     triggerspeech_155 triggerspeech_156 triggerspeech_157 triggerspeech_158
     triggerspeech_159 triggerspeech_028)
+# every script's #include set, data/Scripts/defs/: listed, not globbed, since
+# the build writes trans.scr into that directory too (PR #97 review)
+set(SCRIPT_DEFS charanim defs items response text)
 
 # --- Translations (lang.py + transtext) -------------------------------------
 set(LANGUAGES swe dut ita ger)

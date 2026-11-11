@@ -345,10 +345,16 @@ default) it:
 1. Does a clean PS1 build of `HEAD`.
 2. Checks out the base revision's copy of every changed PS1 build input and
    does a clean build of that. The inputs are the game source,
-   `makefile.gaz` (the lists of what is compiled) and the `build/*.mak` it
-   includes, the per-user makefile under `users/`, the toolchain under
-   `tools/`, and the build itself: `port/psx`, `port/tools/psx` and
-   `port/build-psx.cmd`.  So a change to compiler flags is compared too.
+   `makefile.gaz` (the lists of what is compiled), the toolchain and
+   libraries under `tools/`, and the build itself: `port/psx`,
+   `port/tools/psx` and `port/build-psx.cmd`.  So a change to compiler
+   flags is compared too.  `build/*.mak` and `users/` are not inputs:
+   `port/psx` reads neither (their values are transcribed into its
+   `CMakeLists.txt`).
+   A base from before the build itself existed (before #102) is built with
+   `HEAD`'s driver, which is held byte-identical to `makefile.gaz`'s route;
+   any other file added or deleted against the base is refused, since
+   swapping copies in and out cannot reproduce it.
 3. Puts `HEAD`'s copies back with `git checkout HEAD`.
 4. Compares the two `Spongey.cpe` SHA-256 hashes, in the mode it printed at
    the start (above).
@@ -417,11 +423,14 @@ run, four builds, takes well under a minute.
   `C:/msys64/tmp/PQ3`, shared by every build on the machine, so builds had
   to run one at a time.  Now every compile has its own `TEMP` (and its own
   `a.o` and dependency file), and Ninja runs them side by side.  Two
-  builds still share `info.mip` under `source/system/`, so `build_psx.py`
-  takes a lock (`%TEMP%\sbsp-psx.lock`) and a second build waits.
+  builds of the same configuration would write the same objects (Ninja has
+  no lock of its own), so `build_psx.py` takes a lock per configuration
+  (`%TEMP%\sbsp-psx-<t>-<v>.lock`) and the second waits; different
+  configurations share nothing and may overlap.
 - **The territory and version are upper case** (`USA DEBUG`); lower case
   would define `__TERRITORY_usa__`.  `build_psx.py` upper-cases both and
   accepts only `USA`/`EUR` and `DEBUG`/`FINAL`.
 - **"Clean" means deleting `out/<T>/<V>/CD/objs`.**  Only compare clean
   builds of every file.  Ninja tracks each object's headers (the compiler's
-  own dependency output) and command line, but a clean build is the proof.
+  own dependency output; a `.mip`'s `include`s are read at configure time)
+  and command line, but a clean build is the proof.

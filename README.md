@@ -79,7 +79,7 @@ port\build-data.cmd usa
 
 This converts every level, actor, sprite sheet, script and translation, then
 stages the speech track and the four FMV movies beside the result. It takes
-about a minute the first time; later runs only rebuild what changed. Output:
+about 15 seconds the first time; later runs only rebuild what changed. Output:
 
 ```
 out\USA\cd\BIGLUMP.BIN

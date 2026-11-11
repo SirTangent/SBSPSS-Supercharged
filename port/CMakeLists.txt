@@ -27,10 +27,14 @@ set_property(CACHE SBSP_TERRITORY PROPERTY STRINGS USA EUR)
 
 get_filename_component(SBSP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 
-if(NOT CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+# Clang with the MSVC front end = clang-cl.  The front-end test alone would
+# let cl.exe through (its variant is "MSVC" too), to fail hundreds of errors
+# later on the /clang: switches it ignores and the 1999 dialect it lacks.
+if(NOT (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC"))
     message(FATAL_ERROR
         "The port builds with clang-cl only (cmake/clangcl-toolchain.cmake, through the presets: "
-        "port\\build-pc.cmd debug).  MinGW g++ was retired by issue #39.")
+        "port\\build-pc.cmd debug); this configure found ${CMAKE_CXX_COMPILER_ID} "
+        "(${CMAKE_CXX_COMPILER}).  MinGW g++ was retired by issue #39.")
 endif()
 
 # OFF = the shim and its unit exes only (no sbsp.exe / sbsp_headless.exe,
