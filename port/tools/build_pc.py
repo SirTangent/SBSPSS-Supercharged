@@ -2,11 +2,12 @@
 """Configure + build the PC port; port/build-pc.cmd runs this (issue #98,
 which replaced port/build-pc.sh with it, same command line).
 
-    build-pc [<preset>|usa|eur|x86 [usa|eur]|all] [extra ninja args...]
-    build-pc test [usa|eur|x86 [usa|eur]|<preset>]  build, then ctest -L unit and -L playthrough on each tree
+    build-pc [<preset>|usa|eur|x86 [usa|eur|all]|all] [extra ninja args...]
+    build-pc test [usa|eur|x86 [usa|eur|all]|<preset>]  build, then ctest -L unit and -L playthrough on each tree
                      (playthrough skipped, with a note, for a tree configured SBSP_PLAYTHROUGH=OFF)
-    build-pc soak [usa|eur|x86 [usa|eur]|<preset>]  build, then the full Tier 1 + Tier 2 sweep on each tree
+    build-pc soak [usa|eur|x86 [usa|eur|all]|<preset>]  build, then the full Tier 1 + Tier 2 sweep on each tree
     build-pc parity64 [usa|eur] [debug|final]  build x86 + x64, then the x64 A/B (streams, cross replay, cards)
+    ... --no-data                                any form, anywhere: leave out/<T> as it is
 
 Every preset is clang-cl (port/CMakePresets.json, cmake/clangcl-toolchain.cmake;
 issue #39 retired MinGW).  debug, final (USA; usa-debug / usa-final are
@@ -14,16 +15,19 @@ accepted aliases), eur-debug and eur-final (EUR, PAL 50Hz) are x64, the
 exes that ship; `usa` / `eur` name a territory's pair and `all` (the
 default) is all four.  x86-debug, x86-final, x86-eur-debug and x86-eur-final
 build the same code for 32-bit, which parity64 holds x64 to; `x86 [usa|eur]`
-names a pair.  The words of the clangcl-* presets those replace are refused
+names a pair and `x86 all` all four.  The words of the clangcl-* presets those replace are refused
 with their new names.
 
-Each tree needs its territory's data first (one build serves DEBUG and
-FINAL, issue #35):
-    port\\build-data.cmd usa            (out/USA/include + out/USA/cd)
-    port\\build-data.cmd eur            (out/EUR/include + out/EUR/cd)
-build_one checks for both and names the missing command.  A tree that was
-configured for another toolchain or architecture (the MinGW trees that used
-the names debug, final, eur-debug and eur-final) is reconfigured --fresh.
+Each tree needs its territory's data (out/<T>/include + out/<T>/cd; one
+build serves DEBUG and FINAL, issue #35), so every form builds it first,
+once per territory, as port\\build-data.cmd <t> does: a run that finds it up
+to date does nothing, and one that finds a changed input rebuilds what
+reads it, then the game files that include a header it rewrote.  --no-data
+(or SBSP_NO_DATA in the environment) skips that and only checks the data
+is there, naming the command when it is not: CI builds the data in a job of
+its own.  A tree that was configured for another toolchain or architecture
+(the MinGW trees that used the names debug, final, eur-debug and eur-final)
+is reconfigured --fresh.
 
 CMake, ctest and Ninja come from port/tools/buildenv.py: the PATH, else
 Visual Studio's CMake component.  The playthrough tests run under the
@@ -47,10 +51,10 @@ PORT = os.path.dirname(HERE)
 REPO = os.path.dirname(PORT)
 
 USAGE = ("usage: port\\build-pc.cmd [debug|final|usa-debug|usa-final|eur-debug|eur-final|"
-         "x86-debug|x86-final|x86-eur-debug|x86-eur-final|usa|eur|x86 [usa|eur]|all|"
-         "test [usa|eur|x86 [usa|eur]|<preset>]|"
-         "soak [usa|eur|x86 [usa|eur]|<preset>]|"
-         "parity64 [usa|eur] [debug|final]] [ninja args]")
+         "x86-debug|x86-final|x86-eur-debug|x86-eur-final|usa|eur|x86 [usa|eur|all]|all|"
+         "test [usa|eur|x86 [usa|eur|all]|<preset>]|"
+         "soak [usa|eur|x86 [usa|eur|all]|<preset>]|"
+         "parity64 [usa|eur] [debug|final]] [--no-data] [ninja args]")
 
 SINGLE = ["debug", "final", "eur-debug", "eur-final",
           "x86-debug", "x86-final", "x86-eur-debug", "x86-eur-final"]
@@ -72,12 +76,12 @@ class Usage(Exception):
 
 def presets_for(word, territory=None):
     """The preset list a word (or `all`) stands for; `territory` is the word
-    that may follow `x86` (USA when None).  A territory after any other
+    that may follow `x86` (usa, eur or all; USA when None).  A territory after any other
     word is a usage error: `test usa eur` would otherwise test USA alone
     and say nothing (PR #101 review)."""
     w = (word or "").lower()
     t = (territory or "usa").lower()
-    if t not in ("usa", "eur"):
+    if t not in ("usa", "eur", "all"):
         raise Usage()
     e = "eur-" if t == "eur" else ""
     if w in RENAMED:
@@ -90,6 +94,8 @@ def presets_for(word, territory=None):
     if w == "eur":
         return ["eur-debug", "eur-final"]
     if w == "x86":
+        if t == "all":              # both territories, as `all` is for x64
+            return ["x86-debug", "x86-final", "x86-eur-debug", "x86-eur-final"]
         return ["x86-%sdebug" % e, "x86-%sfinal" % e]
     if w in ("all", ""):
         return ["debug", "final", "eur-debug", "eur-final"]
@@ -109,6 +115,18 @@ def territory_of(preset):
 
 def arch_of(preset):
     return "x86" if preset.startswith("x86-") else "x64"
+
+
+def territories(mode, presets):
+    """The territories a plan() result builds for, each once, in order:
+    their data is built before the first tree."""
+    if mode == "parity64":
+        presets = ["x86-%s%s" % tuple(presets)]
+    out = []
+    for p in presets:
+        if territory_of(p) not in out:
+            out.append(territory_of(p))
+    return out
 
 
 def cache_value(tree, key):
@@ -152,16 +170,20 @@ class Builder:
     def run(self, cmd, cwd=PORT, **extra):
         return subprocess.run(cmd, cwd=cwd, env=self.env(**extra)).returncode
 
-    def check_data(self, preset):
+    def ensure_data(self, terr, skip):
+        """Build the territory's data (unless skip), then check it is there."""
+        if not skip:
+            print("=== data: %s ===" % terr, flush=True)
+            if buildenv.build_data(terr):
+                sys.exit("the %s data build failed - the PC build was not started" % terr)
         # CMake only gates on the generated headers; out/<T>/cd is what
         # cd.cpp opens at run time (the same files for DEBUG and FINAL)
-        terr = territory_of(preset)
         for f in ("out/%s/include/BigLump.h" % terr, "out/%s/cd/BIGLUMP.BIN" % terr):
             if not os.path.isfile(os.path.join(REPO, f)):
-                sys.exit("missing %s - run: port\\build-data.cmd %s" % (f, terr.lower()))
+                sys.exit("missing %s - run: port\\build-data.cmd %s%s"
+                         % (f, terr.lower(), " (or build without %s)" % buildenv.NO_DATA_ARG if skip else ""))
 
     def build_one(self, preset, ninja_args=()):
-        self.check_data(preset)
         print("=== configure+build: %s ===" % preset, flush=True)
         configure = [self.cmake, "--preset", preset,
                      "-DCMAKE_MAKE_PROGRAM=" + self.ninja.replace("\\", "/"),
@@ -273,13 +295,14 @@ def plan(argv):
     # `x86` may be followed by a territory word; what comes after that is
     # ninja's
     terr = None
-    if lw == "x86" and rest and rest[0].lower() in ("usa", "eur"):
+    if lw == "x86" and rest and rest[0].lower() in ("usa", "eur", "all"):
         terr, rest = rest[0], rest[1:]
     return "build", presets_for(what, terr), rest
 
 
 def main(argv):
     sys.stdout.reconfigure(line_buffering=True)
+    argv, skip_data = buildenv.no_data(argv)
     try:
         mode, presets, extra = plan(argv)
     except Usage as e:
@@ -288,6 +311,8 @@ def main(argv):
         print(USAGE, file=sys.stderr)
         return 1
     b = Builder()
+    for terr in territories(mode, presets):
+        b.ensure_data(terr, skip_data)
     if mode == "parity64":
         e, v = presets
         b.build_one("x86-%s%s" % (e, v))

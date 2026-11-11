@@ -17,6 +17,11 @@ override, so neither carries over from an earlier configure.
 
 CMake and Ninja come from port/tools/buildenv.py, as for the PC build: the
 PATH, else Visual Studio's "C++ CMake tools for Windows" (issue #98).
+
+port/tools/build_pc.py and psx/build_psx.py run this ahead of their own
+build (buildenv.build_data), so it is also what `build-pc debug` starts
+with.  One build of a territory at a time: a second one waits for the
+first (a lock file beside the tree, port/build/data-<t>.lock).
 """
 import os
 import subprocess
@@ -97,6 +102,14 @@ def main(argv):
     cmake = buildenv.find_cmake()
     ninja = buildenv.find_ninja()
     src = os.path.join(ROOT, "port", "data")
+    # One build of a territory's tree at a time.  build-pc and build-psx run
+    # this ahead of their own build, so two of those started together (a
+    # debug and a final, say) would otherwise both be in port/build/data-<t>;
+    # the second waits here and then finds nothing to do.  The lock is this
+    # checkout's: another worktree's data build shares nothing with it.
+    os.makedirs(os.path.join(ROOT, "port", "build"), exist_ok=True)
+    held = buildenv.hold_lock(os.path.join(ROOT, "port", "build", preset + ".lock"),
+                              "%s data build" % territory)
     # Python3_EXECUTABLE pinned to this interpreter, the one findpy.cmd checked
     # is 3.8+, as build_pc.py does: otherwise find_package(Python3) takes the
     # first python on the PATH, which may be another one (PR #100 review)
@@ -107,6 +120,7 @@ def main(argv):
         r = subprocess.run(cmd, cwd=src, env=env)
         if r.returncode != 0:
             return r.returncode
+    held.close()
     print("Data build complete: out/%s (PC data: out/%s/cd)" % (territory, territory))
     return 0
 

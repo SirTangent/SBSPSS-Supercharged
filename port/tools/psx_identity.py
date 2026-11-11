@@ -631,6 +631,11 @@ def psx_build(territory, version, log, noline):
     start = time.time()
     env = dict(os.environ)
     env.pop(NOLINE_DEFINE, None)        # build_psx.py ignores it; keep its warning out of the log
+    # both sides are built over the out/<T>/include that is there now:
+    # build_psx.py would otherwise run the data build first, and with the
+    # base's files swapped in.  The variable, not --no-data: a base
+    # revision's build_psx.py may be from before the argument
+    env["SBSP_NO_DATA"] = "1"
     cmd = [sys.executable, os.path.join(REPO, "port", "tools", "psx", "build_psx.py"), territory, version]
     if noline:
         cmd.append(NOLINE_ARG)

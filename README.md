@@ -67,6 +67,9 @@ pointer file and the data build stops with "unmaterialised Git-LFS pointer".
 
 ## 3. Build the game data
 
+The command in section 4 runs this step first, so you can go straight to it.
+This section is what that step does, and how to run it alone.
+
 The game reads one big file, `BIGLUMP.BIN`, plus a set of generated headers
 the code build cannot start without. Both come from the original asset
 pipeline's converters, rebuilt as 64-bit Windows tools (`port\tools\x64`).
@@ -104,14 +107,17 @@ project.
 port\build-pc.cmd debug
 ```
 
-The argument is `debug`, `final`, or `usa` (both). The script configures
-with the matching CMake preset and builds with Ninja, using LLVM's `clang-cl`
+The argument is `debug`, `final`, or `usa` (both). The script builds the
+territory's data first (section 3), which does nothing when the data is up
+to date and otherwise rebuilds what changed. It then configures with the
+matching CMake preset and builds with Ninja, using LLVM's `clang-cl`
 against the MSVC C runtime and Windows SDK, for 64-bit Windows
 (`x86_64-pc-windows-msvc`). A clean build takes a few minutes; the first
 configure also downloads SDL3 and the Vulkan headers into
-`port\build\deps\`. `eur-debug`, `eur-final` and `eur` are the EUR builds
-and need EUR data; `all`, which is also what no argument means, builds all
-four and so needs both territories' data. Output:
+`port\build\deps\`. `eur-debug`, `eur-final` and `eur` are the EUR builds,
+on EUR data; `all`, which is also what no argument means, builds all four
+and both territories' data. Add `--no-data` to leave the data as it is: the
+script then only checks it is there. Output:
 
 | Variant | Executable | What it is |
 |---|---|---|
@@ -132,8 +138,8 @@ which builds both USA variants and then runs those executables (ctest label
 scripted, faster-than-real-time run through every scene and every level) on
 each.
 
-If configure fails with "Generated headers missing", section 3 was skipped or
-failed.
+If configure fails with "Generated headers missing", the data was not built:
+that is a build with `--no-data`, or CMake run by hand, before section 3.
 
 ### Debugging in Visual Studio (optional)
 
@@ -150,7 +156,8 @@ port\build-pc.cmd x86-debug
 ```
 
 `x86` names the debug + final pair, for `test` and `soak` too, and the EUR
-trees are `x86-eur-debug` and `x86-eur-final` (`port\build-pc.cmd x86 eur`).
+trees are `x86-eur-debug` and `x86-eur-final` (`port\build-pc.cmd x86 eur`);
+`port\build-pc.cmd x86 all` builds both territories' pairs.
 They don't ship; they exist to check the 64-bit build against.
 `port\build-pc.cmd parity64 [usa|eur] [debug|final]` plays every route and
 level on both and requires the same frames, and the 64-bit exe to replay the
@@ -173,7 +180,8 @@ with the 1999 PSY-Q toolchain in `tools\psyq`:
 port\build-psx.cmd USA DEBUG
 ```
 
-(`USA` or `EUR`, `DEBUG` or `FINAL`; it needs that territory's data.) The
+(`USA` or `EUR`, `DEBUG` or `FINAL`; it builds that territory's data first,
+as the PC build does, unless `--no-data` is given.) The
 output is `out\<territory>\<version>\version\CD\Spongey.cpe`. The build is a
 CMake + Ninja project, `port\psx`, that runs the same commands as the
 original `makefile.gaz`, which still lists what is compiled, and produces the
@@ -214,7 +222,7 @@ bitmaps against their masters, builds and tests the `debug`, `final`,
 `x86-debug` and `x86-final` trees, and links the PlayStation executable. It
 also builds the EUR data (`data-eur`) and builds and tests the `eur-debug`
 and `eur-final` trees on it (`pc-eur`, issue #42); locally that is
-`port\build-data.cmd eur` and `port\build-pc.cmd test eur`.
+`port\build-pc.cmd test eur`.
 
 ## 5. Run
 
@@ -259,7 +267,7 @@ FINAL and DEBUG executables (`sbsp.exe`, `sbsp-debug.exe`) with their
 `SDL3.dll`, the data, a `saves\` folder, a README and `run-test-session.cmd`
 (a recorded, logged play session) into
 `port\build\sbsp-<territory>-<date>.zip`. `--build` runs
-`port\build-data.cmd` and `port\build-pc.cmd` for the territory first.
+`port\build-pc.cmd` for the territory first (the data, then the executables).
 
 **Skipping to a level** while testing:
 

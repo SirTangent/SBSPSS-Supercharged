@@ -30,7 +30,8 @@ Inputs are the repo's own build products - port/build/<preset>/sbsp.exe and
 SDL3.dll for the territory's two x64 presets and out/<T>/cd/* from
 port/build-data.cmd <T>.
 Missing inputs are reported with the exact command that makes them;
---build runs those commands first.  TRACK1.IXA is Git-LFS tracked, so an
+--build runs port/build-pc.cmd <T> first, which builds the data and then
+the exes.  TRACK1.IXA is Git-LFS tracked, so an
 unmaterialised pointer file (a few hundred bytes) is refused.
 """
 import argparse
@@ -90,8 +91,7 @@ def preflight(territory, build):
     data_dir = REPO / "out" / terr / "cd"
 
     if build:
-        run([str(HERE / "build-data.cmd"), territory])
-        run([str(HERE / "build-pc.cmd"), territory])
+        run([str(HERE / "build-pc.cmd"), territory])      # builds the territory's data first
 
     problems = []
     for name, path in exes.items():
@@ -128,7 +128,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--territory", choices=sorted(PRESETS), default="usa")
     ap.add_argument("--out", help="zip path (default port/build/sbsp-<territory>-<yyyymmdd>.zip)")
-    ap.add_argument("--build", action="store_true", help="run build-data.cmd and build-pc.cmd for the territory first")
+    ap.add_argument("--build", action="store_true", help="run build-pc.cmd for the territory first (the data, then the exes)")
     # the zip's exes are x64 since issue #39; --x64 used to add them
     ap.add_argument("--x64", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args()
