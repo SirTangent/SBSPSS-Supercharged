@@ -13,13 +13,15 @@ needs 3.28; Visual Studio 2019's bundled CMake is 3.20).
 
 Also here, because the three scripts share them: the data step that
 build_pc.py and psx/build_psx.py run ahead of their own build (no_data,
-data_tools, build_data), and the lock that makes a second build of one
+data_left_alone, data_tools, build_data), cache_value, and the lock that makes a second build of one
 tree wait for the first (hold_lock).
 """
+import errno
 import msvcrt
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -27,8 +29,14 @@ import time
 MIN_CMAKE = (3, 28)
 
 PORT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO = os.path.dirname(PORT)
 NO_DATA_ARG = "--no-data"
 NO_DATA_ENV = "SBSP_NO_DATA"
+# what SBSP_NO_DATA may hold and still mean "build the data": the false
+# spellings SBSP_PLAYTHROUGH takes (build_pc.CMAKE_FALSE)
+ENV_FALSE = ("", "0", "OFF", "NO", "FALSE", "N")
+# msvcrt.locking's errors when another process holds the byte
+LOCK_HELD = (errno.EACCES, getattr(errno, "EDEADLOCK", errno.EDEADLK))
 
 VSWHERE = os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
                        "Microsoft Visual Studio", "Installer", "vswhere.exe")
@@ -103,41 +111,97 @@ def hold_lock(path, what):
     same files.  Returns the open file; the lock lasts until it is closed
     or the process exits."""
     f = open(path, "a+")
+    waiting = False
+    while True:
+        try:
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+            return f
+        except OSError as e:
+            # EACCES (EDEADLOCK from some CRTs) is "another process has it".
+            # Anything else is a volume that cannot lock, which waiting
+            # would never cure (PR #108 review)
+            if e.errno not in LOCK_HELD:
+                f.close()
+                sys.exit("cannot lock %s: %s" % (path, e))
+        if not waiting:
+            print("Another %s holds %s - waiting for it to finish..." % (what, path), file=sys.stderr, flush=True)
+            waiting = True
+        time.sleep(1)
+
+
+def cache_value(tree, key):
+    """A CMakeCache.txt entry's value (any type), or None."""
     try:
-        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        with open(os.path.join(tree, "CMakeCache.txt"), errors="replace") as f:
+            for line in f:
+                if line.startswith(key + ":"):
+                    return line.split("=", 1)[1].strip()
     except OSError:
-        print("Another %s holds %s - waiting for it to finish..." % (what, path), file=sys.stderr, flush=True)
-        while True:
-            try:
-                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
-                break
-            except OSError:
-                time.sleep(1)
-    return f
+        pass
+    return None
 
 
 def no_data(argv):
-    """(argv without --no-data, whether the data step is skipped).  The PC
+    """(argv without --no-data, why the data step is skipped or "").  The PC
     and PS1 builds build their territory's data first; --no-data, or
-    SBSP_NO_DATA in the environment (anything but empty or 0), leaves
-    out/<T> as it is.  The variable is for a caller that cannot pass the
-    argument: psx_identity.py also drives a base revision's build_psx.py,
-    which may not know it."""
+    SBSP_NO_DATA in the environment, leaves out/<T> as it is.  The variable
+    is off when empty or one of ENV_FALSE (0, OFF, NO, FALSE, N in any
+    case), on otherwise.  It is for a caller that cannot pass the argument:
+    psx_identity.py also drives a base revision's build_psx.py, which may
+    not know it."""
     rest = [a for a in argv if a != NO_DATA_ARG]
-    return rest, len(rest) != len(argv) or os.environ.get(NO_DATA_ENV, "") not in ("", "0")
+    if len(rest) != len(argv):
+        return rest, NO_DATA_ARG
+    value = os.environ.get(NO_DATA_ENV, "")
+    if value.strip().upper() not in ENV_FALSE:
+        return rest, "%s=%s in the environment" % (NO_DATA_ENV, value)
+    return rest, ""
+
+
+def is_link(path):
+    """Whether `path` itself is a junction or a symbolic link."""
+    try:
+        return bool(os.lstat(path).st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+    except OSError:
+        return False
+
+
+def shared_out(repo, territory):
+    """The part of <repo>/out/<T> that is a link to somewhere else, or "".
+    A worktree whose out\\ is a junction to another checkout's reads that
+    checkout's data; a data build here would write this branch's over it,
+    under a lock (port/build/data-<t>.lock) the other checkout does not
+    take."""
+    for rel in ("out", os.path.join("out", territory.upper())):
+        if is_link(os.path.join(repo, rel)):
+            return rel
+    return ""
+
+
+def data_left_alone(territory, asked=""):
+    """Why a PC or PS1 build does not build the territory's data first, or
+    "" when it does: it was asked not to (`asked`, from no_data), out/<T>
+    is another checkout's (shared_out), or the data tree is configured with
+    the test-only final.dat override, which build_data.py clears - the
+    build would quietly go back to lang.py's strings (PR #108 review)."""
+    if asked:
+        return asked
+    link = shared_out(REPO, territory)
+    if link:
+        return "%s is a link to another directory, whose data this would replace" % link
+    if cache_value(data_tree(territory), "SBSP_DATA_FINAL_DAT"):
+        return "port/build/data-%s is configured with SBSP_DATA_FINAL_DAT" % territory.lower()
+    return ""
+
+
+def data_tree(territory):
+    return os.path.join(PORT, "build", "data-" + territory.lower())
 
 
 def data_tools(territory):
     """The converter set the territory's data tree was last configured with,
     "x64" or "vintage" ("x64" for a tree that does not exist yet)."""
-    try:
-        with open(os.path.join(PORT, "build", "data-" + territory.lower(), "CMakeCache.txt"), errors="replace") as f:
-            for line in f:
-                if line.startswith("SBSP_DATA_TOOLS:"):
-                    return line.split("=", 1)[1].strip()
-    except OSError:
-        pass
-    return "x64"
+    return cache_value(data_tree(territory), "SBSP_DATA_TOOLS") or "x64"
 
 
 def build_data(territory):

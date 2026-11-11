@@ -65,13 +65,18 @@ def main(argv):
     if os.environ.get("SBSP_IDENTITY_NOLINE"):
         print("build-psx: SBSP_IDENTITY_NOLINE in the environment is ignored "
               "(psx_identity.py passes --identity-noline)", file=sys.stderr)
-    argv, skip_data = buildenv.no_data(argv)
+    argv, asked = buildenv.no_data(argv)
     territory, version, noline = parse(argv)
-    if not skip_data and buildenv.build_data(territory):
+    # --no-data / SBSP_NO_DATA, or a reason of buildenv's own: out\ is a link
+    # to another checkout's, or the data tree has the test-only final.dat
+    why = buildenv.data_left_alone(territory, asked)
+    if why:
+        print("Data: %s left as it is (%s)" % (territory, why))
+    elif buildenv.build_data(territory):
         sys.exit("PSX BUILD FAILED: the %s data build failed" % territory)
     if not os.path.isfile(os.path.join(ROOT, "out", territory, "include", "trans.h")):
-        sys.exit("PSX BUILD FAILED: out/%s/include is missing - run: port\\build-data.cmd %s"
-                 % (territory, territory.lower()))
+        sys.exit("PSX BUILD FAILED: out/%s/include is missing - run: port\\build-data.cmd %s%s"
+                 % (territory, territory.lower(), " (the data was not built here: %s)" % why if why else ""))
     held = buildenv.hold_lock(lock_path(territory, version), "PS1 build of this configuration")
     cmake, ninja = buildenv.find_cmake(), buildenv.find_ninja()
     preset = "psx-%s-%s" % (territory.lower(), version.lower())

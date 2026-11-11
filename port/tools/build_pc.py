@@ -19,13 +19,17 @@ names a pair and `x86 all` all four.  The words of the clangcl-* presets those r
 with their new names.
 
 Each tree needs its territory's data (out/<T>/include + out/<T>/cd; one
-build serves DEBUG and FINAL, issue #35), so every form builds it first,
-once per territory, as port\\build-data.cmd <t> does: a run that finds it up
-to date does nothing, and one that finds a changed input rebuilds what
-reads it, then the game files that include a header it rewrote.  --no-data
-(or SBSP_NO_DATA in the environment) skips that and only checks the data
-is there, naming the command when it is not: CI builds the data in a job of
-its own.  A tree that was configured for another toolchain or architecture
+build serves DEBUG and FINAL, issue #35), so every form builds it ahead of
+the territory's first tree, once, as port\\build-data.cmd <t> does: a run
+that finds it up to date does nothing, and one that finds a changed input
+rebuilds what reads it, then the game files that include a header it
+rewrote.  --no-data (or SBSP_NO_DATA in the environment) skips that and
+only checks the data is there, naming the command when it is not: CI builds
+the data in a job of its own.  The data is also left as it is, with a line
+saying why, for a Ninja dry run (-- -n), when out\\ or out\\<T> is a link
+to another checkout's (this branch's data would replace that one's), and
+when the data tree is configured with the test-only SBSP_DATA_FINAL_DAT
+(buildenv.data_left_alone).  A tree that was configured for another toolchain or architecture
 (the MinGW trees that used the names debug, final, eur-debug and eur-final)
 is reconfigured --fresh.
 
@@ -117,28 +121,29 @@ def arch_of(preset):
     return "x86" if preset.startswith("x86-") else "x64"
 
 
-def territories(mode, presets):
-    """The territories a plan() result builds for, each once, in order:
-    their data is built before the first tree."""
+def build_steps(mode, presets):
+    """What a plan() result builds, in order: ("data", territory) ahead of
+    the first tree of each territory, then ("build", preset).  A territory's
+    data is built once, and only when its trees are reached: `all` with
+    EUR's data broken still builds both USA exes first (PR #108 review)."""
     if mode == "parity64":
-        presets = ["x86-%s%s" % tuple(presets)]
-    out = []
+        presets = ["x86-%s%s" % tuple(presets), "%s%s" % tuple(presets)]
+    steps, seen = [], []
     for p in presets:
-        if territory_of(p) not in out:
-            out.append(territory_of(p))
-    return out
+        if territory_of(p) not in seen:
+            seen.append(territory_of(p))
+            steps.append(("data", territory_of(p)))
+        steps.append(("build", p))
+    return steps
 
 
-def cache_value(tree, key):
-    """A CMakeCache.txt entry's value (any type), or None."""
-    try:
-        with open(os.path.join(tree, "CMakeCache.txt"), errors="replace") as f:
-            for line in f:
-                if line.startswith(key + ":"):
-                    return line.split("=", 1)[1].strip()
-    except OSError:
-        pass
-    return None
+def dry_run(ninja_args):
+    """Whether the Ninja arguments ask for a dry run (-n, after cmake's --):
+    the data build takes no arguments from here, so it would be a real one."""
+    return "-n" in ninja_args or "--dry-run" in ninja_args
+
+
+cache_value = buildenv.cache_value
 
 
 class Builder:
@@ -170,18 +175,23 @@ class Builder:
     def run(self, cmd, cwd=PORT, **extra):
         return subprocess.run(cmd, cwd=cwd, env=self.env(**extra)).returncode
 
-    def ensure_data(self, terr, skip):
-        """Build the territory's data (unless skip), then check it is there."""
-        if not skip:
+    def ensure_data(self, terr, asked=""):
+        """Build the territory's data, then check it is there.  `asked` is
+        why the caller wants it left alone (--no-data, SBSP_NO_DATA, a dry
+        run); buildenv.data_left_alone adds the reasons of its own."""
+        why = buildenv.data_left_alone(terr, asked)
+        if why:
+            print("=== data: %s left as it is (%s) ===" % (terr, why), flush=True)
+        else:
             print("=== data: %s ===" % terr, flush=True)
             if buildenv.build_data(terr):
-                sys.exit("the %s data build failed - the PC build was not started" % terr)
+                sys.exit("the %s data build failed - its trees were not built" % terr)
         # CMake only gates on the generated headers; out/<T>/cd is what
         # cd.cpp opens at run time (the same files for DEBUG and FINAL)
         for f in ("out/%s/include/BigLump.h" % terr, "out/%s/cd/BIGLUMP.BIN" % terr):
             if not os.path.isfile(os.path.join(REPO, f)):
                 sys.exit("missing %s - run: port\\build-data.cmd %s%s"
-                         % (f, terr.lower(), " (or build without %s)" % buildenv.NO_DATA_ARG if skip else ""))
+                         % (f, terr.lower(), " (the data was not built here: %s)" % why if why else ""))
 
     def build_one(self, preset, ninja_args=()):
         print("=== configure+build: %s ===" % preset, flush=True)
@@ -310,24 +320,24 @@ def main(argv):
             print("build-pc: %s" % e.args[0], file=sys.stderr)
         print(USAGE, file=sys.stderr)
         return 1
+    if not skip_data and dry_run(extra):
+        skip_data = "a dry run"
     b = Builder()
-    for terr in territories(mode, presets):
-        b.ensure_data(terr, skip_data)
+    for step, what in build_steps(mode, presets):
+        if step == "data":
+            b.ensure_data(what, skip_data)
+        else:
+            b.build_one(what, extra)
     if mode == "parity64":
         e, v = presets
-        b.build_one("x86-%s%s" % (e, v))
-        b.build_one("%s%s" % (e, v))
         if b.parity64(e, v):
             return 1
-    else:
+    elif mode == "test":
         for p in presets:
-            b.build_one(p, extra)
-        if mode == "test":
-            for p in presets:
-                b.test_one(p)
-        elif mode == "soak":
-            for p in presets:
-                b.soak_one(p)
+            b.test_one(p)
+    elif mode == "soak":
+        for p in presets:
+            b.soak_one(p)
     print("PC build complete.")
     return 0
 
