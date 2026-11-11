@@ -10,14 +10,25 @@ C:\\msys64: each tool comes from, in order,
      and ninja.exe beside the MSVC tools the clang-cl toolchain uses.
 A CMake older than MIN_CMAKE is skipped (the presets are schema 8, which
 needs 3.28; Visual Studio 2019's bundled CMake is 3.20).
+
+Also here, because the three scripts share them: the data step that
+build_pc.py and psx/build_psx.py run ahead of their own build (no_data,
+data_tools, build_data), and the lock that makes a second build of one
+tree wait for the first (hold_lock).
 """
+import msvcrt
 import os
 import re
 import shutil
 import subprocess
 import sys
+import time
 
 MIN_CMAKE = (3, 28)
+
+PORT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+NO_DATA_ARG = "--no-data"
+NO_DATA_ENV = "SBSP_NO_DATA"
 
 VSWHERE = os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
                        "Microsoft Visual Studio", "Installer", "vswhere.exe")
@@ -84,3 +95,58 @@ def find_ninja():
 
 def ctest_for(cmake):
     return os.path.join(os.path.dirname(cmake), "ctest.exe")
+
+
+def hold_lock(path, what):
+    """Take the lock file `path`, waiting while another process holds it.
+    Ninja has no lock of its own: two builds of one tree would write the
+    same files.  Returns the open file; the lock lasts until it is closed
+    or the process exits."""
+    f = open(path, "a+")
+    try:
+        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError:
+        print("Another %s holds %s - waiting for it to finish..." % (what, path), file=sys.stderr, flush=True)
+        while True:
+            try:
+                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                break
+            except OSError:
+                time.sleep(1)
+    return f
+
+
+def no_data(argv):
+    """(argv without --no-data, whether the data step is skipped).  The PC
+    and PS1 builds build their territory's data first; --no-data, or
+    SBSP_NO_DATA in the environment (anything but empty or 0), leaves
+    out/<T> as it is.  The variable is for a caller that cannot pass the
+    argument: psx_identity.py also drives a base revision's build_psx.py,
+    which may not know it."""
+    rest = [a for a in argv if a != NO_DATA_ARG]
+    return rest, len(rest) != len(argv) or os.environ.get(NO_DATA_ENV, "") not in ("", "0")
+
+
+def data_tools(territory):
+    """The converter set the territory's data tree was last configured with,
+    "x64" or "vintage" ("x64" for a tree that does not exist yet)."""
+    try:
+        with open(os.path.join(PORT, "build", "data-" + territory.lower(), "CMakeCache.txt"), errors="replace") as f:
+            for line in f:
+                if line.startswith("SBSP_DATA_TOOLS:"):
+                    return line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return "x64"
+
+
+def build_data(territory):
+    """Run the territory's data build (data/build_data.py) under this Python
+    and return its exit code.  Up to date, it is a configure and a Ninja
+    run that finds nothing to do.  It keeps the converters the tree was
+    built with: data built with --vintage-tools is not rebuilt with the x64
+    ones because a PC build came after it."""
+    cmd = [sys.executable, "-I", os.path.join(PORT, "tools", "data", "build_data.py"), territory.lower()]
+    if data_tools(territory) == "vintage":
+        cmd.append("--vintage-tools")
+    return subprocess.run(cmd).returncode

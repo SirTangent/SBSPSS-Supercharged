@@ -5,6 +5,7 @@ held it to what build-pc.sh did with 47 argument lists (its build/test/soak/
 parity64 steps stubbed out), all equal.  Issue #39 then renamed the presets
 (x64 the plain ones, x86-* the 32-bit ones, the clangcl* words refused), and
 the table below is that grammar, so a change to it shows up here.  Also:
+--no-data and the territories whose data a command line builds first;
 game_sources.cmake must be what port/cmake/gen_game_sources.py makes from
 makefile.gaz, and the PS1 build's object list must resolve.
 
@@ -19,6 +20,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "tools"))
 sys.path.insert(0, os.path.join(HERE, "..", "tools", "psx"))
 import build_pc  # noqa: E402
+import buildenv  # noqa: E402
 import psx_manifest  # noqa: E402
 
 # (command line, (mode, presets, ninja args)) - None is a usage error.
@@ -39,6 +41,13 @@ CASES = [
     ('x86 usa', ('build', ('x86-debug', 'x86-final'), ())),
     ('x86 eur', ('build', ('x86-eur-debug', 'x86-eur-final'), ())),
     ('x86 EUR', ('build', ('x86-eur-debug', 'x86-eur-final'), ())),
+    # both territories for 32-bit, as `all` is for x64
+    ('x86 all', ('build', ('x86-debug', 'x86-final', 'x86-eur-debug', 'x86-eur-final'), ())),
+    ('x86 ALL -j4', ('build', ('x86-debug', 'x86-final', 'x86-eur-debug', 'x86-eur-final'), ('-j4',))),
+    ('test x86 all', ('test', ('x86-debug', 'x86-final', 'x86-eur-debug', 'x86-eur-final'), ())),
+    ('soak x86 all', ('soak', ('x86-debug', 'x86-final', 'x86-eur-debug', 'x86-eur-final'), ())),
+    ('test usa all', None),
+    ('test x86 all eur', None),
     ('x86-debug', ('build', ('x86-debug',), ())),
     ('x86-final', ('build', ('x86-final',), ())),
     ('x86-eur-debug', ('build', ('x86-eur-debug',), ())),
@@ -94,6 +103,73 @@ for line, want in CASES:
     print("%s  build-pc %s" % ("pass" if ok else "FAIL", line or "(no arguments)"))
     if not ok:
         print("      got:  %r" % (got,))
+        print("      want: %r" % (want,))
+
+# --no-data comes out of the command line wherever it stands, before plan()
+# sees it (Ninja has no such option to lose), and SBSP_NO_DATA says the same
+# from the environment.  (command line, variable, (what plan() gets, skip))
+NO_DATA_CASES = [
+    ('debug', None, ('debug', False)),
+    ('--no-data debug', None, ('debug', True)),
+    ('debug --no-data', None, ('debug', True)),
+    ('debug -j2 --no-data -v', None, ('debug -j2 -v', True)),
+    ('test --no-data x86 eur', None, ('test x86 eur', True)),
+    ('parity64 eur final --no-data', None, ('parity64 eur final', True)),
+    ('--no-data', None, ('', True)),
+    ('debug --no-data --no-data', None, ('debug', True)),
+    ('debug --nodata', None, ('debug --nodata', False)),      # Ninja's to refuse
+    ('debug', '1', ('debug', True)),
+    ('debug', '0', ('debug', False)),
+    ('debug', '', ('debug', False)),
+    ('debug --no-data', '0', ('debug', True)),
+]
+saved = os.environ.pop(buildenv.NO_DATA_ENV, None)
+for line, var, want in NO_DATA_CASES:
+    if var is None:
+        os.environ.pop(buildenv.NO_DATA_ENV, None)
+    else:
+        os.environ[buildenv.NO_DATA_ENV] = var
+    rest, skip = buildenv.no_data(shlex.split(line))
+    got = (" ".join(rest), skip)
+    ok = got == want
+    failed += not ok
+    print("%s  no_data %s%s" % ("pass" if ok else "FAIL", line,
+                                "" if var is None else "  (%s=%s)" % (buildenv.NO_DATA_ENV, var)))
+    if not ok:
+        print("      got:  %r" % (got,))
+        print("      want: %r" % (want,))
+os.environ.pop(buildenv.NO_DATA_ENV, None)
+if saved is not None:
+    os.environ[buildenv.NO_DATA_ENV] = saved
+
+# The data a command line builds first: each territory once, in the order
+# its trees are built.
+TERRITORY_CASES = [
+    ('', ['USA', 'EUR']),
+    ('all', ['USA', 'EUR']),
+    ('usa', ['USA']),
+    ('eur', ['EUR']),
+    ('final', ['USA']),
+    ('eur-debug', ['EUR']),
+    ('x86', ['USA']),
+    ('x86 eur', ['EUR']),
+    ('x86 all', ['USA', 'EUR']),
+    ('x86-eur-final', ['EUR']),
+    ('test', ['USA', 'EUR']),
+    ('test x86 eur', ['EUR']),
+    ('soak eur', ['EUR']),
+    ('parity64', ['USA']),
+    ('parity64 final', ['USA']),
+    ('parity64 eur', ['EUR']),
+    ('parity64 FINAL EUR', ['EUR']),
+]
+for line, want in TERRITORY_CASES:
+    mode, presets, _ = build_pc.plan(shlex.split(line))
+    got = build_pc.territories(mode, presets)
+    ok = got == want
+    failed += not ok
+    print("%s  data for build-pc %s: %s" % ("pass" if ok else "FAIL", line or "(no arguments)", " ".join(got)))
+    if not ok:
         print("      want: %r" % (want,))
 
 r = subprocess.run([sys.executable, os.path.join(HERE, "..", "cmake", "gen_game_sources.py"), "--check"])
