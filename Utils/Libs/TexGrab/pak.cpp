@@ -329,7 +329,7 @@ int PAK_doUnpak(u8 * Dest,u8 const * Source)
 			}
 
 		u8 *	endAddr;
-		endAddr=(u8*)(u32(From)+size);
+		endAddr=(u8*)(From+size);
 
 		outsize += size;
 

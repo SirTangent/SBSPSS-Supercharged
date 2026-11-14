@@ -10,7 +10,6 @@
 //#include <time.h>
 //#include <math.h>
 #include <io.h>
-#include <fstream.h>
 #include <conio.h>
 
 
@@ -111,7 +110,7 @@ FILE			*File;
 //***************************************************************************
 //***************************************************************************
 
-void Usage(char *ErrStr)
+void Usage(const char *ErrStr)
 {
 	printf("\nTga2Gfx: by Dave\n");
 	printf("Usage: Tga2Gfx <file> [ <file>.. ] [ switches.. ]\n");

@@ -92,8 +92,10 @@ jobs:
 
   # M0 data pipeline: BigLump.Bin + generated headers (BigLump.h, Sprites.h,
   # trans.h, ...) that gate both the PC and PSX configure/build steps. Runs
-  # the vintage Win32 converter EXEs (tools/Data/bin, tools/psyq/bin) via
-  # MSYS2 make/perl - no MinGW compiler needed here, just the base runtime.
+  # the committed converter EXEs - the x64 rebuilds in port/tools/x64 (issue
+  # #48, LFS, fetched by the pull below), the vintage Win32 ones in
+  # tools/Data/bin and tools/psyq/bin for the rest - via MSYS2 make/perl:
+  # no compiler needed here, just the base runtime.
   data:
     needs: lfs
     runs-on: windows-latest
@@ -174,13 +176,14 @@ jobs:
     steps: &pc-steps
       - uses: actions/checkout@v7
 
-      # the unit test lznp_exe_matches_source compares the committed
-      # port/tools/lznp.exe with the encoder built from its sources; it is an
-      # LFS object (22 KB), a pointer without this, and the test fails on a
-      # pointer.  Only that one file - the 133MB track stays with the data job.
-      - name: Fetch lznp.exe (LFS)
+      # the unit tests lznp_exe_matches_source and datatools_exe_matches_source
+      # compare the committed port/tools/lznp.exe and port/tools/x64/*.exe
+      # with the tools built from their sources; they are LFS objects (22 KB,
+      # ~0.5 MB each), pointers without this, and the tests fail on a pointer.
+      # Only those files - the 133MB track stays with the data job.
+      - name: Fetch the rebuilt tools (LFS)
         shell: bash
-        run: git lfs pull --include port/tools/lznp.exe
+        run: git lfs pull --include "port/tools/lznp.exe,port/tools/x64/*.exe"
 
       - uses: actions/download-artifact@v8
         with:
@@ -309,11 +312,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # lznp_exe_matches_source needs the real lznp.exe (LFS), as in
-      # pc-build-test
-      - name: Fetch lznp.exe (LFS)
+      # lznp_exe_matches_source and datatools_exe_matches_source need the real
+      # exes (LFS), as in pc-build-test
+      - name: Fetch the rebuilt tools (LFS)
         shell: bash
-        run: git lfs pull --include port/tools/lznp.exe
+        run: git lfs pull --include "port/tools/lznp.exe,port/tools/x64/*.exe"
 
       - uses: actions/download-artifact@v8
         with:

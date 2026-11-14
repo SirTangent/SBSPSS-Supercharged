@@ -70,7 +70,7 @@ private:
 		GString				OutFile,IncFile;
 
 		FILE				*File;
-		sSpriteAnimBank		FileHdr;
+		sSpriteAnimBank		FileHdr{};
 
 		vector<GString>		InAnimList;
 		vector<sAnim>		AnimList;

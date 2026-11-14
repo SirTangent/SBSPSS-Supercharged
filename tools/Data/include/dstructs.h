@@ -8,9 +8,9 @@
 //***************************************************************************
 // Pointer fields of the file-overlay structs.  The files hold 4 bytes each
 // (an offset the loader relocates in place), so where a pointer is wider
-// than that - the x64 PC build, SBSP_PC64 - the field is a 4-byte FPTR<T>.
-// Everywhere else (PlayStation, 32-bit PC, the data tools) it is the plain
-// pointer it always was.
+// than that - SBSP_PC64: the x64 PC build, and the x64 builds of the tools
+// that write the files (issue #48) - the field is a 4-byte FPTR<T>.
+// Everywhere else (PlayStation, 32-bit PC and tools) it is the plain pointer.
 #if defined(SBSP_PC64)
 #include "fptr.h"
 #define	DPTR(T)	FPTR< T >

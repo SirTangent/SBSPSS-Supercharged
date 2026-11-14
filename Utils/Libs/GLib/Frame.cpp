@@ -24,6 +24,7 @@
 	--- */
 //#include <alogrithm>
 #include <ALGORITHM>
+#include "vc6_sort.h"	// VC6's order for equal elements (issue #48)
 
 
 /*	Glib
@@ -874,10 +875,10 @@ void Frame::ReduceColours(int TargColours)
 		vector<ColPair>	Colours;
 		Colours.resize(256);
 		
-		for (f=0;f<256;f++)
+		for (int f=0;f<256;f++)
 			Colours[f].Uses=0;
 
-		for (f=0;f<Width*Height;f++)
+		for (int f=0;f<Width*Height;f++)
 			{
 			if (Buffa[f])
 				{
@@ -886,9 +887,9 @@ void Frame::ReduceColours(int TargColours)
 				}
 			}
 
-		sort(Colours.begin(),Colours.end());
+		vc6::sort(Colours.begin(),Colours.end());
 
-		for (f=63;f>0;f--)
+		for (int f=63;f>0;f--)
 			{
 			int ColIndex=255-63+f;
 
@@ -965,7 +966,7 @@ void Frame::Expand(int BorderWidth,bool DupeEdges)
 		for (int f=0;f<BorderWidth*2+1;f++)
 			Plot(NewFrame,f,BorderWidth);
 
-		for (f=0;f<BorderWidth*2+1;f++)
+		for (int f=0;f<BorderWidth*2+1;f++)
 			Plot(NewFrame,BorderWidth,f);
 		}
 

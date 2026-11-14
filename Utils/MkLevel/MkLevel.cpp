@@ -244,7 +244,7 @@ int			i,ListSize=ModelList.size();
 				Config.GetInt(ModelOtOfsGroupName,ThisModel.Name,OtOfs);
 
 				if (OtOfs)
-					printf("ModelOTOfs %s %i\n",ThisModel.Name,OtOfs);
+					printf("ModelOTOfs %s %i\n",(char const *)ThisModel.Name,OtOfs);
 			
 				ThisModel.ElemID=Create3dElem(ThisModel.TriCount,ThisModel.TriStart,false,OtOfs);	// always all models as global for the moment
 			}
@@ -264,11 +264,11 @@ FILE		*File;
 sExpFileHdr	*FileHdr;
 int			Size;
 
-			printf("Load %s\n",LevelName);
+			printf("Load %s\n",(char const *)LevelName);
 
 			File=fopen(InFilename,"rb");
 			if (!File)
-				GObject::Error(ERR_FATAL,"%s Not found\n",InFilename);
+				GObject::Error(ERR_FATAL,"%s Not found\n",(char const *)InFilename);
 // Calc File Size
 			fseek(File,0,SEEK_END);
 			Size=ftell(File);
@@ -296,7 +296,8 @@ GString	FilePath;
 			GString	InName=InPath;
 			InName+=TexPtr;
 			_fullpath( FullName, InName, 1024);
-			List.push_back(GString(FullName));
+			GString	FullPath(FullName);
+			List.push_back(FullPath);
 			TexPtr+=strlen(TexPtr)+1;
 		}
 }
@@ -726,8 +727,8 @@ u8		Outx0, Outy0;
 			GObject::Error(ERR_FATAL,"Rotated Texure, cant cope!\n");
 		} 
 
-		Outx0 = Info.u +		round(Inx0 * W);
-		Outy0 = (Info.v + H) -  round(Iny0 * H);
+		Outx0 = Info.u +		iround(Inx0 * W);
+		Outy0 = (Info.v + H) -  iround(Iny0 * H);
 
 		Out.u0=Outx0; Out.v0=Outy0;
 		Out.TPage=0xe1000000 | (Info.Tpage & 0x9ff);		// fixup TPage for TSPRT
@@ -931,12 +932,12 @@ int				TexID;
 
 				if (SrcTile.XOfs*16>BmpW) 
 				{
-					printf("AARGH!!! %s(%i) wants X=%i,tile is only %i Wide\n",Name,SrcTile.Set,SrcTile.XOfs*16,BmpW);
+					printf("AARGH!!! %s(%i) wants X=%i,tile is only %i Wide\n",(char const *)Name,SrcTile.Set,SrcTile.XOfs*16,BmpW);
 					SrcTile.XOfs=0;
 				}
 				if (SrcTile.YOfs*16>BmpH) 
 				{
-					printf("AARGH!!! %s(%i) wants Y=%i,tile is only %i High\n",Name,SrcTile.Set,SrcTile.YOfs*16,BmpH);
+					printf("AARGH!!! %s(%i) wants Y=%i,tile is only %i High\n",(char const *)Name,SrcTile.Set,SrcTile.YOfs*16,BmpH);
 					SrcTile.YOfs=0;
 				}
 
@@ -979,7 +980,7 @@ void	CMkLevel::MakeTexName(sExpTile &SrcTile,int Flags,GString &OutStr)
 char			NewName[256];
 GString			Name=GFName(InSetNameList[SrcTile.Set]).File();
 			
-		sprintf(NewName,"%s_%02d_%02d_%01d_",Name,SrcTile.XOfs,SrcTile.YOfs,Flags&PC_TILE_FLAG_MIRROR_XY);
+		sprintf(NewName,"%s_%02d_%02d_%01d_",(char const *)Name,SrcTile.XOfs,SrcTile.YOfs,Flags&PC_TILE_FLAG_MIRROR_XY);
 		OutStr=NewName;
 }
 
@@ -1101,7 +1102,7 @@ sVtx	Max={-100,-100,-100};
 		for (i=0; i<ListSize; i++)
 		{
 			sVtx const	&In=OutVtxList[i];
-			sVtx		Out;
+			sVtx		Out={0};
 
 			Out.vx=+In.vx;
 			Out.vy=+In.vy;
@@ -1173,7 +1174,7 @@ char	*LayerName=GetLayerName(Type,SubType);
 
 		if (!ThisLayer)
 		{
-			if (Warn) GObject::Error(ERR_WARNING,"No %s Layer Found in %s!!\n",LayerName,LevelName);
+			if (Warn) GObject::Error(ERR_WARNING,"No %s Layer Found in %s!!\n",LayerName,(char const *)LevelName);
 			return(0);
 		}
 		Ofs=ThisLayer->Write(this,File,LayerName);
@@ -1191,7 +1192,7 @@ char	*LayerName=GetLayerName(Type,LAYER_SUBTYPE_NONE);
 
 		if (!ThisLayer)
 		{
-			GFName		Name=InFilename;
+			GFName		Name((char const *)InFilename);
 			if (Warn) GObject::Error(ERR_WARNING,"No %s Layer Found in %s!!\n",LayerName,Name.File());
 			return(0);
 		}
@@ -1209,7 +1210,7 @@ int		Ofs=ftell(File);
 
 		for (i=0; i<ListSize; i++)
 		{
-			sModel				Out;
+			sModel				Out={0};
 			sMkLevelModel		&ThisModel=ModelList[i];
 			sOutElem3d			&ThisElem=OutElem3d[ThisModel.ElemID];
 			sBBox				&ElemBBox=ThisElem.FaceStore.GetBBox();
@@ -1217,9 +1218,9 @@ int		Ofs=ftell(File);
 			Out.BBox=ElemBBox;
 
 			if (ThisModel.TriCount==0)
-				printf("Writing Model E:%i - %s - Dummy --\n",Out.ElemID,ThisModel.Name);
+				printf("Writing Model E:%i - %s - Dummy --\n",Out.ElemID,(char const *)ThisModel.Name);
 			else
-				printf("Writing Model E:%i - %s - T:%i Q:%i BBox:%i,%i->%i,%i\n",Out.ElemID,ThisModel.Name,ThisElem.Elem3d.TriCount,ThisElem.Elem3d.QuadCount,Out.BBox.XMin,Out.BBox.YMin,Out.BBox.XMax,Out.BBox.YMax);
+				printf("Writing Model E:%i - %s - T:%i Q:%i BBox:%i,%i->%i,%i\n",Out.ElemID,(char const *)ThisModel.Name,ThisElem.Elem3d.TriCount,ThisElem.Elem3d.QuadCount,Out.BBox.XMin,Out.BBox.YMin,Out.BBox.XMax,Out.BBox.YMax);
 			
 			fwrite(&Out,1,sizeof(sModel),File);
 		}
@@ -1249,13 +1250,13 @@ GString	DefStr;
 		DefStr=LevelFullName+"_INF";
 		File=fopen(OutIncName,"wt");
 
-		fprintf(File,"// %s Info Header\n",LevelFullName);
+		fprintf(File,"// %s Info Header\n",(char const *)LevelFullName);
 		fprintf(File,"\n");
-		fprintf(File,"#ifndef\t__%s_INF_HEADER__\n",LevelFullName);
-		fprintf(File,"#define\t__%s_INF_HEADER__\n",LevelFullName);
+		fprintf(File,"#ifndef\t__%s_INF_HEADER__\n",(char const *)LevelFullName);
+		fprintf(File,"#define\t__%s_INF_HEADER__\n",(char const *)LevelFullName);
 		fprintf(File,"\n");
 		fprintf(File,"\n");
-		fprintf(File,"enum\t%s\n",DefStr);
+		fprintf(File,"enum\t%s\n",(char const *)DefStr);
 		fprintf(File,"{\n");
 
 int		ListSize=InfList.size();
@@ -1263,7 +1264,7 @@ int		ListSize=InfList.size();
 		{
 			sInfItem	&ThisItem=InfList[i];
 			
-			fprintf(File,"\t%s_%s\t\t=%i,\n",DefStr,ThisItem.Name,ThisItem.Val);
+			fprintf(File,"\t%s_%s\t\t=%i,\n",(char const *)DefStr,(char const *)ThisItem.Name,ThisItem.Val);
 		}
 
 		fprintf(File,"};\n");

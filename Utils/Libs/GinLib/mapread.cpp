@@ -516,7 +516,7 @@ void CMapFile::Export( const char * file )
 			fwrite( &Models[i], sizeof(MODEL_PACKET), 1, level );
 		}
 		fwrite( &nbSpawnPoints, sizeof(int), 1, level );
-		for (i=0; i<nbSpawnPoints; i++)
+		for (int i=0; i<nbSpawnPoints; i++)
 		{
 			fwrite( &Spawn[i], sizeof(SPAWNPOS), 1, level);
 		}

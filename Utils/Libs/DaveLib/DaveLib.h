@@ -64,7 +64,8 @@ void	DebugStr(char *Txt,int Param);
 void	DebugStr(char *Txt);
 void	DebugStr();
 
-int		round(float f);
+// was round(): the C++ library's float round(float) differs only in return type (issue #48)
+int		iround(float f);
 
 //void	alignFile( FILE *f, int align );
 void    PadFile(FILE *File);

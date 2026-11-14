@@ -93,7 +93,7 @@ vector<int>	Counts;
 			Counts[Idx]++;
 			ASSERT(Idx<KeyCount);
 			if (!Found)
-				GObject::Error(ERR_FATAL,"%s not found in list\n",ThisThing.Name);
+				GObject::Error(ERR_FATAL,"%s not found in list\n",(char const *)ThisThing.Name);
 		}
 // Create Inf Data
 

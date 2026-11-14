@@ -633,7 +633,7 @@ void AllFiles::FileCallback(char const * FName,int FileNum)
 			}
 
 
-		for (f=0;f<NewEntrys.size();f++)
+		for (int f=0;f<NewEntrys.size();f++)
 			FileCallback(NewEntrys[f],0);
 
 		cout<<"Read gin file *"<<FName<<"*"<<endl;

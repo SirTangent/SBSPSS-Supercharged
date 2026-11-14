@@ -10,7 +10,6 @@
 #include <time.h>
 #include <math.h>
 #include <io.h>
-#include <fstream.h>
 #include <conio.h>
 #include <vector>
 #include "Mkdata.h"
@@ -29,6 +28,11 @@ char	*AlignBuffer;
 CBank					Banks;
 CFileList				Files;
 char					*BaseDir=0;
+
+// A bank's size counts FATSize*sizeof(FAT), and FAT is a std::vector<sFAT>:
+// the vector object, 16 bytes under VC6, not an entry.  Every BigLump.Bin
+// carries that 16, so it stays 16 whatever this compiler's vector is (issue #48).
+const int				VC6_SIZEOF_VECTOR=16;
 
 //***********************************************************************
 
@@ -156,7 +160,7 @@ int	ListSize=FileList.size();
 int	CFileList::AddFile(char *BaseFilename,int BankIdx)
 {
 int		Idx;
-sFile	File;
+sFile	File={0};	// a bank's Size was left uninitialised and lands in its own FAT (issue #48)
 
 		File.BankIdx=BankIdx;
 		strupr(BaseFilename);
@@ -357,7 +361,11 @@ void	AlignData(FILE *FileHandle,int Align)
 {
 int		Pos=ftell(FileHandle);
 int		AlignPad= (Pos & (Align-1));
-		if (AlignPad) fwrite(AlignBuffer,1,Align-AlignPad,FileHandle);
+// AlignBuffer holds AlignSize zeros, and a bank can ask for more: pad in
+// chunks, not by reading past its end (issue #48)
+		if (AlignPad)
+			for (int Left=Align-AlignPad; Left>0; Left-=AlignSize)
+				fwrite(AlignBuffer,1,Left<AlignSize ? Left : AlignSize,FileHandle);
 }
 
 //***********************************************************************
@@ -437,7 +445,7 @@ int		FATSize=Files.GetCount(),Idx;
 			{ // Databank
 			DEBUG("Bank %s",ThisFile.Filename);
 			WriteBankData(FileHandle,ThisFile.BankIdx,FAT[Idx]);
-			FAT[Idx].FileSize+=FATSize*sizeof(FAT);
+			FAT[Idx].FileSize+=FATSize*VC6_SIZEOF_VECTOR;
 //			printf("%i\n",(int)FAT[Idx].FileSize);
 
 			AlignData(FileHandle,AlignSize);
@@ -459,7 +467,7 @@ int		FATSize=Files.GetCount(),Idx;
 //***********************************************************************
 void	WriteFileHeader(FILE *FileHandle,char *Name)
 {
-static	Count=0;
+static	int	Count=0;
 
 		if (!Count)
 			fprintf( FileHandle, "%s=%i,\n" ,Name,Count);
@@ -584,7 +592,7 @@ std::vector<char*>	Scripts;
 		printf("Writing Data File: %s\n",DataFilename);
 		WriteData(DataFilename);
 		if (IncludeFilename) WriteHeader(IncludeFilename);
-		printf("FATSize =%i\n",Files.GetCount()*sizeof(sFAT));
+		printf("FATSize =%i\n",(int)(Files.GetCount()*sizeof(sFAT)));
 	
 		return(0);
 }

@@ -165,6 +165,20 @@ export Path =		$(TOOL_DIR);$(CYG_BIN_DIR);$(PSYQ_BIN_DIR);$(PERL_BIN_DIR)
 #	lack, then USER, which MSYS2's login shell sets.  Only with neither
 #	does the shell run tools/uname.exe (GetUserName) by path; the $$( is
 #	the shell's command substitution, kept as text by the := here.
+#	The data converters rebuilt from source as x64 exes (issue #48) sit in
+#	port/tools/x64, ahead of the other tool directories, so they shadow
+#	their 1999 namesakes in tools/ and tools/data/bin, and port/tools'
+#	32-bit lznp.exe.  SBSP_VINTAGE_TOOLS=1 (port/build-data.sh
+#	--vintage-tools) leaves that directory off the PATH for an A/B against
+#	the old exes; port/tools stays, as the 16-bit lznp.exe cannot run at all.
+ifneq ($(filter-out 0 1,$(SBSP_VINTAGE_TOOLS)),)
+$(error SBSP_VINTAGE_TOOLS is '$(SBSP_VINTAGE_TOOLS)' - 1 runs the 1999 data converters, 0 or unset the rebuilt port/tools/x64 ones)
+endif
+ifeq ($(SBSP_VINTAGE_TOOLS),1)
+SBSP_X64_TOOLS :=
+else
+SBSP_X64_TOOLS :=		$(CURDIR)/port/tools/x64:
+endif
 ifneq ($(filter %-cygwin %-msys,$(MAKE_HOST)),)
 LOG_NAME :=				echo $(or $(USERNAME),$(USER),$$("$(CURDIR)/$(TOOL_DIR)/uname"))
 ECHO :=					echo
@@ -176,7 +190,14 @@ DATE :=					date
 SED :=					sed
 ATTRIB :=				chmod +w
 unexport Path
-export PATH :=			/usr/bin:$(CURDIR)/port/tools:$(CURDIR)/$(TOOL_DIR):$(CURDIR)/$(DATA_BIN_DIR):$(CURDIR)/$(PSYQ_BIN_DIR):$(CURDIR)/$(PSYQ_BIN_DIR)/egcs
+export PATH :=			/usr/bin:$(SBSP_X64_TOOLS)$(CURDIR)/port/tools:$(CURDIR)/$(TOOL_DIR):$(CURDIR)/$(DATA_BIN_DIR):$(CURDIR)/$(PSYQ_BIN_DIR):$(CURDIR)/$(PSYQ_BIN_DIR)/egcs
+#	MkLevel and MkActor are run by path, not found on the PATH.  MkLevel
+#	reads MkLevel.ini from beside its exe unless -c: names the directory:
+#	the x64 one reads the same tools/data/bin/MkLevel.ini as the 1999 one.
+ifneq ($(SBSP_VINTAGE_TOOLS),1)
+MKLEVEL :=				port/tools/x64/MkLevel -c:$(DATA_BIN_DIR)
+MKACTOR :=				port/tools/x64/MkActor
+endif
 else
 ifneq ($(MAKE_HOST),)
 $(error GNU make $(MAKE_VERSION) for $(MAKE_HOST) cannot run this build - use MSYS2's make: port\build-data.cmd / port\build-psx.cmd, or /usr/bin/make from an MSYS2 shell)

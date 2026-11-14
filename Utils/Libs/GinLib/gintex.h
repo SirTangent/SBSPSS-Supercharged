@@ -270,7 +270,7 @@ BOOL	operator==(sUV const &v1)
 		return(u==v1.u && v==v1.v);
 		}
 
-inline	operator=(sUV const &Src)	
+inline	void operator=(sUV const &Src)
 {
 		u=Src.u;
 		v=Src.v;
@@ -290,7 +290,7 @@ BOOL	operator==(sUVTri const &v1)
 		return (TRUE);
 		}
 
-inline operator=(sUVTri const &Src)	
+inline void operator=(sUVTri const &Src)
 {
 		for (int i=0; i<3; i++) 
 		{

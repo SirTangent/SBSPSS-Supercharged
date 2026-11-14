@@ -6,6 +6,7 @@ rem Usage: port\build-data.cmd [usa^|eur]                 (default usa; PC data 
 rem                                                      serves both DEBUG and FINAL exes, issue #35)
 rem        port\build-data.cmd <preset>                  (debug^|final^|usa-*^|eur-*, as build-pc.cmd; variant word ignored)
 rem        port\build-data.cmd USA^|EUR DEBUG^|FINAL       (also picks the PSX tree the vintage make writes to)
+rem        ... --vintage-tools                          (any form: the 1999 converters, not port\tools\x64 - issue #48)
 rem Like build-psx.cmd, starts MSYS2's bash as an MSYS login shell whatever the
 rem caller's MSYSTEM (build-data.sh only runs there, issue #51).
 setlocal

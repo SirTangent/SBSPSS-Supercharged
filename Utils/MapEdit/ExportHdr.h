@@ -46,7 +46,11 @@ struct	sExpTile
 		int		TriStart;
 		int		TriCount;
 		u16		XOfs,YOfs;
+#if defined(SBSP_DATATOOL) && defined(_WIN64)
+		u32		RGB;		// MapEdit's 32-bit pointer, 4 bytes in the .MEX; MkLevel zeroes it (issue #48)
+#else
 		u8		*RGB;
+#endif
 //		int		TexId;			//	 n	-1
 //		int		Flags;			//  Flip Flags
 

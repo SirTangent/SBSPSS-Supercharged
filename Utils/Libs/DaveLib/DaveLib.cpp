@@ -5,6 +5,7 @@
 #include <ginio.h>
 #include <gintex.h>
 #include "stdio.h"
+#include <stdlib.h>
 #include <math.h>
 #include <repread.h>
 #include <misc.hpp>
@@ -34,7 +35,7 @@ void	DebugStr(char *Txt,int Param)	{if (DebugOn) std::cout<<Txt<<" "<<Param<<end
 void	DebugStr2(char *Txt,int Param)	{if (DebugOn) std::cout<<Txt<<" "<<Param<<" ";}
 
 //***************************************************************************
-int		round(float f) 
+int		iround(float f) 
 {
 		if (f<0) 
 		{
@@ -120,10 +121,11 @@ int NumOfCommas=0;
 //***************************************************************************
 char	*FindFile(const char *Name)
 {
-int 		Handle;
+intptr_t	Handle;		// _findfirst's handle: 64 bits on x64 (issue #48)
 GFName		DirName(Name);
 GString		Filename,Path;
 _finddata_t FindBlock;
+static char	Found[_MAX_PATH];	// the path a recursive search found (issue #48 review)
 int			Status;
 
 // Does this file exist
@@ -143,7 +145,8 @@ FILE	*File=fopen(Name,"rb");
 		Path=DirName.FullName();
 
 		Name=0;
-		Status=Handle= _findfirst(Path,&FindBlock);
+		Handle= _findfirst(Path,&FindBlock);
+		Status=(Handle==-1) ? -1 : 0;
 
 		while (Status!=-1 && !Name)
 		{
@@ -158,10 +161,24 @@ FILE	*File=fopen(Name,"rb");
 					NewName+="/";
 					NewName+=Filename;
 					Name=FindFile(NewName);
+					if (Name)
+					{
+					// NewName dies with this block, so the path it found is kept
+					// in Found (good until the next call) instead of being
+					// returned out of a freed buffer (issue #48 review)
+						if (Name!=Found)
+						{
+							strncpy(Found,Name,sizeof(Found)-1);
+							Found[sizeof(Found)-1]=0;
+						}
+						Name=Found;
+					}
 				}
 			}
 		if (!Name) Status=_findnext(Handle,&FindBlock);
 		}
+		if (Handle!=-1)
+			_findclose(Handle);		// each directory searched leaked its handle (issue #48 review)
 		return((char*)Name);
 }
 /**************************************************************************************/

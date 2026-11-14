@@ -241,7 +241,8 @@ void GString::Replace(char const * SearchString,char const * ReplaceString)
 
 		RepLen=strlen(ReplaceString);
 
-		for (unsigned int Checks=0;Checks <= strlen(Text)-strlen(SearchString);Checks++)
+		unsigned int Checks;
+		for (Checks=0;Checks <= strlen(Text)-strlen(SearchString);Checks++)
 			{
 			bool	Failed;
 			

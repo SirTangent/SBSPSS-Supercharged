@@ -27,6 +27,7 @@ struct	sFAT
 		s32				FilePos;
 		s32				FileSize;
 };
+static_assert(sizeof(sFAT)==8,"sFAT is the on-disk FAT entry");	// long is 4 bytes on Win64 too
 
 struct	sBankEntry
 {

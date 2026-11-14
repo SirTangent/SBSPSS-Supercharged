@@ -38,7 +38,7 @@ void	CMkLevelLayerTrigger::Process(CMkLevel *Core)
 int		CMkLevelLayerTrigger::Write(CMkLevel *Core,FILE *File,const char *LayerName)
 {
 int			ThisPos=ftell(File);
-sThingHdr	Hdr;
+sThingHdr	Hdr={0};
 int			i,ListSize=ThingList.size();
 		
 		Hdr.Count=ListSize;
@@ -47,7 +47,7 @@ int			i,ListSize=ThingList.size();
 		for (i=0; i<ListSize; i++)
 		{
 			sMkLevelLayerThing	&ThisThing=ThingList[i];
-			sThingTrigger		OutThing;
+			sThingTrigger		OutThing={0};
 
 			OutThing.Type=ThisThing.Type;
 			OutThing.Pos.X=ThisThing.XY[0].x;

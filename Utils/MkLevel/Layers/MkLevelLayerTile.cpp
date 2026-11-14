@@ -21,7 +21,7 @@ CMkLevelLayerTile::CMkLevelLayerTile(sExpLayerHdr *LayerHdr)
 		Width=LayerHdr->Width;
 		Height=LayerHdr->Height;
 
-sExpLayerTile	*MapPtr=(sExpLayerTile *)((int)LayerHdr+sizeof(sExpLayerHdr));
+sExpLayerTile	*MapPtr=(sExpLayerTile *)((u8*)LayerHdr+sizeof(sExpLayerHdr));
 
 		InMap.SetSize(Width,Height);
 		
@@ -135,7 +135,7 @@ int		CMkLevelLayerTile::WriteNormal(CMkLevel *Core,FILE *File)
 {
 int			Width=OutMap.GetWidth();
 int			Height=OutMap.GetHeight();
-sTileMapElem	OutElem;
+sTileMapElem	OutElem={0};
 
 		for (int Y=0; Y<Height; Y++)
 		{
