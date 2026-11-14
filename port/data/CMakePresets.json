@@ -1,0 +1,31 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "data",
+      "hidden": true,
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_MAKE_PROGRAM": "C:/msys64/mingw32/bin/ninja.exe"
+      }
+    },
+    {
+      "name": "data-usa",
+      "displayName": "Game data, USA (out/USA)",
+      "inherits": "data",
+      "binaryDir": "${sourceDir}/../build/data-usa",
+      "cacheVariables": { "SBSP_TERRITORY": "USA" }
+    },
+    {
+      "name": "data-eur",
+      "displayName": "Game data, EUR (out/EUR)",
+      "inherits": "data",
+      "binaryDir": "${sourceDir}/../build/data-eur",
+      "cacheVariables": { "SBSP_TERRITORY": "EUR" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "data-usa", "configurePreset": "data-usa" },
+    { "name": "data-eur", "configurePreset": "data-eur" }
+  ]
+}
