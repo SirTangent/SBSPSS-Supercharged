@@ -2,13 +2,17 @@
 """Build the original PlayStation executable, Spongey.cpe (issue #98):
 port/build-psx.cmd runs this, with build-psx.sh's command line.
 
-    build-psx [USA|EUR] [DEBUG|FINAL] [--identity-noline]      (defaults: USA DEBUG)
+    build-psx [USA|EUR] [DEBUG|FINAL] [--identity-noline] [--no-data]      (defaults: USA DEBUG)
 
 It configures and builds port/psx's CMake project (presets psx-<t>-<v>)
 with Ninja: the 1999 PSY-Q toolchain in tools/psyq, driven as makefile.gaz
-drove it, without MSYS2.  The territory's data must be built first
-(port/build-data.cmd <t>): the generated headers in out/<T>/include are
-compile inputs.  --identity-noline builds with PORT_LINE as 0, for
+drove it, without MSYS2.  The generated headers in out/<T>/include are
+compile inputs, so the territory's data is built first, as
+port/build-data.cmd <t> does (nothing to do when it is up to date).
+--no-data, or SBSP_NO_DATA in the environment, leaves out/<T> as it is and
+stops if the headers are missing: CI builds the data in a job of its own,
+and psx_identity.py must build both of its sides over the same headers.
+--identity-noline builds with PORT_LINE as 0, for
 port/tools/psx_identity.py's line-insensitive DEBUG compare only.
 
 One build of a configuration at a time: Ninja has no lock of its own, and
@@ -18,11 +22,9 @@ different configurations share nothing - each has its own objects, temp,
 info.mip (source/system/<V>/<T>) and CMake tree - and may overlap.  CMake
 and Ninja come from port/tools/buildenv.py.
 """
-import msvcrt
 import os
 import subprocess
 import sys
-import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))      # port/tools: buildenv, also under python -I
@@ -36,7 +38,7 @@ def lock_path(territory, version):
 
 
 def usage():
-    print("usage: port\\build-psx.cmd [USA|EUR] [DEBUG|FINAL] [--identity-noline]", file=sys.stderr)
+    print("usage: port\\build-psx.cmd [USA|EUR] [DEBUG|FINAL] [--identity-noline] [--no-data]", file=sys.stderr)
     sys.exit(1)
 
 
@@ -58,32 +60,24 @@ def parse(argv):
     return territory, version, noline
 
 
-def lock(path):
-    f = open(path, "a+")
-    try:
-        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
-    except OSError:
-        print("Another PS1 build of this configuration holds %s - waiting for it to finish..." % path,
-              file=sys.stderr)
-        while True:
-            try:
-                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
-                break
-            except OSError:
-                time.sleep(1)
-    return f                            # held until the process exits
-
-
 def main(argv):
     sys.stdout.reconfigure(line_buffering=True)
     if os.environ.get("SBSP_IDENTITY_NOLINE"):
         print("build-psx: SBSP_IDENTITY_NOLINE in the environment is ignored "
               "(psx_identity.py passes --identity-noline)", file=sys.stderr)
+    argv, asked = buildenv.no_data(argv)
     territory, version, noline = parse(argv)
+    # --no-data / SBSP_NO_DATA, or a reason of buildenv's own: out\ is a link
+    # to another checkout's, or the data tree has the test-only final.dat
+    why = buildenv.data_left_alone(territory, asked)
+    if why:
+        print("Data: %s left as it is (%s)" % (territory, why))
+    elif buildenv.build_data(territory):
+        sys.exit("PSX BUILD FAILED: the %s data build failed" % territory)
     if not os.path.isfile(os.path.join(ROOT, "out", territory, "include", "trans.h")):
-        sys.exit("PSX BUILD FAILED: out/%s/include is missing - run: port\\build-data.cmd %s"
-                 % (territory, territory.lower()))
-    held = lock(lock_path(territory, version))
+        sys.exit("PSX BUILD FAILED: out/%s/include is missing - run: port\\build-data.cmd %s%s"
+                 % (territory, territory.lower(), " (the data was not built here: %s)" % why if why else ""))
+    held = buildenv.hold_lock(lock_path(territory, version), "PS1 build of this configuration")
     cmake, ninja = buildenv.find_cmake(), buildenv.find_ninja()
     preset = "psx-%s-%s" % (territory.lower(), version.lower())
     src = os.path.join(ROOT, "port", "psx")

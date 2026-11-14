@@ -384,7 +384,12 @@ It needs:
 - **CMake, Ninja and Python**, as the other builds do (`build_psx.py` runs
   under the tool's own Python).  No MSYS2 since issue #98.
 - **The territory's data:** `port/build-data.cmd usa` (or `eur` with
-  `--territory EUR`).
+  `--territory EUR`).  The tool does not build it: `build_psx.py` on its
+  own builds the data first, but the tool runs it with `SBSP_NO_DATA` set,
+  so both sides compile over the headers that are there, and the base's
+  swapped-in files never reach a data build.  (The variable, not
+  `--no-data`: a base revision's `build_psx.py` may be from before the
+  argument.)
 - **The changes committed, and no untracked files among the build inputs.**
   Step 2 overwrites the working copies, and an untracked file would be built
   into both sides.  Don't edit build inputs while it runs either: the `HEAD`
