@@ -1,0 +1,68 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "psx",
+      "hidden": true,
+      "generator": "Ninja"
+    },
+    {
+      "name": "psx-usa-debug",
+      "displayName": "PlayStation USA DEBUG (Spongey.cpe)",
+      "inherits": "psx",
+      "binaryDir": "${sourceDir}/../build/psx-usa-debug",
+      "cacheVariables": {
+        "SBSP_TERRITORY": "USA",
+        "SBSP_VARIANT": "DEBUG"
+      }
+    },
+    {
+      "name": "psx-usa-final",
+      "displayName": "PlayStation USA FINAL (Spongey.cpe)",
+      "inherits": "psx",
+      "binaryDir": "${sourceDir}/../build/psx-usa-final",
+      "cacheVariables": {
+        "SBSP_TERRITORY": "USA",
+        "SBSP_VARIANT": "FINAL"
+      }
+    },
+    {
+      "name": "psx-eur-debug",
+      "displayName": "PlayStation EUR DEBUG (Spongey.cpe)",
+      "inherits": "psx",
+      "binaryDir": "${sourceDir}/../build/psx-eur-debug",
+      "cacheVariables": {
+        "SBSP_TERRITORY": "EUR",
+        "SBSP_VARIANT": "DEBUG"
+      }
+    },
+    {
+      "name": "psx-eur-final",
+      "displayName": "PlayStation EUR FINAL (Spongey.cpe)",
+      "inherits": "psx",
+      "binaryDir": "${sourceDir}/../build/psx-eur-final",
+      "cacheVariables": {
+        "SBSP_TERRITORY": "EUR",
+        "SBSP_VARIANT": "FINAL"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "psx-usa-debug",
+      "configurePreset": "psx-usa-debug"
+    },
+    {
+      "name": "psx-usa-final",
+      "configurePreset": "psx-usa-final"
+    },
+    {
+      "name": "psx-eur-debug",
+      "configurePreset": "psx-eur-debug"
+    },
+    {
+      "name": "psx-eur-final",
+      "configurePreset": "psx-eur-final"
+    }
+  ]
+}
