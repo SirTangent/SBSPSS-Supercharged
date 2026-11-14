@@ -8,16 +8,14 @@ installed; keep everything together and it runs from anywhere.
   sbsp-debug.exe         the same game with its internal checks switched on -
                          slower, and it stops with a message when something is
                          wrong.  Test sessions use this one.
-  sbsp64.exe             (some builds) the same two as 64-bit programs - see
-  sbsp64-debug.exe       "The 64-bit build".  SDL3.dll belongs to them.
-  SDL3.dll
+  SDL3.dll               part of both - keep it beside them
   run-test-session.cmd   runs one recorded test session (see "Test sessions")
   data\                  the game's data (about 170 MB)
   sbsp.ini               your settings - created on the first run
   saves\                 your memory card (card0.mcd)
   sessions\              created by run-test-session.cmd
 
-Requirements: Windows 10 or 11 (64-bit is fine; sbsp.exe is 32-bit), a GPU
+Requirements: Windows 10 or 11, 64-bit (both exes are 64-bit programs), a GPU
 driver with Vulkan (any GPU from the last ten years: update the driver if the
 window stays black), a gamepad or the keyboard.
 
@@ -106,21 +104,17 @@ with [assert], that is exactly what we want to hear about: note what you
 were doing at that moment.
 
 
-The 64-bit build
-----------------
-If this folder has sbsp64.exe and sbsp64-debug.exe, they are the same game
-built as a 64-bit program (64-bit Windows only).  They use the same data,
-the same sbsp.ini and the same memory card as the 32-bit ones, so you can
-switch between them in the middle of a play-through, and they should look,
-sound and play alike.  Any difference you notice between the two is worth
-a note.  Keep SDL3.dll beside them; the 32-bit exes do not use it.
-
-  run-test-session.cmd x64          a recorded session on sbsp64-debug.exe
-  run-test-session.cmd x64 final    ... on sbsp64.exe
+Earlier test builds
+-------------------
+Builds before this one had 32-bit exes, and some had a 64-bit pair beside
+them (sbsp64.exe, sbsp64-debug.exe).  These exes are that 64-bit pair under
+the plain names.  They use the same sbsp.ini and memory card format, so an
+older build's saves\ and sbsp.ini can be copied in.  "run-test-session.cmd
+x64" still works and runs the same exe as without the word.
 
 When you send a session, say which exe it was (session.pad also shows it:
-its second line is "# abi ptr=8" for a 64-bit recording, "ptr=4" otherwise,
-and its third line "# build debug" or "# build final").
+its second line is "# abi ptr=8" for a 64-bit recording, and its third line
+"# build debug" or "# build final").
 
 
 Trouble

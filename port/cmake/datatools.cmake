@@ -1,5 +1,5 @@
 # Data-pipeline converters rebuilt from Utils/ (issue #48), included from
-# port/CMakeLists.txt after sbsp_plain_exe_link.  Every preset builds them;
+# port/CMakeLists.txt.  Every preset builds them;
 # the clang-cl x64 copies are committed to port/tools/x64/, beside
 # lznp_tool's (as lznp.exe), and build/globals.mak puts that directory first
 # on the data build's PATH.  The tests that hold the committed exes to these
@@ -14,10 +14,6 @@
 set(SBSP_DATATOOL_OPTS ${SBSP_DEBUG_FLAGS} ${SBSP_OPT_FLAGS}
     -Wno-parentheses -Wno-writable-strings -Wno-invalid-source-encoding
     -Wno-nonportable-include-path)
-if(NOT SBSP_MSVC)
-    # g++ spells clang's -Wwritable-strings this way; it ignores the clang-only -Wno-
-    list(APPEND SBSP_DATATOOL_OPTS -Wno-write-strings)
-endif()
 set(SBSP_UTILS ${SBSP_ROOT}/Utils)
 
 # sbsp_datatool(<target>...): the shared defines and warnings
@@ -25,10 +21,6 @@ function(sbsp_datatool)
     foreach(_t IN LISTS ARGN)
         target_compile_definitions(${_t} PRIVATE _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_DEPRECATE)
         target_compile_options(${_t} PRIVATE ${SBSP_DATATOOL_OPTS})
-        get_target_property(_type ${_t} TYPE)
-        if(_type STREQUAL "EXECUTABLE")
-            sbsp_plain_exe_link(${_t})
-        endif()
     endforeach()
 endfunction()
 
@@ -65,14 +57,6 @@ target_link_libraries(scripter_tool PRIVATE pg_yl)
 target_compile_options(pg_yl PRIVATE -Wno-pragma-pack)
 target_compile_options(scripter_tool PRIVATE -Wno-pragma-pack)
 sbsp_datatool(pg_yl scripter_tool)
-
-if(NOT SBSP_MSVC)
-    # MkActor / MkLevel and the shared libraries build with clang-cl only,
-    # the toolchain of the committed x64 exes: g++ (C++20 by default, strict
-    # two-phase templates) rejects far more of the 1999 sources than clang-cl
-    # in its MSVC mode does.
-    return()
-endif()
 
 # ---------------------------------------------------------------------------
 # MkActor (.SBK sprite banks) and MkLevel (.Lvl levels), over the shared

@@ -3,10 +3,9 @@ rem One recorded test session of the PC port (M8 shell).
 rem
 rem   run-test-session.cmd            play sbsp-debug.exe (asserts are live)
 rem   run-test-session.cmd final      play sbsp.exe, the FINAL build
-rem   run-test-session.cmd x64        play sbsp64-debug.exe, the 64-bit build
-rem   run-test-session.cmd x64 final  play sbsp64.exe
-rem (the 64-bit exes are only in a zip built with them; the words go in
-rem that order)
+rem (Both are 64-bit.  Zips before issue #39 also had a 64-bit pair,
+rem sbsp64*.exe, chosen with an x64 word: that word is still accepted and
+rem changes nothing.)
 rem
 rem Everything the session produces lands in sessions\<date-time>\ :
 rem   card-before.mcd / card-after.mcd   the memory card around the session
@@ -32,14 +31,10 @@ rem session").
 setlocal
 cd /d "%~dp0"
 
-set "BASE=sbsp"
 set "VARIANT=%~1"
-if /i "%~1"=="x64" (
-    set "BASE=sbsp64"
-    set "VARIANT=%~2"
-)
-set "EXE=%BASE%-debug.exe"
-if /i "%VARIANT%"=="final" set "EXE=%BASE%.exe"
+if /i "%~1"=="x64" set "VARIANT=%~2"
+set "EXE=sbsp-debug.exe"
+if /i "%VARIANT%"=="final" set "EXE=sbsp.exe"
 if not exist "%EXE%" (
     echo %EXE% is not here - run this script from the unpacked zip folder.
     exit /b 2
