@@ -1,8 +1,8 @@
 # Data-pipeline converters rebuilt from Utils/ (issue #48), included from
 # port/CMakeLists.txt.  Every preset builds them;
 # the clang-cl x64 copies are committed to port/tools/x64/, beside
-# lznp_tool's (as lznp.exe), and build/globals.mak puts that directory first
-# on the data build's PATH.  The tests that hold the committed exes to these
+# lznp_tool's (as lznp.exe), and the data build (port/data) runs them from
+# there.  The tests that hold the committed exes to these
 # sources (datatools_exe_matches_source, lznp_x64_exe_matches_source) are
 # registered in port/CMakeLists.txt with the other unit tests.
 #
