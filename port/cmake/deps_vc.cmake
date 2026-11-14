@@ -1,13 +1,13 @@
 # Prebuilt dependencies for the clang-cl build (M8 PR 4), fetched once into
-# port/build/deps (gitignored) with pinned versions and hashes.  The MinGW
-# build takes both from MSYS2 packages; clang-cl has no package manager, so:
+# port/build/deps (gitignored) with pinned versions and hashes (the MinGW
+# build took both from MSYS2 packages until issue #39):
 #
 #   SDL3           the official "VC" development package from the SDL release
 #                  (SDL3.lib + SDL3.dll - it ships no static lib, which is why
 #                  the clang-cl exes carry the DLL beside them, sbsp_exe_link).
 #                  Handed to find_package(SDL3) through SDL3_DIR.
-#   Vulkan-Headers the Khronos header repo at the tag matching MSYS2's
-#                  vulkan-headers (VK_HEADER_VERSION 350) - build-time only,
+#   Vulkan-Headers the Khronos header repo at the tag MSYS2's vulkan-headers
+#                  had (VK_HEADER_VERSION 350) - build-time only,
 #                  vk_present.cpp is VK_NO_PROTOTYPES over SDL's loader.
 #                  Exported as SBSP_VULKAN_INCLUDE.
 #

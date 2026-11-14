@@ -13,7 +13,7 @@ call :rmdir  out
 call :del    data\Scripts\defs\trans.scr
 call :del    sn.ini
 
-rem PC build: CMake/Ninja trees for every variant
+rem PC and data builds: the CMake/Ninja trees of every variant and territory
 call :rmdir  port\build
 
 rem PSX build debris: generated info.mip trees and slink reports

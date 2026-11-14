@@ -2,7 +2,7 @@
 
 The game source (`source/`, `tools/Data/include/`) is compiled twice: by the
 PC port, and by the original 1999 PlayStation toolchain (`ccpsx` / EGCS,
-`port/build-psx.sh`).  A change made for the PC must not change the
+`port\build-psx.cmd`, which builds `port/psx`).  A change made for the PC must not change the
 PlayStation executable, `Spongey.cpe`:
 - **FINAL** must stay hash-identical.  **Byte-identical means
   hash-identical, not just the same size.**
@@ -47,15 +47,20 @@ check.
    doesn't see it, and FINAL compiles all three without a line number.
    `__LINE__` is the line in the file where the macro is *used*, so new
    lines in a header move only the macros used in that header.
-3. **The data build.**  `tools/perl/pl/lang.pl` writes the strings into
-   `final.dat` in Perl's randomised hash order, and transtext keeps that
-   order in the `STR__*` enum of `out/<T>/include/trans.h` and in every
-   `.dat`, so every data build shuffles the string table.  About 30
-   objects and 250 KB of the cpe then differ for no code reason.  Compare
-   two builds only if they share
-   one `out/<T>/include`, and never across a data build.
-   `psx_identity.py build` hashes `trans.h` before and after its run and
-   voids the comparison if it moved.
+3. **The data build.**  transtext numbers the `STR__*` enum of
+   `out/<T>/include/trans.h` in its input's order. When the order changes,
+   about 30 objects and 250 KB of the cpe differ for no code reason.
+   - **Before #95**, the 1999 `lang.pl` wrote that input, `final.dat`, in
+     Perl's randomised hash order, so every unseeded data build shuffled the
+     string table.
+   - **Since #95**, `port/tools/data/lang.py` writes the strings in the order
+     their ids first appear in `data/translations/text.dat`. `trans.h` is the
+     same on every build and in both territories, and changes only with the
+     text.
+
+   `psx_identity.py build` still hashes `trans.h` before and after its run
+   and voids the comparison if it moved. Rows of the build log compare only
+   when their `trans_h_sha256` matches.
 4. **Adding or removing a file the PS1 builds.**  A new translation unit
    changes the link, so it cannot be identical.  #43's `pad/padicon.cpp` was
    one, and was accepted as a deliberate change.
@@ -70,34 +75,35 @@ it used:
 - **DEBUG: line-insensitive.**  Both sides are built with
   `SBSP_IDENTITY_NOLINE`, which makes `PORT_LINE` 0 instead of `__LINE__`.
   Every code change still shows; a line shift doesn't.  The tool passes
-  `--identity-noline` to `port/build-psx.sh`, which puts
-  `SBSP_IDENTITY_NOLINE=1` on the `make` command line.  It is an argument,
-  not an environment variable: `build-psx.sh` ignores (and warns about) one
-  in the environment, and `makefile.gaz` takes the variable from the
-  command line only.  `makefile.gaz` then adds `-DSBSP_IDENTITY_NOLINE` and
-  prints `SBSP_IDENTITY_NOLINE: PORT_LINE is 0 ...`.  The tool requires that
-  line in the log of every line-insensitive build, and its absence from
-  every other build, so a side that silently ignored the define can't pass.
-  The result is a different, slightly smaller executable than the normal
-  DEBUG build (220 bytes, USA), made for comparing and nothing else.  make
-  does not track `-D` flags, so the tool deletes the objects of every
-  line-insensitive build when it is done: the next normal DEBUG build then
-  recompiles everything instead of linking in objects with line 0.
-  `build-psx.sh` guards a hand run too: it writes the mode to
-  `out/<T>/<V>/identity-mode` (no file means normal) and starts the tree
-  clean when a build's mode differs from the last one.
+  `--identity-noline` to `port/tools/psx/build_psx.py` (`build-psx.cmd`),
+  which configures `port/psx` with `-DSBSP_IDENTITY_NOLINE=ON`.  It is an
+  argument, not an environment variable: `build_psx.py` ignores (and warns
+  about) one in the environment.  The CMake project then adds
+  `-DSBSP_IDENTITY_NOLINE` to every compile and prints
+  `SBSP_IDENTITY_NOLINE: PORT_LINE is 0 ...`.  The tool requires that line in
+  the log of every line-insensitive build, and its absence from every other
+  build, so a side that silently ignored the define can't pass.  The result
+  is a different, slightly smaller executable than the normal DEBUG build
+  (220 bytes, USA), made for comparing and nothing else.  The `-D` is part
+  of each compile's command, so switching modes recompiles every object; the
+  tool also deletes a line-insensitive build's objects when it is done.
+  (Until issue #98 this went through `port/build-psx.sh` and `makefile.gaz`,
+  which tracked no `-D` flags and needed an `identity-mode` stamp to start
+  the tree clean.)
 - **DEBUG: strict**, line numbers included, in two cases:
   - **Either side lacks the plumbing.**  The tool reads both trees, with
     comments stripped: `system/dbg.h` must define `PORT_LINE` as 0 under
-    `#ifdef SBSP_IDENTITY_NOLINE`, `makefile.gaz` must have the command-line
-    `ifeq` and the `-D`, and `port/build-psx.sh` must take
-    `--identity-noline` (`NOLINE_PLUMBING` in the tool).  A branch started
+    `#ifdef SBSP_IDENTITY_NOLINE` (`NOLINE_PLUMBING` in the tool), and one
+    build route must carry the switch (`NOLINE_ROUTES`):
+    `port/psx/CMakeLists.txt` with `port/tools/psx/build_psx.py`, or, before
+    issue #98, `makefile.gaz`'s command-line `ifeq` with
+    `port/build-psx.sh`'s `--identity-noline`.  A branch started
     before #81 that moves lines therefore sees DEBUG differ.  Rebase it
     rather than add `#line` arms.
   - **`--strict`**, for the hash of the normal DEBUG build.
 
 No shipped or normal build sets `SBSP_IDENTITY_NOLINE`: not CI, not
-`build-psx.sh` without `--identity-noline`, and never the PC builds,
+`build-psx.cmd` without `--identity-noline`, and never the PC builds,
 where `PORT_LINE` is always `__LINE__`.
 
 ## Deliberate PS1 changes
@@ -121,6 +127,8 @@ are the whole difference from `master`:
 | 53 | `gfx/font.cpp` | `(u8)` font-table indexes (issue #24) |
 | 61 | `shop/shop.cpp` | the cross and triangle glyphs back on `master`'s step (issue #56) |
 | 65 | the nine files that carried `#line` arms | DEBUG only: its line immediates move, once, to the files' true line numbers (issue #81).  FINAL and the line-insensitive DEBUG compare are unchanged |
+| #95 | `port/tools/data/lang.py` (in place of `lang.pl`), through `trans.h` | the `STR__*` ids in `data/translations/text.dat`'s order, so every use of one is renumbered, once.  The old order was Perl's hash order, which no build reproduced reliably, `master`'s included |
+| 69 | `enemy/nsklfish.cpp`, `enemy/nsklfish.h` | the skeletal fish's `m_chargeTime` starts at one second, so it patrols at the slow swim until its first charge, as after every charge.  It was read uninitialised (issue #39) |
 
 A change that alters the PS1 build on purpose adds its row here.  It also
 appends its before and after `Spongey.cpe` hashes to
@@ -337,9 +345,16 @@ default) it:
 1. Does a clean PS1 build of `HEAD`.
 2. Checks out the base revision's copy of every changed PS1 build input and
    does a clean build of that. The inputs are the game source,
-   `makefile.gaz`, the `build/*.mak` it includes (compiler flags, link), the
-   per-user makefile under `users/`, the toolchain under `tools/`, and
-   `port/build-psx.sh`.  So a change to compiler flags is compared too.
+   `makefile.gaz` (the lists of what is compiled), the toolchain and
+   libraries under `tools/`, and the build itself: `port/psx`,
+   `port/tools/psx` and `port/build-psx.cmd`.  So a change to compiler
+   flags is compared too.  `build/*.mak` and `users/` are not inputs:
+   `port/psx` reads neither (their values are transcribed into its
+   `CMakeLists.txt`).
+   A base from before the build itself existed (before #102) is built with
+   `HEAD`'s driver, which is held byte-identical to `makefile.gaz`'s route;
+   any other file added or deleted against the base is refused, since
+   swapping copies in and out cannot reproduce it.
 3. Puts `HEAD`'s copies back with `git checkout HEAD`.
 4. Compares the two `Spongey.cpe` SHA-256 hashes, in the mode it printed at
    the start (above).
@@ -362,13 +377,12 @@ trans.h sha256 ca662f971dc60bd0eedf16ebc85277920be2961cc6d9428ce385e8fab9c5db63
 The size, CRC32 and SHA-256 lines are the columns of `psx_build_log.csv`.
 
 Before each build it deletes the old `Spongey.cpe`, and it accepts only one
-written by that build.  A build that fails without saying so (a login shell
-can swallow make's exit status) therefore stops the run. It can't hand back
-the other side's executable.
+written by that build.  A build that fails without saying so therefore
+stops the run. It can't hand back the other side's executable.
 
 It needs:
-- **MSYS2** at `C:\msys64`.  The tool runs `port/build-psx.sh` under MSYS2
-  bash itself.
+- **CMake, Ninja and Python**, as the other builds do (`build_psx.py` runs
+  under the tool's own Python).  No MSYS2 since issue #98.
 - **The territory's data:** `port/build-data.cmd usa` (or `eur` with
   `--territory EUR`).
 - **The changes committed, and no untracked files among the build inputs.**
@@ -387,33 +401,36 @@ run.  1 always means the two executables really differ.
 
 Copies of each cpe and each build log go to `out/psx_identity/`, named by
 side and version (`head-DEBUG-noline.cpe`, `base-FINAL.cpe`).  On this
-machine a clean build (289 files) takes one to two minutes, so the default
-run, four builds, takes four to eight.
+machine a clean build (289 files) takes under ten seconds since Ninja runs
+the compiles side by side (one to two minutes under make), so the default
+run, four builds, takes well under a minute.
 
 ## Build traps
 
-- **Run the PS1 build under MSYS2 bash, not Git Bash** (issue #51).  Git
-  Bash's `make` is a native Windows make that can't parse the POSIX `PATH`
-  and dies on `glecho`.  `build-psx.sh` now refuses to start outside MSYS2's
-  bash and says what to run: `port\build-psx.cmd` (also from Git Bash), or
-  `MSYSTEM=MSYS C:/msys64/usr/bin/bash -lc '... port/build-psx.sh USA DEBUG'`.
-- **The territory and version must be upper case** (`USA DEBUG`).  Lower
-  case defines `__TERRITORY_usa__` and writes broken objects into the same
-  `out/` tree.  A later run then considers those objects up to date.
-  `build-psx.sh` upper-cases both and accepts only `USA`/`EUR` and
-  `DEBUG`/`FINAL`; a bare `make -f makefile.gaz` does neither.
-- **Never run two PS1 builds at once.**  `ccpsx` writes its preprocessed
-  intermediate to the fixed path `C:/msys64/tmp/PQ3`, shared by every build
-  on the machine.  The loser fails on a random file.  The winner may have
-  silently compiled the *other* tree's source.  After a collision, treat
-  both trees as dirty.  `build-psx.sh` holds `flock /tmp/sbsp-psx.lock`
-  from its argument checks to its exit, so a second build through the
-  script says it is waiting and waits for the first; a bare make, or a
-  build-psx.sh from before #51, takes no lock.
-- **Use a short checkout path.**  `asmpsx` records the source path in a
-  fixed-size buffer.  Under a deep path such as `.claude/worktrees/<name>/`
-  it overflows, and `slink` rejects `system/except_a.o` with "unknown record
-  type".  A sibling worktree such as `../SBSPSS-i50` links fine.
-- **"Clean" means deleting `out/<T>/<V>/CD/objs` and `out/<T>/<V>/deps`.**
-  Only compare clean builds of every file.  An incremental build can keep
-  stale objects.
+- **The 1999 tools want short, relative paths.**  `asmpsx` records the
+  source path in a fixed-size buffer: under a deep checkout such as
+  `.claude/worktrees/<name>/` it overflows, and `slink` rejects
+  `system/except_a.o` with "unknown record type"; a sibling worktree such as
+  `../SBSPSS-i50` links fine.  The assembler `ccpsx` runs crashes ("The
+  memory could not be written") when its temporary directory is a long
+  absolute path, so each compile's temporary directory is short and
+  relative, `out/<T>/<V>/CD/temp/<8 hex>`, as make's `TEMP` was.
+- **`ccpsx` finds `sn.ini` through `SN_PATH`** (or `PSYQ_PATH`'s spelling
+  under MSYS2), not in its current directory.  `psxstep.py` points `SN_PATH`
+  at `tools/psyq/bin/egcs`.
+- **Parallel compiles are safe, two builds of one tree are not.**  Under
+  MSYS2 `ccpsx` wrote its preprocessed intermediate to the fixed path
+  `C:/msys64/tmp/PQ3`, shared by every build on the machine, so builds had
+  to run one at a time.  Now every compile has its own `TEMP` (and its own
+  `a.o` and dependency file), and Ninja runs them side by side.  Two
+  builds of the same configuration would write the same objects (Ninja has
+  no lock of its own), so `build_psx.py` takes a lock per configuration
+  (`%TEMP%\sbsp-psx-<t>-<v>.lock`) and the second waits; different
+  configurations share nothing and may overlap.
+- **The territory and version are upper case** (`USA DEBUG`); lower case
+  would define `__TERRITORY_usa__`.  `build_psx.py` upper-cases both and
+  accepts only `USA`/`EUR` and `DEBUG`/`FINAL`.
+- **"Clean" means deleting `out/<T>/<V>/CD/objs`.**  Only compare clean
+  builds of every file.  Ninja tracks each object's headers (the compiler's
+  own dependency output; a `.mip`'s `include`s are read at configure time)
+  and command line, but a clean build is the proof.

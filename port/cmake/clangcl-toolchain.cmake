@@ -1,23 +1,23 @@
 # clang-cl toolchain for the SBSPSS Win11 port (M8 PR 4): LLVM's MSVC-compatible
 # driver, linked by lld-link against the MSVC CRT and Windows SDK.
 #
-# SBSP_ARCH picks the target: x86 (default, i686-pc-windows-msvc - the
-# shipping exe, 32-bit like the MinGW build) or x64 (x86_64-pc-windows-msvc,
-# M9).  The on-disc formats embed 4-byte pointers
+# SBSP_ARCH picks the target: x64 (default, x86_64-pc-windows-msvc - the
+# shipping exe since issue #39) or x86 (i686-pc-windows-msvc, the x86-*
+# presets parity64 compares with).  The on-disc formats embed 4-byte pointers
 # (tools/Data/include/dstructs.h); the x64 game build reads them through a
 # 4-byte pointer type instead of widening them (SBSP_PC64, conv_pc.md).
 #
 # Needs: an LLVM install with clang-cl / lld-link / llvm-rc (the official
 # LLVM release at C:\Program Files\LLVM, or the "C++ Clang tools for
 # Windows" component of Visual Studio 2022/2026) and Visual Studio's MSVC
-# x64/x86 build tools + a Windows 10/11 SDK.  No MSYS2 involved except that the
-# presets borrow its ninja.exe - pass -DCMAKE_MAKE_PROGRAM=ninja to use one
-# on PATH instead.
+# x64/x86 build tools + a Windows 10/11 SDK.  CMake and Ninja come from the
+# PATH, or from Visual Studio's CMake component through port\build-pc.cmd
+# (port/tools/buildenv.py).
 #
 # The MSVC toolset and Windows SDK are always named explicitly to clang-cl
 # (/vctoolsdir, /winsdkdir, /winsdkversion) and to lld-link (/libpath), so
 # the configured tree builds the same from any shell - a plain PowerShell,
-# the MSYS2 shell, or a "Native Tools" (vcvars) prompt of either
+# Git Bash, or a "Native Tools" (vcvars) prompt of either
 # architecture.  Inside such a prompt its toolset and SDK are the ones
 # named; outside one, the newest found under the default install roots.
 # Override with -DSBSP_VCTOOLSDIR=... / -DSBSP_WINSDKDIR=... /
@@ -25,7 +25,7 @@
 
 set(CMAKE_SYSTEM_NAME Windows)
 
-set(SBSP_ARCH "x86" CACHE STRING "Target architecture: x86 (i686) or x64 (x86_64)")
+set(SBSP_ARCH "x64" CACHE STRING "Target architecture: x64 (x86_64) or x86 (i686)")
 # this file is re-read inside every try_compile project, which otherwise would
 # not see the cache and would probe the compiler as x86
 list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES SBSP_ARCH)

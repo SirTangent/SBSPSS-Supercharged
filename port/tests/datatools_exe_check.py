@@ -4,7 +4,7 @@ build-data runs the committed x64 converters (issue #48),
 but nothing else rebuilds them from Utils/ or compares the two: an
 edit to the sources with a hand-rebuilt exe, or an LFS pointer standing in for
 one, would only show as a changed BigLump.Bin.  This tree's copies - built by
-whichever toolchain configured it, MinGW i686 included - and the committed
+whichever preset configured it, x86 included - and the committed
 ones convert the same synthetic inputs, and every output must match byte for
 byte.  A difference that depends on the compiler (the sizeof(std::vector) MkData
 once counted into a bank's size) shows up as a mismatch here too.

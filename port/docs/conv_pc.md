@@ -1043,15 +1043,20 @@ What differs is two things, neither of them floating point:
    on both toolchains, and the level differs from DEBUG in periodic
    windows (285-337, 542-606, ...) on MinGW and clang-cl alike.
    Initialising `m_chargeTime` is a game-source change and a choice
-   between the two speeds; not made here.
+   between the two speeds; entry 69 makes it, at the DEBUG speed.
 
 Gate 2 ran on USA only; MinGW against clang-cl is not measured on EUR.  The
 tester zip pairs the two toolchains on both territories: `package.py`
 takes its 32-bit exes from the MinGW trees (`final`/`debug`,
 `eur-final`/`eur-debug`) and its `--x64` exes from the clang-cl ones, so
-in a zip's FINAL pair (`sbsp.exe`, `sbsp64.exe`) item 2's fish can swim at
-a different speed.  The DEBUG pair agrees (the `0x3d3d3d3d` fill), and
-the tester README says so.
+until entry 69, in a zip's FINAL pair (`sbsp.exe`, `sbsp64.exe`), item 2's
+fish could swim at a different speed.  The DEBUG pair always agreed (the
+`0x3d3d3d3d` fill).
+
+On 2026-10-27 issue #39 replaced the rest of gate 2 with a decision: the
+port moves to clang-cl and re-baselines on it, so MinGW recordings are not
+carried across the ABI (item 1 stays as measured), and item 2 is fixed
+(entry 69).
 
 ### Replaying a tester session (issue #58)
 
@@ -2281,7 +2286,8 @@ and base: USA DEBUG-NOLINE `1084A321` and FINAL `367F237E`).
 cygwin binaries in `tools/cygwin` and exports a `;`-separated `PATH` and
 `Path` for them.  Those binaries crash on Windows 10/11, and both wrappers
 used to override all of it on the make command line.  One guarded block
-in `globals.mak` now does it instead, keyed on `MAKE_HOST`:
+in `globals.mak` did it instead, keyed on `MAKE_HOST` (removed by #98's
+last step, "No MSYS2" below: nothing runs the makefiles now):
 - **MSYS2's make** (4.x, built for cygwin: `x86_64-pc-cygwin`, or
   `x86_64-pc-msys` from MSYS2 releases before the triplet changed) gets
   MSYS2's own utilities and a POSIX `PATH`: `/usr/bin`, `port/tools`,
@@ -2794,7 +2800,8 @@ The rest touches no game source:
   the login name when no `USER_NAME` is given, to read
   `users/<name>/makefile`.  Under MSYS2's make, `/usr/bin` comes first on
   `PATH` and its `uname` printed `MSYS_NT-10.0-26200`.  The MSYS2 block
-  now takes the name from the environment: `USERNAME` (Windows sets it,
+  (gone with #98's last step, below) took the name from the environment
+  instead: `USERNAME` (Windows sets it,
   but a shell started without the Windows environment can lack it), then
   `USER` (MSYS2's login shell sets it), and only with neither runs
   `tools/uname.exe` (the 1999 one, `GetUserName`) by path.  Both scripts
@@ -2873,9 +2880,11 @@ All eight converters of the data build are rebuilt from their sources in
   (`.Lvl`, `.tex`, `.Lbm`, the level headers), over the shared libraries in
   `Utils/Libs` (GLib, GinLib, DaveLib, Maths, TexGrab).  These build with
   clang-cl only (`port/cmake/datatools.cmake` returns before them under
-  MinGW, where g++ rejects much more of the 1999 code).  globals.mak runs
-  them by path, not through the PATH, so `MKLEVEL`/`MKACTOR` follow
-  `SBSP_VINTAGE_TOOLS` too.  MkLevel reads `MkLevel.ini` from beside its
+  MinGW, where g++ rejects much more of the 1999 code).  globals.mak's
+  MSYS2 section ran them by path, not through the PATH, so
+  `MKLEVEL`/`MKACTOR` followed `SBSP_VINTAGE_TOOLS` too (the section is
+  gone with #98's last step, below; `port/data`'s `--vintage-tools` is the
+  switch now).  MkLevel reads `MkLevel.ini` from beside its
   exe, so it gained `-c:<dir>`: the x64 one reads the same
   `tools/data/bin/MkLevel.ini` as the 1999 one.
 - **parkgrab**: the sprite banks (`Sprites.Spr` + `Sprites.h`, shop,
@@ -2894,14 +2903,12 @@ All eight converters of the data build are rebuilt from their sources in
   `MkActor.exe`, `MkLevel.exe`, `parkgrab.exe` and `transtext.exe` in its
   tree).  The clang-cl x64 copies are committed as
   LFS objects in `port/tools/x64/` (lznp_tool's as `lznp.exe`).
-  `build/globals.mak` puts that directory first on the MSYS2 make's PATH,
-  so each name resolves there, and so does MkActor's `system("lznp ...")`
-  through `cmd`.  `port/build-data.sh --vintage-tools` (make
-  `SBSP_VINTAGE_TOOLS=1`) leaves it off, for an A/B against the old exes.
-  `port/tools` stays on the PATH either way.  A missing exe, or an
-  LFS pointer, stops build-data instead of falling back.  Make doesn't
-  rebuild outputs that are already up to date, so an A/B starts from an
-  empty `out/<T>`.
+  Since #95 the CMake data project runs them by path (below);
+  `port/build-data.cmd --vintage-tools` (`SBSP_DATA_TOOLS=vintage`) runs the
+  1999 exes instead, for an A/B against them.  A missing exe, or an LFS
+  pointer, stops build-data instead of falling back.  Under make,
+  `build/globals.mak` put the directory first on the MSYS2 make's PATH, and
+  `SBSP_VINTAGE_TOOLS=1` left it off; that route is retired.
 - **`datatools_exe_matches_source`** (unit) runs the tree's build and the
   committed exes on synthetic inputs (odd-sized and one-pixel TGAs, both
   depth branches, `legal.tga`; a two-script lump with banks of different
@@ -3117,6 +3124,318 @@ All eight converters of the data build are rebuilt from their sources in
   checked by running the vintage MkData on the x64 build's `Data/`: only
   byte 2052 differs.  With parkgrab rebuilt as well, USA and EUR data
   builds are byte-identical to the builds before it, all 453 files.
+
+## Data build on CMake + Ninja (issue #95)
+
+`port/build-data.cmd` (and `.sh`, which hands over to it) no longer run
+`makefile.gfx` through MSYS2's make and Perl.  The data build is now its own
+CMake project, `port/data`:
+- it is `project(... NONE)`, with no compiler, only custom commands;
+- it has presets `data-usa` and `data-eur`, with trees in
+  `port/build/data-<t>`;
+- `port/tools/data/build_data.py` configures and builds it with Ninja.
+
+The command line is unchanged: `usa|eur`, the preset words, `USA DEBUG`,
+`--vintage-tools`.  The no-argument default is USA again; under make, the
+territory came out empty.  `makefile.gfx` stays, with the port's edits to
+it, but nothing runs it.  The PS1 build kept its own make + Perl
+(`makefile.gaz`, `dep.pl`) until `port/psx` replaced that too (issue #98,
+below).
+
+- **The same commands.** `port/data/lists.cmake` transcribes makefile.gfx's
+  input lists: the same names, order, spellings and switch placement.
+  - Every converter runs from the repo root, as under make. The scripts
+    `#include` their defs by repo-relative path, MkLevel.ini's `BackGfxDir`
+    is relative, and parkgrab sorts by the paths it is given.
+  - `sprites.rsp` is one of the outputs, written with LF as make's `$(file)`
+    did, so it is byte-identical: `file(GENERATE ... NEWLINE_STYLE UNIX)`,
+    which expands generator expressions only and keeps an unchanged file's
+    timestamp.  Not `file(CONFIGURE)`, which would substitute a `${VAR}` or
+    `@VAR@` inside a sprite path, and not `file(WRITE)`, which writes CRLF
+    on Windows (PR #97 review).
+  - The x64 MkLevel takes `-c:tools/data/bin`; the 1999 one reads its ini
+    beside its exe.
+- **Every dependency declared.** Each step depends on its converter exe and
+  on what the converter reads:
+  - actors: their whole `graphics/Characters/<A>` folder (frames and
+    `AnimList.Txt`);
+  - levels: their folder, plus `graphics/hazards`, `graphics/Platforms`,
+    `graphics/levels/BackGfx`, `MkLevel.ini` and `Sprites.h`;
+  - scripts: the five `data/Scripts/defs/` files, listed as `SCRIPT_DEFS`
+    rather than globbed, because the build writes `trans.scr` into that
+    directory and a `CONFIGURE_DEPENDS` glob that sees its own output
+    appear reconfigures everything on the next run (PR #97 review);
+  - the lump: `data/DataCache.scr` and everything it packs;
+  - shop and party: their bitmaps. Under make they had no prerequisites at
+    all, through an undefined variable.
+
+  A second build is `ninja: no work to do`. Touching an input rebuilds only
+  what depends on it: a shop bitmap → shop + lump, a sprite → the bank, all
+  27 levels and the lump.
+- **Parallel.** Each screen's temp file is `<out>.gfx.tmp`, not one `a.tmp`
+  in the repo root (`port/tools/data/datastep.py gfx`). MkActor runs in a
+  Ninja pool of one, since its `Actor.Tmp`/`Actor.Pak` live in its working
+  directory. The translation step is one command declaring all its outputs:
+  `final.dat`, the ten `.dat`s, `trans.h` and `trans.scr`.
+- **No Perl.** `port/tools/data/lang.py` and `trans_scr.py` port `lang.pl` and
+  `text_extract.pl`, rules included (`data_text_rules`). CMake loops replace
+  `mklevel.pl`/`mkactor.pl` and their 67 generated makefiles, which make
+  rebuilt every second run.
+- **The checks make lacked:**
+  - parkgrab exits 0 whatever happens, so `datastep.py parkgrab` fails
+    unless it wrote its `.h` (issue #42);
+  - the CD files keep `build-data.sh`'s 1 MiB floor (`datastep.py stage`).
+- **Outputs.** As before, plus a copy of `BIGLUMP.BIN` in
+  `out/<T>/FINAL/version/CD/` beside the DEBUG one, for makefile.gaz's
+  `cddata`; the data never depended on the variant.
+- **Oracle.** Given the make build's own `final.dat` (the test override
+  `-DSBSP_DATA_FINAL_DAT`), the CMake build matches the make build file for
+  file:
+  - USA and EUR: 386 of 386 identical, the make build's 67 generated
+    makefiles aside;
+  - `--vintage-tools`: identical against a vintage make build except the 26
+    `.Lvl` and 6 `.SBK` files whose stray bytes vary between any two
+    vintage runs, and the lump that packs them.
+
+## Game-source changes (skeletal fish, issue #39)
+
+69. **`source/enemy/nsklfish.cpp`, `nsklfish.h` (`m_chargeTime`)** -
+    changes the PS1 build on purpose.  `CNpcSkeletalFishEnemy::getFrameShift`
+    animates the swim at full speed while `m_chargeTime` is under one
+    second and at quarter speed otherwise, but nothing wrote `m_chargeTime`
+    before the fish's sensor first fired, so until then it was whatever
+    its heap block held (gate 2's item 2, under "EUR clang-cl presets and
+    cross-toolchain identity" above).  The fish gets an `init()` override
+    that calls `CNpcEnemy::init()` and sets
+    `m_chargeTime = GameState::getOneSecondInFrames()`: the value
+    `processClose` gives it after every charge, so the fish patrols at the
+    slow swim before its first charge too.  DEBUG builds already swam that
+    way on every toolchain (`USE_MEM_GUARDS` fills each new block with
+    `0x3d3d3d3d`, over one second), so the fix moves FINAL onto DEBUG's
+    behaviour and leaves DEBUG unchanged.  What a retail PlayStation showed
+    before the first charge was never measured: the heap bytes there were
+    deterministic on the disc but unknown, and the slow swim is the state
+    `processClose` puts the fish in after every charge, so the fix makes
+    the designed steady state the initial one.  No other `CNpcEnemy`
+    subclass overrides `init()` (the hierarchy's usual per-class hook is
+    `postInit()`, 26 overrides; `nssnake.cpp`'s and `nworm.cpp`'s `init()`
+    belong to their segment helpers, not to enemies), but `CNpcEnemy::Create`
+    calls `init()` first and a member's default belongs there.  `init()` is
+    already virtual (`CThing`), so the class's size and `RamUsed` don't
+    change.  On
+    clang-cl x64, USA, seed 1, every Tier 1 route and Tier 2 level (34
+    runs, `run_tier.py --tier1 --tier2 --compare-frames` against the exe
+    before the change):
+    - DEBUG: 34/34 `[scene]`/`[frame]`/`[audio]` streams identical;
+    - FINAL: 33/34 identical; Tier 2 level 13 (3-4, booted directly)
+      differs from frame 285, gate 2's first window;
+    - FINAL against DEBUG: level 13 is now identical.  Two runs still
+      differ between the variants, before and after alike, and aren't the
+      fish: `pause_quit` from frame 462 and level 2 from frame 1869.
+
+    The PS1 exe grows by 44 bytes, the new `init()`: USA DEBUG-NOLINE
+    `D1CB3B3D` -> `F3EBC48E`, FINAL `8ACD4D77` -> `4DEFF69E`, on the same
+    `trans.h` (`psx_build_log.csv`).  `build-pc.sh parity64 usa final`
+    passes all three legs, which it hadn't since PR #45: the x86 and x64
+    FINAL exes now draw the campaign's 6858-6897 alike.
+
+## Build scripts in Python (issue #98)
+
+The first step of retiring MSYS2: the PC and data builds no longer need it,
+except for the MinGW presets' gcc (issue #39 retires those).  The PS1 build
+still runs `makefile.gaz` under MSYS2's bash and make until its own step.
+
+- **`port/tools/build_pc.py`** replaces `port/build-pc.sh`, with the same
+  command line (`<preset>`, `usa`/`eur`, `clangcl [usa|eur]`,
+  `clangcl64 [usa|eur]`, `all`, `test ...`, `soak ...`,
+  `parity64 [usa|eur] [debug|final]`, Ninja arguments after the word).
+  `port\build-pc.cmd` runs it.  `port/tests/build_scripts_test.py`
+  (ctest `build_scripts_rules`, unit) holds the grammar to what
+  `build-pc.sh` did with 47 argument lists, measured with its steps stubbed
+  out: all 47 equal.
+- **`port/tools/buildenv.py`** finds CMake (3.28 or newer) and Ninja for
+  both builds: `SBSP_CMAKE`/`SBSP_NINJA`, then the `PATH`, then Visual
+  Studio's "C++ CMake tools for Windows" component through `vswhere.exe`,
+  newest install first.  Visual Studio 2022's are CMake 3.31 and Ninja
+  1.12; 2019's CMake (3.20) is too old for the schema-8 presets and is
+  skipped.  ctest is the one beside the CMake used.
+- **The presets name no make program.**  `msys2-ninja` and its hard-coded
+  `C:/msys64/mingw32/bin/ninja.exe` are gone, from `port/data`'s presets too:
+  both scripts pass `-DCMAKE_MAKE_PROGRAM` with the Ninja they found.  A
+  hand configure needs Ninja on the `PATH` (a Developer PowerShell for VS).
+- **MinGW presets:** `build_pc.py` puts `C:\msys64\mingw32\bin` (or
+  `%MSYS2_WIN%`'s) on the `PATH` for them only, as `build-pc.sh` did for
+  every preset.  The clang-cl presets run without it.
+- **Python:** every tree is configured with `Python3_EXECUTABLE` set to the
+  Python running `build_pc.py`, so the playthrough tests run under it, not
+  whatever `find_package` meets first (MSYS2's, before).  The `.cmd`
+  launchers call `port\findpy.cmd`, which takes `py -3`, else `python`,
+  each only if it runs: the Microsoft Store's `python.exe` alias is on the
+  `PATH` but only opens the Store.  `package.cmd` no longer uses MSYS2's
+  python3.
+- **Generators:** `gen_game_sources.py` (with `extract_tus.awk`'s rules) and
+  `gen_spv.py` replace their `.sh` versions.  Each writes the committed file
+  byte for byte apart from its own name in the header, and each takes
+  `--check`.  `build_scripts_rules` also runs `gen_game_sources.py
+  --check`, so a `makefile.gaz` TU list change without a regenerated
+  manifest fails a unit test.
+- **CI:** `data` and `data-eur` drop `setup-msys2` and use the runner's
+  CMake and Ninja.  The clang-cl job configures without
+  `-DCMAKE_MAKE_PROGRAM=ninja`.  The MinGW jobs keep MSYS2 (issue #39) and
+  run `build_pc.py`.  `build-data.sh` (a bash hand-over to `build-data.cmd`)
+  is deleted.
+
+Checked with every `C:\msys64` entry removed from the calling `PATH`:
+- `build-data.cmd usa` through Visual Studio's CMake and Ninja: all 385
+  files of `out/USA` identical to the MSYS2-tool build, `trans.h` included;
+- `build-pc.cmd test clangcl-x64-debug` and `test debug` (MinGW): unit
+  29/29 and playthrough 3/3 each.  Both trees were last configured by
+  MSYS2's CMake 4.3; Visual Studio's 3.31 reconfigured them in place.
+
+## clang-cl only, x64 ships (issue #39)
+
+MinGW g++ built the shipping exe from M1 to here.  On 2026-10-27 issue #39
+retired it, and with it everything the port took from MSYS2's 32-bit
+repository (gcc, the SDL3 package pinned by URL since the index dropped
+it).  clang-cl is the only toolchain, and the x64 build is the one that
+ships.  Gate 2's two findings ("EUR clang-cl presets and cross-toolchain
+identity", above) were decided rather than carried: item 2 is entry 69,
+and item 1, the C++ ABI's `RamUsed`, is not bridged.  A MinGW recording
+still replays on the x64 exe, which skips `ram` across pointer sizes
+(`# abi ptr`); on the x86 exe it exits 13 on `ram`, as gate 2 measured.
+New recordings come from the x64 exes.
+
+- **Presets.**  `debug`, `final`, `eur-debug` and `eur-final` are clang-cl
+  x64 (the `clangcl-x64-*` trees under the plain names).  `x86-debug`,
+  `x86-final`, `x86-eur-debug` and `x86-eur-final` are clang-cl x86 (the
+  `clangcl-*` trees), kept for parity64.  `build_pc.py` follows: `usa`,
+  `eur` and `all` name x64 trees, `x86 [usa|eur]` the x86 pairs, and
+  parity64 compares `x86-<v>` with `<v>`.  The old `clangcl*` words are
+  refused with their new names.  A tree configured by another toolchain
+  or for another architecture (the old MinGW `build/debug` and friends) is
+  reconfigured `--fresh`.
+- **CMake.**  `cmake/mingw32-toolchain.cmake`, the `SBSP_MSVC` switch and
+  every GNU arm are gone: `-static`, `-Wall`, `-g`/`-gcodeview`,
+  `-idirafter`, `SDL3::SDL3-static`, `sbsp_plain_exe_link`, and the
+  `SBSP_CODEVIEW` option (clang-cl always writes a PDB).  A configure with
+  another compiler stops and says so.  `datatools.cmake` builds every
+  converter unconditionally.  `psyq/host/compiler.h` keeps the MSVC
+  spellings and `#error`s on anything else.
+- **Packaging.**  The tester zip holds the x64 pair as `sbsp.exe` and
+  `sbsp-debug.exe`, with `SDL3.dll`; `--x64` is accepted and changes
+  nothing, as is `run-test-session.cmd`'s `x64` word.  The tester README
+  says the exes are 64-bit and that older builds' saves and `sbsp.ini`
+  carry over.
+- **CI.**  `pc-build-test` runs clang-cl on the runner (no MSYS2): `debug`
+  and `final` in the PR profile, plus `x86-debug` and `x86-final` in a
+  release run; `pc-eur` runs `eur-debug` and `eur-final`.  The separate
+  `clangcl` job is folded in.  `SBSP-Win11` has no required checks, so the
+  renamed jobs block nothing.
+
+70. **`source/utils/sincos.cpp` (`SinTable`)** - PC only, the PS1 sees the
+    same tokens.  mathtab.H declares `extern const s16 SinTable[1024]` and
+    sincos.cpp defined it non-const: one symbol under the Itanium ABI, two
+    under MSVC's, which mangles the type into the name, so the clang-cl
+    exes linked through `/alternatename:?SinTable@@3QBFB=?SinTable@@3PAFA`.
+    The definition is now `PC_PS1(extern const s16,s16) SinTable[1024]`:
+    the PS1 compiles `s16 SinTable[1024]` as before (`psx_identity.py
+    lines`: same tokens), and the PC gets a `const` definition with
+    external linkage, the declaration's symbol, so the alias is gone.
+    Nothing writes to the table.
+
+## The PlayStation build on CMake + Ninja (issue #98)
+
+`port\build-psx.cmd` no longer starts MSYS2's bash for `build-psx.sh` and
+`makefile.gaz`.  It runs `port/tools/psx/build_psx.py`, which builds
+`port/psx`: a CMake project with no compiler (`project(... NONE)`), whose
+custom commands run the 1999 PSY-Q tools in `tools/psyq` as `makefile.gaz`
+did.  With it, no build and no CI job needs MSYS2.
+
+- **What is compiled** still comes from `makefile.gaz`.
+  `port/tools/psx/psx_manifest.py` reads its `<dir>_src` and
+  `<dir>_src_mip` lists at configure time and resolves them as make did: the
+  directories in `$(wildcard source/*)`'s NTFS order (case-insensitive:
+  `... projectl PsxBoot save ...`), the `.mip` objects first, then the C++
+  ones, with `$($(FILE_SYSTEM)_FILESYS_SRC)` and the generated
+  `$(VERSION)/$(TERRITORY)/$(FILE_SYSTEM)/info`.  A game-source change still
+  edits `makefile.gaz`, and the CMake build reconfigures when it changes.
+- **How it is compiled** is transcribed into `port/psx/CMakeLists.txt`:
+  `ccopt.mak`'s flags for the CD build and user CDBUILD, the assembler
+  options, `lnk.mak`'s link flags.  `port/tools/psx/psxstep.py` runs each
+  step from the repository root with make's relative paths (DEBUG bakes
+  `__FILE__` in): `ccpsx -c`, `dmpsx -b` and `objbodge` per object,
+  `asmpsx`, `slink` and `symmunge`.  It writes `info.mip` and the linker
+  command file `Spongey.ln` as `tools/glecho.exe` did (a line per item,
+  CRLF, `&` for a double quote).
+- **Found while porting:**
+  - `ccpsx` reads `sn.ini` from the directory `SN_PATH` names, not from its
+    current directory (the root copy `build-psx.sh` made was not what it
+    read).  `psxstep.py` sets `SN_PATH` to `tools/psyq/bin/egcs`.
+  - Windows starts a child exe found on the parent's `PATH`, not the
+    child's, so `psxstep.py` resolves each tool against the tool `PATH`.
+  - The assembler `ccpsx` runs crashes on a long absolute `TEMP`.  Each
+    compile gets a short, relative one, `out/<T>/<V>/CD/temp/<16 hex>`, like
+    make's `TEMP` (`out/<T>/<V>/CD/temp`).
+- **Parallel.**  make shared one `a.o`, one `dep.tmp` and, under MSYS2, one
+  `C:/msys64/tmp/PQ3` between all compiles, so builds ran one file at a
+  time.  Each compile now has its own `TEMP`, intermediate `a.o` and
+  `DEPENDENCIES_OUTPUT`, and Ninja runs them side by side: a clean build
+  takes about 6 seconds (one to two minutes under make).  The compiler's
+  dependency output becomes a Ninja depfile, in place of `dep.pl` and the
+  `deps/` tree.  The `-D` flags are part of each command, so switching
+  `--identity-noline` on or off rebuilds every object (make needed a clean
+  tree and `build-psx.sh`'s `identity-mode` stamp).  `build_psx.py` holds a
+  lock per configuration in `%TEMP%`, so a second build of the same `<T>
+  <V>` waits for the first (Ninja has no lock of its own); builds of
+  different configurations share nothing and may overlap.  The assembler
+  writes no dependency output, so a `.mip`'s `include`s are read at
+  configure time and listed as the object's dependencies.
+- **`psx_identity.py`** runs `build_psx.py` with its own Python, and counts
+  `port/psx`, `port/tools/psx` and `port/build-psx.cmd` as build inputs; a
+  base from before they existed is built with `HEAD`'s copies.
+  Its line-insensitive check accepts either build route (`NOLINE_ROUTES`):
+  this one, or `makefile.gaz` with `build-psx.sh` before it.
+- **Gone:** `port/build-psx.sh`, `port/require-msys2.sh`, and CI's MSYS2
+  step in `psx-build`, which now runs `port\build-psx.cmd` from cmd.
+
+Proof: against real `makefile.gaz` builds of the same tree (MSYS2's make,
+`build-psx.sh`), with every `C:\msys64` entry removed from the calling
+`PATH`:
+
+| | objects | `Spongey.ln` | `.cpe` | `.sym` | `.map` |
+|---|---|---|---|---|---|
+| USA DEBUG | 295/295 identical | identical | identical (`79f9d313...`) | identical | identical |
+| USA FINAL | 295/295 | identical | identical (`4437eca0...`, FINAL `4DEFF69E`) | identical | identical |
+| EUR DEBUG | 295/295 | identical | identical (`240e02e0...`) | identical | identical |
+| EUR FINAL | 295/295 | identical | identical (`714022fb...`) | identical | identical |
+
+`--identity-noline` USA DEBUG prints the marker and links
+`8627c51e...`, the line-insensitive DEBUG `psx_identity.py` built through
+make (DEBUG-NOLINE `F3EBC48E`); the next normal build rebuilds every object
+and lands on `79f9d313...` again.  A second build has no work to do, and
+touching `enemy/nsklfish.h` recompiles exactly `nsklfish.cpp` and `npc.cpp`
+and relinks.
+
+### No MSYS2 (issue #98)
+
+With the PlayStation build on CMake, nothing in the port runs MSYS2:
+- the data build (`port/data`), the PC build (`port`) and the PS1 build
+  (`port/psx`) are CMake + Ninja projects run by Python scripts, with CMake
+  and Ninja from the `PATH` or Visual Studio, and every CI job uses the
+  runner's;
+- `build/globals.mak`'s MSYS2 section is gone.  It let MSYS2's make run
+  `makefile.gfx` and `makefile.gaz` (issues #16, #48, #87, #90), and no
+  script runs either now.  Both makefiles stay, as a record and because
+  `makefile.gaz`'s `<dir>_src` lists are what `port/psx` compiles, but
+  they are not the 1999 originals: `makefile.gfx`'s `$(file)` response
+  file and key caps and `makefile.gaz`'s padicon list and
+  `SBSP_IDENTITY_NOLINE` are the port's, and only ever ran under that
+  section.  `globals.mak` now stops any make but `tools/make.exe` (3.79)
+  with one message naming the port scripts, as the section's two guards
+  did.  The section's last use was the oracle `port/psx` was held to
+  (above): real `makefile.gaz` builds.  Holding it to them again means
+  restoring the section from `git show b18af743b:build/globals.mak` and
+  using MSYS2's make 4.x, which the makefiles' port edits need.
 
 ## Not changed (accepted by `-fpermissive -std=gnu++98`)
 

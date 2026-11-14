@@ -750,36 +750,32 @@ def check_link(res, exe):
 
 
 def selftest(exe, seed, logdir, territory="USA"):
-    # (name, env, exit code, tag the log must show, line that makes it a SKIP)
+    # (name, env, exit code, tag the log must show)
     cases = [
-        ("assert", {"SBSP_SELFTEST": "assert@100"}, 10, "[assert]", None),
-        ("fault", {"SBSP_SELFTEST": "fault@100"}, 11, "[crash] code=0xC0000005", None),
-        ("hang", {"SBSP_SELFTEST": "hang@100", "SBSP_WATCHDOG": "3"}, 12, "[watchdog]", None),
-        ("assert-continue", {"SBSP_SELFTEST": "assert@100", "SBSP_ASSERT_CONTINUE": "1"}, 0, "[assert]", None),
+        ("assert", {"SBSP_SELFTEST": "assert@100"}, 10, "[assert]"),
+        ("fault", {"SBSP_SELFTEST": "fault@100"}, 11, "[crash] code=0xC0000005"),
+        ("hang", {"SBSP_SELFTEST": "hang@100", "SBSP_WATCHDOG": "3"}, 12, "[watchdog]"),
+        ("assert-continue", {"SBSP_SELFTEST": "assert@100", "SBSP_ASSERT_CONTINUE": "1"}, 0, "[assert]"),
         # the CRT terminations that raise no SEH exception (issue #62)
-        ("abort", {"SBSP_SELFTEST": "abort@100"}, 11, "[crash] kind=abort", None),
+        ("abort", {"SBSP_SELFTEST": "abort@100"}, 11, "[crash] kind=abort"),
         # a second abort() from a fault-safe exit hook: SIGABRT must still be
         # armed, or the CRT ends the process with 3 under a [summary] of 11
-        ("abort-in-hook", {"SBSP_SELFTEST": "abort-in-hook@100"}, 11, "[crash] kind=abort", None),
-        ("terminate", {"SBSP_SELFTEST": "terminate@100"}, 11, "[crash] kind=terminate", None),
-        ("invalid-param", {"SBSP_SELFTEST": "invalid-param@100"}, 11, "[crash] kind=invalid-parameter",
-         "[selftest] invalid-param returned"),
-        ("stack-overflow", {"SBSP_SELFTEST": "stack-overflow@100"}, 11, "[crash] code=0xC00000FD", None),
+        ("abort-in-hook", {"SBSP_SELFTEST": "abort-in-hook@100"}, 11, "[crash] kind=abort"),
+        ("terminate", {"SBSP_SELFTEST": "terminate@100"}, 11, "[crash] kind=terminate"),
+        # the static UCRT every exe links since issue #39 calls the
+        # invalid-parameter handler (MinGW's msvcrt.dll never did, and this
+        # case was a SKIP on those exes)
+        ("invalid-param", {"SBSP_SELFTEST": "invalid-param@100"}, 11, "[crash] kind=invalid-parameter"),
+        ("stack-overflow", {"SBSP_SELFTEST": "stack-overflow@100"}, 11, "[crash] code=0xC00000FD"),
     ]
     ok = True
-    for name, env, want, tag, skip in cases:
+    for name, env, want, tag in cases:
         # --pad-script: nothing pressed, but a scripted-input run like every
         # other one here (no sbsp.ini, live keyboard and pad ignored)
         args = ["--level", "1-1", "--seed", str(seed), "--exit-after", "300",
                 "--pad-script", "0:0000"] + DETERMINISM
         log = Path(logdir) / f"selftest_{name}.log" if logdir else None
         res = run_game(exe, args, env, 120, log)
-        # msvcrt.dll (the MinGW exe's CRT) never calls the invalid-parameter
-        # handler; the clang-cl exes' static UCRT must, so no SKIP there
-        if skip and any(l.startswith(skip) for l in res.lines) and \
-                re.search(rb"(?i)msvcrt\.dll\0", Path(exe).read_bytes()):
-            print(f"  SKIP selftest {name}: msvcrt.dll does not report it (exit {res.code})")
-            continue
         tagged = any(l.startswith(tag) for l in res.lines)
         # the exit code the process returned is the one [summary] states,
         # and there is exactly one [summary], whoever else called Port_Exit
