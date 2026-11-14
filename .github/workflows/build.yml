@@ -94,8 +94,8 @@ jobs:
   # trans.h, ...) that gate both the PC and PSX configure/build steps.  The
   # CMake + Ninja data project in port/data (issue #95) runs the committed x64
   # converter EXEs in port/tools/x64 (issue #48, LFS, fetched by the pull
-  # below): no compiler, just MSYS2's CMake and Ninja, at C:\msys64 where
-  # build_data.py looks first, and the runner's Python.
+  # below): no compiler and no MSYS2, just the runner's CMake, Ninja and
+  # Python, which build_data.py finds on the PATH (issue #98).
   data:
     needs: lfs
     runs-on: windows-latest
@@ -118,15 +118,6 @@ jobs:
       - name: Keycaps in step with masters
         shell: bash
         run: python port/tools/stretch_keycaps.py --check
-
-      - uses: msys2/setup-msys2@v2
-        with:
-          location: C:\
-          msystem: MINGW32
-          install: >-
-            mingw-w64-i686-cmake
-            mingw-w64-i686-ninja
-          cache: true
 
       - name: Build data (BigLump.Bin + generated headers)
         run: port\build-data.cmd %TERRITORY%
@@ -195,12 +186,13 @@ jobs:
           name: sbsp-data-${{ env.TERRITORY }}-${{ env.VERSION }}
           path: out/
 
-      # CMakePresets.json hardcodes C:/msys64/mingw32/bin/ninja.exe as
-      # CMAKE_MAKE_PROGRAM, so location must match for cmake to find it.
-      # windows-latest already has MSYS2 installed there - release: false
-      # reuses it instead of trying (and failing) a fresh install over it.
-      # python: the playthrough tier driver (port/tests/run_tier.py), found
-      # by CMake's find_package(Python3) at configure time.
+      # The MinGW presets (issue #39 retires them): build_pc.py puts
+      # C:\msys64\mingw32\bin on the PATH for gcc's runtime DLLs, so
+      # location must be C:\.  windows-latest already has MSYS2 installed
+      # there - release: false reuses it instead of trying (and failing) a
+      # fresh install over it.  python runs build_pc.py and the playthrough
+      # tier driver (port/tests/run_tier.py): build_pc.py configures with
+      # Python3_EXECUTABLE set to itself.
       - uses: msys2/setup-msys2@v2
         with:
           location: C:\
@@ -227,7 +219,7 @@ jobs:
             https://repo.msys2.org/mingw/mingw32/mingw-w64-i686-sdl3-3.4.10-1-any.pkg.tar.zst
 
       - name: Build PC port (${{ matrix.preset }})
-        run: bash port/build-pc.sh ${{ matrix.preset }}
+        run: python port/tools/build_pc.py ${{ matrix.preset }}
 
       - name: Unit tests
         # a data-dependent test that finds its input missing exits 1 here
@@ -334,11 +326,11 @@ jobs:
           cmake --version
           ninja --version
 
-      # the preset borrows MSYS2's ninja for local use; the runner has its
-      # own on PATH
+      # the presets name no make program, so CMake uses the runner's Ninja
+      # from the PATH
       - name: Configure (clang-cl, ${{ matrix.triple }})
         working-directory: port
-        run: cmake --preset ${{ matrix.preset }} -DCMAKE_MAKE_PROGRAM=ninja
+        run: cmake --preset ${{ matrix.preset }}
 
       - name: Build
         working-directory: port

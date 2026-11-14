@@ -1,4 +1,4 @@
-/* SPIR-V for present.vert - regenerate with port/psyq/vk/shaders/gen_spv.sh */
+/* SPIR-V for present.vert - regenerate with port/psyq/vk/shaders/gen_spv.py */
 static const unsigned int g_present_vert_spv[] = {
 0x07230203,0x00010000,0x000d000b,0x0000002b,
 0x00000000,0x00020011,0x00000001,0x0006000b,
