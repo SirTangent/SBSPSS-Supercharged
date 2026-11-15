@@ -87,9 +87,9 @@ def find_cmake():
         if v and v >= MIN_CMAKE:
             return exe
         tried.append("%s (%s): %s" % (exe, where, "version %d.%d" % v if v else "doesn't run"))
-    sys.exit("no CMake %d.%d or newer.  Install Visual Studio 2022's \"C++ CMake tools for Windows\"\n"
-             "component (Visual Studio Installer > Modify > Desktop development with C++), put a CMake on\n"
-             "the PATH, or set SBSP_CMAKE to a cmake.exe.%s"
+    sys.exit("no CMake %d.%d or newer.  Add Visual Studio's \"C++ CMake tools for Windows\" component\n"
+             "(Visual Studio Installer > More > Import configuration, with the repository's .vsconfig), put a\n"
+             "CMake on the PATH, or set SBSP_CMAKE to a cmake.exe.%s"
              % (MIN_CMAKE + ("".join("\n  skipped " + t for t in tried),)))
 
 
@@ -97,8 +97,8 @@ def find_ninja():
     for exe, _ in _candidates("ninja", "SBSP_NINJA", "Ninja"):
         if os.path.isfile(exe):
             return exe
-    sys.exit("no Ninja.  Install Visual Studio 2022's \"C++ CMake tools for Windows\" component,\n"
-             "put a ninja.exe on the PATH, or set SBSP_NINJA to one.")
+    sys.exit("no Ninja.  Add Visual Studio's \"C++ CMake tools for Windows\" component (the repository's\n"
+             ".vsconfig lists it), put a ninja.exe on the PATH, or set SBSP_NINJA to one.")
 
 
 def ctest_for(cmake):

@@ -21,9 +21,16 @@ In line with the overall project purpose, you can build the game executable usin
 | Windows 10 or 11, 64-bit | The game is a 64-bit executable. |
 | Git with Git LFS | Install [Git for Windows](https://git-scm.com/install/windows), then `git lfs install` once. |
 | Python 3.8 or newer | From <https://www.python.org> (or its Python install manager), on the `PATH`. It runs the build scripts, the data build's text steps and the automated playthrough tests. |
-| Visual Studio 2022 (Community or Build Tools) | The *Desktop development with C++* workload with its MSVC x64/x86 build tools, a Windows 10/11 SDK and the *C++ CMake tools for Windows* component. The build scripts take CMake and Ninja from it (or from the `PATH`, when both are there). |
-| LLVM | [LLVM](https://releases.llvm.org) at `C:\Program Files\LLVM`, or Visual Studio's *C++ Clang tools for Windows* component: the game builds with `clang-cl`. Everything else (SDL3, Vulkan headers) is fetched by CMake. |
+| Visual Studio 2026 or 2022 (Community or Build Tools) | With the four components the repository's `.vsconfig` lists (below): the MSVC x64/x86 build tools, a Windows 11 SDK, *C++ CMake tools for Windows* and *C++ Clang tools for Windows*. The game is compiled with that `clang-cl`, and the build scripts take CMake and Ninja from it (or from the `PATH`, when both are there). A Visual Studio 2022 must be recent enough to bring CMake 3.28 or newer. |
+| LLVM (optional) | The [LLVM release](https://releases.llvm.org) at `C:\Program Files\LLVM`. When it is installed the build uses its `clang-cl` instead of Visual Studio's, as CI does. |
 
+To add the components, open the Visual Studio Installer, choose *More >
+Import configuration* and pick `.vsconfig` from the repository root (after
+section 2's clone). It only adds what is missing. Installing Visual Studio
+for the first time, its bootstrapper takes the file directly, for example
+`vs_community.exe --config <clone>\.vsconfig`.
+
+Everything else the game needs (SDL3, the Vulkan headers) is fetched by CMake.
 Just a note, your GPU must support Vulkan. Most modern systems do.
 
 That is all: the data converters, the 1999 PlayStation toolchain (`tools\psyq`)
@@ -45,7 +52,7 @@ unit tests and skips the playthrough tests with a note. Each build directory
 remembers the setting until the script runs again with
 `SBSP_PLAYTHROUGH=ON`. Configuring by hand instead, the switch is
 `cmake --preset debug -DSBSP_PLAYTHROUGH=OFF`, run in `port\` from a
-*Developer PowerShell for VS 2022* (which puts CMake and Ninja on the
+*Developer PowerShell for VS* (which puts CMake and Ninja on the
 `PATH`).
 
 ## 2. Get the source (Powershell)
