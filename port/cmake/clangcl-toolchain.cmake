@@ -7,10 +7,11 @@
 # (tools/Data/include/dstructs.h); the x64 game build reads them through a
 # 4-byte pointer type instead of widening them (SBSP_PC64, conv_pc.md).
 #
-# Needs: an LLVM install with clang-cl / lld-link / llvm-rc (the official
-# LLVM release at C:\Program Files\LLVM, or the "C++ Clang tools for
-# Windows" component of Visual Studio 2022/2026) and Visual Studio's MSVC
-# x64/x86 build tools + a Windows 10/11 SDK.  CMake and Ninja come from the
+# Needs: clang-cl / lld-link / llvm-rc - the "C++ Clang tools for Windows"
+# component of Visual Studio 2022/2026 (the repository's .vsconfig lists it),
+# or the official LLVM release at C:\Program Files\LLVM, which wins when both
+# are there (CI builds with it) - and Visual Studio's MSVC x64/x86 build
+# tools + a Windows 10/11 SDK.  CMake and Ninja come from the
 # PATH, or from Visual Studio's CMake component through port\build-pc.cmd
 # (port/tools/buildenv.py).
 #
@@ -49,7 +50,8 @@ file(GLOB _sbsp_vs_llvm LIST_DIRECTORIES true
 find_program(SBSP_CLANG_CL clang-cl
     HINTS "${LLVM_ROOT}/bin" "C:/Program Files/LLVM/bin" ${_sbsp_vs_llvm})
 if(NOT SBSP_CLANG_CL)
-    message(FATAL_ERROR "clang-cl.exe not found: install LLVM (https://releases.llvm.org) or set LLVM_ROOT")
+    message(FATAL_ERROR "clang-cl.exe not found: add Visual Studio's \"C++ Clang tools for Windows\" component "
+                        "(the repository's .vsconfig lists it), install LLVM (https://releases.llvm.org), or set LLVM_ROOT")
 endif()
 get_filename_component(_sbsp_llvm_bin "${SBSP_CLANG_CL}" DIRECTORY)
 
