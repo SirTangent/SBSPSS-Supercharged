@@ -88,8 +88,9 @@ def find_cmake():
             return exe
         tried.append("%s (%s): %s" % (exe, where, "version %d.%d" % v if v else "doesn't run"))
     sys.exit("no CMake %d.%d or newer.  Add Visual Studio's \"C++ CMake tools for Windows\" component\n"
-             "(Visual Studio Installer > More > Import configuration, with the repository's .vsconfig), put a\n"
-             "CMake on the PATH, or set SBSP_CMAKE to a cmake.exe.%s"
+             "(Visual Studio Installer > More > Import configuration, with the repository's .vsconfig); if it\n"
+             "is there but too old (listed below), update Visual Studio: 2022 brings CMake 3.28 from 17.9.\n"
+             "Or put a CMake on the PATH, or set SBSP_CMAKE to a cmake.exe.%s"
              % (MIN_CMAKE + ("".join("\n  skipped " + t for t in tried),)))
 
 
