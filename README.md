@@ -48,9 +48,24 @@ section 2's clone:
   `Microsoft.VisualStudio.2022.Community` the 2022 edition. A downloaded
   installer takes the file the same way: `vs_community.exe` or
   `vs_BuildTools.exe --config <clone>\.vsconfig`. (winget cannot change a
-  Visual Studio that is already installed: use the Installer for that.)
+  Visual Studio that is already installed: use the Installer for that, or
+  `port\setup.cmd --fix` below.)
 
 The optional LLVM is `winget install --id LLVM.LLVM`.
+
+**Check the machine.** After the clone, from the repository root:
+
+```bat
+port\setup.cmd
+```
+
+checks everything the build looks for, the way the build looks for it:
+Python, Git and Git LFS, that every LFS file is pulled, CMake 3.28+ and Ninja,
+`clang-cl` 20+, the MSVC toolset, a Windows SDK and the Vulkan loader. Each
+line says `ok`, or what is missing and how to fix it. `port\setup.cmd --fix`
+also runs `git lfs pull` and adds Visual Studio's missing components from
+`.vsconfig` (the Installer asks for admin rights). It does not install
+Visual Studio itself: with none installed, it prints the winget command above.
 
 Everything else the game needs (SDL3, the Vulkan headers) is fetched by CMake.
 Just a note, your GPU must support Vulkan. Most modern systems do.

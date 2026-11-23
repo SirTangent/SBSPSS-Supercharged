@@ -89,7 +89,8 @@ find_program(SBSP_CLANG_CL clang-cl
     HINTS "${LLVM_ROOT}/bin" "C:/Program Files/LLVM/bin" ${_sbsp_vs_llvm})
 if(NOT SBSP_CLANG_CL)
     message(FATAL_ERROR "clang-cl.exe not found: add Visual Studio's \"C++ Clang tools for Windows\" component "
-                        "(the repository's .vsconfig lists it), install LLVM (https://releases.llvm.org), or set LLVM_ROOT")
+                        "(the repository's .vsconfig lists it), install LLVM (https://releases.llvm.org), or set LLVM_ROOT. "
+                        "port\\setup.cmd checks every prerequisite.")
 endif()
 if(NOT _sbsp_in_tc)
     execute_process(COMMAND "${SBSP_CLANG_CL}" --version OUTPUT_VARIABLE _sbsp_clang_ver ERROR_QUIET)

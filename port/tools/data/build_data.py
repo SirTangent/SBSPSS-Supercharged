@@ -74,7 +74,8 @@ def check_tools():
         if not os.path.isfile(exe) or os.path.getsize(exe) < 4096:
             sys.exit("ERROR: port/tools/x64/%s.exe is missing or an unmaterialised Git LFS pointer.\n"
                      "       Run: git lfs pull --include \"port/tools/x64/*.exe\"\n"
-                     "       (or add --vintage-tools to build with the 1999 converters)" % t)
+                     "       (or add --vintage-tools to build with the 1999 converters).\n"
+                     "       port\\setup.cmd checks every prerequisite; --fix pulls the LFS files." % t)
 
 
 def main(argv):
