@@ -70,7 +70,8 @@ foreach(_t IN LISTS _tools)
     file(SIZE ${_exe} _size)
     if(_size LESS 4096)
         message(FATAL_ERROR "${TOOL_${_t}} is ${_size} bytes, an unmaterialised Git LFS pointer: "
-                            "git lfs pull --include \"port/tools/x64/*.exe,port/tools/lznp.exe\"")
+                            "git lfs pull --include \"port/tools/x64/*.exe,port/tools/lznp.exe\" "
+                            "(port\\setup.cmd checks every prerequisite; --fix pulls the LFS files)")
     endif()
     set(EXE_${_t} ${_exe})
 endforeach()

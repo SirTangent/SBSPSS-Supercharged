@@ -7,8 +7,9 @@ parity64 steps stubbed out), all equal.  Issue #39 then renamed the presets
 the table below is that grammar, so a change to it shows up here.  Also:
 --no-data and the territories whose data a command line builds first;
 game_sources.cmake must be what port/cmake/gen_game_sources.py makes from
-makefile.gaz, the PS1 build's object list must resolve, and .vsconfig must
-list the Visual Studio components the build looks for.
+makefile.gaz, the PS1 build's object list must resolve, .vsconfig must
+list the Visual Studio components the build looks for, and port\\setup.cmd's
+checks must read versions, LFS pointers and missing tools right.
 
     build_scripts_test.py
 """
@@ -24,6 +25,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "tools"))
 sys.path.insert(0, os.path.join(HERE, "..", "tools", "psx"))
 import build_pc  # noqa: E402
 import buildenv  # noqa: E402
+import check_setup  # noqa: E402
 import psx_manifest  # noqa: E402
 
 # (command line, (mode, presets, ninja args)) - None is a usage error.
@@ -326,6 +328,53 @@ for component in (buildenv.VS_CMAKE_COMPONENT, VS_CLANG_COMPONENT):
     ok = component in vsconfig
     failed += not ok
     print("%s  .vsconfig lists %s%s" % ("pass" if ok else "FAIL", component, why))
+
+# port\setup.cmd (port/tools/check_setup.py): its parts, on fixed inputs.
+# The clang-cl minimum is the toolchain's own number, read from the file.
+for label, ok in (
+        ("setup: the clang-cl minimum is the toolchain's (20)", check_setup.clang_min() == 20),
+        ("setup: clang-cl --version parsed",
+         check_setup.clang_version("clang version 23.1.5 (https://github.com/llvm/llvm-project x)\nTarget: x86_64")
+         == (23, "23.1.5")),
+        ("setup: Visual Studio's clang-cl --version parsed",
+         check_setup.clang_version("clang version 22.1.3\nInstalledDir: C:\\VS") == (22, "22.1.3")),
+        ("setup: no version in the text is None", check_setup.clang_version("not clang") is None)):
+    failed += not ok
+    print("%s  %s" % ("pass" if ok else "FAIL", label))
+with tempfile.TemporaryDirectory() as tmp:
+    pointer, real = os.path.join(tmp, "pointer.bin"), os.path.join(tmp, "real.bin")
+    with open(pointer, "wb") as f:
+        f.write(b"version https://git-lfs.github.com/spec/v1\noid sha256:00\nsize 133357568\n")
+    with open(real, "wb") as f:
+        f.write(b"RIFF....real content")
+    for label, ok in (("an LFS pointer is one", check_setup.is_lfs_pointer(pointer)),
+                      ("a pulled file is not", not check_setup.is_lfs_pointer(real)),
+                      ("a missing file counts as not pulled", check_setup.is_lfs_pointer(os.path.join(tmp, "gone")))):
+        failed += not ok
+        print("%s  setup: %s" % ("pass" if ok else "FAIL", label))
+
+
+def _no_tool():
+    sys.exit("no CMake 3.28 or newer.  (the rest of buildenv's message)")
+
+
+saved = os.environ.pop("SBSP_CMAKE", None)
+try:
+    r_vs = check_setup.check_found("CMake", _no_tool, "SBSP_CMAKE")
+    os.environ["SBSP_CMAKE"] = r"C:\nope\cmake.exe"
+    r_env = check_setup.check_found("CMake", _no_tool, "SBSP_CMAKE")
+finally:
+    os.environ.pop("SBSP_CMAKE", None)
+    if saved is not None:
+        os.environ["SBSP_CMAKE"] = saved
+for label, ok in (("a missing CMake is the Visual Studio Installer's to fix",
+                   r_vs.status == check_setup.MISSING and r_vs.fixer == "vs"),
+                  ("but not when SBSP_CMAKE names a file that is not there",
+                   r_env.status == check_setup.MISSING and r_env.fixer == "" and "SBSP_CMAKE" in r_env.fix),
+                  ("a found tool is ok", check_setup.check_found("CMake", lambda: "C:\\cmake.exe", "SBSP_CMAKE").status
+                   == check_setup.OK)):
+    failed += not ok
+    print("%s  setup: %s" % ("pass" if ok else "FAIL", label))
 
 r = subprocess.run([sys.executable, os.path.join(HERE, "..", "cmake", "gen_game_sources.py"), "--check"])
 failed += r.returncode != 0
