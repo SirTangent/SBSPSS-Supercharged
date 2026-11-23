@@ -7,10 +7,12 @@
 # (tools/Data/include/dstructs.h); the x64 game build reads them through a
 # 4-byte pointer type instead of widening them (SBSP_PC64, conv_pc.md).
 #
-# Needs: an LLVM install with clang-cl / lld-link / llvm-rc (the official
-# LLVM release at C:\Program Files\LLVM, or the "C++ Clang tools for
-# Windows" component of Visual Studio 2022/2026) and Visual Studio's MSVC
-# x64/x86 build tools + a Windows 10/11 SDK.  CMake and Ninja come from the
+# Needs: clang-cl / lld-link / llvm-rc, Clang 20 or newer - the "C++ Clang
+# tools for Windows" component of Visual Studio 2022/2026 (the repository's
+# .vsconfig lists it), or the official LLVM release at C:\Program Files\LLVM,
+# which wins when both are there (CI builds with it) - and Visual Studio's
+# MSVC x64/x86 build tools + a Windows 10/11 SDK.  Visual Studio is found
+# through vswhere, whatever its edition and folder.  CMake and Ninja come from the
 # PATH, or from Visual Studio's CMake component through port\build-pc.cmd
 # (port/tools/buildenv.py).
 #
@@ -41,15 +43,62 @@ endif()
 
 set(LLVM_ROOT "" CACHE PATH "LLVM install with clang-cl.exe/lld-link.exe (default: C:/Program Files/LLVM, else the VS-bundled copy)")
 
-file(GLOB _sbsp_vs_llvm LIST_DIRECTORIES true
+# The oldest clang-cl known to build and pass the tests: 20.1.8, GitHub's
+# windows-latest LLVM (CI).  22.1.3 (Visual Studio 2026's) and 23.1.5 (the
+# LLVM release) pass too.
+set(SBSP_CLANG_MIN 20)
+
+get_property(_sbsp_in_tc GLOBAL PROPERTY IN_TRY_COMPILE)
+
+# Every Visual Studio install, newest first, from vswhere, which the
+# Installer always puts in the same place: Build Tools installs under
+# Program Files (x86), and any edition can be on another drive (PR #111
+# review).  The fixed roots after it are the fallback without vswhere.
+set(_sbsp_pf86_name "ProgramFiles(x86)")
+set(_sbsp_pf86 "$ENV{${_sbsp_pf86_name}}")
+if(NOT _sbsp_pf86)
+    set(_sbsp_pf86 "C:/Program Files (x86)")
+endif()
+file(TO_CMAKE_PATH "${_sbsp_pf86}" _sbsp_pf86)
+set(_sbsp_vs_roots "")
+if(EXISTS "${_sbsp_pf86}/Microsoft Visual Studio/Installer/vswhere.exe")
+    execute_process(COMMAND "${_sbsp_pf86}/Microsoft Visual Studio/Installer/vswhere.exe"
+                            -all -products * -sort -property installationPath
+                    OUTPUT_VARIABLE _sbsp_vswhere_out ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
+    string(REPLACE "\r" "" _sbsp_vswhere_out "${_sbsp_vswhere_out}")
+    string(REPLACE "\n" ";" _sbsp_vswhere_out "${_sbsp_vswhere_out}")
+    foreach(_root IN LISTS _sbsp_vswhere_out)
+        if(_root)
+            file(TO_CMAKE_PATH "${_root}" _root)
+            list(APPEND _sbsp_vs_roots "${_root}")
+        endif()
+    endforeach()
+endif()
+
+set(_sbsp_vs_llvm "")
+foreach(_root IN LISTS _sbsp_vs_roots)
+    list(APPEND _sbsp_vs_llvm "${_root}/VC/Tools/Llvm/x64/bin" "${_root}/VC/Tools/Llvm/bin")
+endforeach()
+file(GLOB _sbsp_vs_llvm_fixed LIST_DIRECTORIES true
     "C:/Program Files/Microsoft Visual Studio/18/*/VC/Tools/Llvm/x64/bin"
     "C:/Program Files/Microsoft Visual Studio/18/*/VC/Tools/Llvm/bin"
     "C:/Program Files/Microsoft Visual Studio/2022/*/VC/Tools/Llvm/x64/bin"
     "C:/Program Files/Microsoft Visual Studio/2022/*/VC/Tools/Llvm/bin")
+list(APPEND _sbsp_vs_llvm ${_sbsp_vs_llvm_fixed})
 find_program(SBSP_CLANG_CL clang-cl
     HINTS "${LLVM_ROOT}/bin" "C:/Program Files/LLVM/bin" ${_sbsp_vs_llvm})
 if(NOT SBSP_CLANG_CL)
-    message(FATAL_ERROR "clang-cl.exe not found: install LLVM (https://releases.llvm.org) or set LLVM_ROOT")
+    message(FATAL_ERROR "clang-cl.exe not found: add Visual Studio's \"C++ Clang tools for Windows\" component "
+                        "(the repository's .vsconfig lists it), install LLVM (https://releases.llvm.org), or set LLVM_ROOT")
+endif()
+if(NOT _sbsp_in_tc)
+    execute_process(COMMAND "${SBSP_CLANG_CL}" --version OUTPUT_VARIABLE _sbsp_clang_ver ERROR_QUIET)
+    if(_sbsp_clang_ver MATCHES "clang version ([0-9]+)\\.")
+        if(CMAKE_MATCH_1 LESS SBSP_CLANG_MIN)
+            message(FATAL_ERROR "${SBSP_CLANG_CL} is Clang ${CMAKE_MATCH_1}; the build needs Clang ${SBSP_CLANG_MIN} or "
+                                "newer: update Visual Studio (its C++ Clang tools) or LLVM, or set LLVM_ROOT to a newer one")
+        endif()
+    endif()
 endif()
 get_filename_component(_sbsp_llvm_bin "${SBSP_CLANG_CL}" DIRECTORY)
 
@@ -80,7 +129,6 @@ set(CMAKE_MT          "${_sbsp_llvm_bin}/llvm-mt.exe")
 # and SDK directories are shared by both architectures, and its LIB (the
 # other architecture's import libraries) is only searched after the explicit
 # /libpath dirs below, which lld-link tries first.
-get_property(_sbsp_in_tc GLOBAL PROPERTY IN_TRY_COMPILE)
 if(NOT _sbsp_in_tc AND DEFINED ENV{VSCMD_ARG_TGT_ARCH} AND NOT "$ENV{VSCMD_ARG_TGT_ARCH}" STREQUAL "${SBSP_ARCH}")
     message(WARNING "This is a $ENV{VSCMD_ARG_TGT_ARCH} Native Tools prompt but SBSP_ARCH=${SBSP_ARCH}: the prompt's architecture is ignored - its toolset and SDK are used with their ${SBSP_ARCH} libraries, named by /libpath ahead of its LIB")
 endif()
@@ -92,13 +140,20 @@ if(NOT SBSP_VCTOOLSDIR AND DEFINED ENV{VCToolsInstallDir})
     set(_sbsp_vc_from "vcvars")
 endif()
 if(NOT SBSP_VCTOOLSDIR)
-    file(GLOB _sbsp_vc LIST_DIRECTORIES true
+    # every install vswhere reported, then the fixed roots
+    set(_sbsp_vc_globs "")
+    foreach(_root IN LISTS _sbsp_vs_roots)
+        list(APPEND _sbsp_vc_globs "${_root}/VC/Tools/MSVC/*")
+    endforeach()
+    list(APPEND _sbsp_vc_globs
         "C:/Program Files/Microsoft Visual Studio/18/*/VC/Tools/MSVC/*"
         "C:/Program Files/Microsoft Visual Studio/2022/*/VC/Tools/MSVC/*"
         "C:/Program Files (x86)/Microsoft Visual Studio/2019/*/VC/Tools/MSVC/*")
+    file(GLOB _sbsp_vc LIST_DIRECTORIES true ${_sbsp_vc_globs})
+    list(REMOVE_DUPLICATES _sbsp_vc)
     list(LENGTH _sbsp_vc _n)
     if(_n EQUAL 0)
-        message(FATAL_ERROR "No MSVC toolset found under Visual Studio 2026 (18)/2022/2019 (VC/Tools/MSVC/<ver>): install the 'MSVC C++ x64/x86 build tools' component or set SBSP_VCTOOLSDIR")
+        message(FATAL_ERROR "No MSVC toolset found in any Visual Studio install (VC/Tools/MSVC/<ver>): add the 'MSVC C++ x64/x86 build tools' component (the repository's .vsconfig lists it) or set SBSP_VCTOOLSDIR")
     endif()
     # newest toolset version across every VS install (sorting the full
     # path would rank ".../2022/..." above ".../18/..." = VS 2026)

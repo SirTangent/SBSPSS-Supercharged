@@ -21,9 +21,38 @@ In line with the overall project purpose, you can build the game executable usin
 | Windows 10 or 11, 64-bit | The game is a 64-bit executable. |
 | Git with Git LFS | Install [Git for Windows](https://git-scm.com/install/windows), then `git lfs install` once. |
 | Python 3.8 or newer | From <https://www.python.org> (or its Python install manager), on the `PATH`. It runs the build scripts, the data build's text steps and the automated playthrough tests. |
-| Visual Studio 2022 (Community or Build Tools) | The *Desktop development with C++* workload with its MSVC x64/x86 build tools, a Windows 10/11 SDK and the *C++ CMake tools for Windows* component. The build scripts take CMake and Ninja from it (or from the `PATH`, when both are there). |
-| LLVM | [LLVM](https://releases.llvm.org) at `C:\Program Files\LLVM`, or Visual Studio's *C++ Clang tools for Windows* component: the game builds with `clang-cl`. Everything else (SDL3, Vulkan headers) is fetched by CMake. |
+| Visual Studio 2026 or 2022 (Community or Build Tools) | With the four components the repository's `.vsconfig` lists (below): the MSVC x64/x86 build tools, a Windows 11 SDK, *C++ CMake tools for Windows* and *C++ Clang tools for Windows*. The game is compiled with that `clang-cl` (Clang 20 or newer), and the build scripts take CMake and Ninja from it (or from the `PATH`, when both are there). A Visual Studio 2022 must be 17.9 or newer, for CMake 3.28. |
+| LLVM (optional) | The [LLVM release](https://releases.llvm.org) at `C:\Program Files\LLVM`, Clang 20 or newer. When it is installed the build uses its `clang-cl` instead of Visual Studio's, as CI does. |
 
+From a terminal, winget (part of Windows 11) installs Git and Python; open a
+new terminal afterwards so the `PATH` is updated:
+
+```powershell
+winget install --id Git.Git
+winget install --id Python.Python.3.15
+```
+
+Visual Studio's components come from `.vsconfig`, so set it up after
+section 2's clone:
+
+- **Visual Studio already installed:** open the Visual Studio Installer,
+  choose *More > Import configuration* and pick `.vsconfig` from the
+  repository root. It only adds what is missing.
+- **No Visual Studio yet:** from the repository root, in PowerShell:
+
+  ```powershell
+  winget install --id Microsoft.VisualStudio.Community --override "--config `"$PWD\.vsconfig`" --passive --wait"
+  ```
+
+  `Microsoft.VisualStudio.BuildTools` installs Build Tools instead, and
+  `Microsoft.VisualStudio.2022.Community` the 2022 edition. A downloaded
+  installer takes the file the same way: `vs_community.exe` or
+  `vs_BuildTools.exe --config <clone>\.vsconfig`. (winget cannot change a
+  Visual Studio that is already installed: use the Installer for that.)
+
+The optional LLVM is `winget install --id LLVM.LLVM`.
+
+Everything else the game needs (SDL3, the Vulkan headers) is fetched by CMake.
 Just a note, your GPU must support Vulkan. Most modern systems do.
 
 That is all: the data converters, the 1999 PlayStation toolchain (`tools\psyq`)
@@ -45,7 +74,7 @@ unit tests and skips the playthrough tests with a note. Each build directory
 remembers the setting until the script runs again with
 `SBSP_PLAYTHROUGH=ON`. Configuring by hand instead, the switch is
 `cmake --preset debug -DSBSP_PLAYTHROUGH=OFF`, run in `port\` from a
-*Developer PowerShell for VS 2022* (which puts CMake and Ninja on the
+*Developer PowerShell for VS* (which puts CMake and Ninja on the
 `PATH`).
 
 ## 2. Get the source (Powershell)

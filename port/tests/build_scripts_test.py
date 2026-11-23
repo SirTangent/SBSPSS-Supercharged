@@ -7,10 +7,12 @@ parity64 steps stubbed out), all equal.  Issue #39 then renamed the presets
 the table below is that grammar, so a change to it shows up here.  Also:
 --no-data and the territories whose data a command line builds first;
 game_sources.cmake must be what port/cmake/gen_game_sources.py makes from
-makefile.gaz, and the PS1 build's object list must resolve.
+makefile.gaz, the PS1 build's object list must resolve, and .vsconfig must
+list the Visual Studio components the build looks for.
 
     build_scripts_test.py
 """
+import json
 import os
 import shlex
 import subprocess
@@ -308,6 +310,22 @@ with tempfile.TemporaryDirectory() as tmp:
     print("%s  hold_lock: a second process waits, then gets it" % ("pass" if ok else "FAIL"))
     if not ok:
         print("      said %r, still waiting %r, exit %r" % (said, still, rc))
+
+# The repository's .vsconfig installs what the build looks for: buildenv.py
+# finds Visual Studio's CMake by the component vswhere -requires, and the
+# toolchain's clang-cl comes from the Clang component (PR #111 review)
+VS_CLANG_COMPONENT = "Microsoft.VisualStudio.Component.VC.Llvm.Clang"
+try:
+    with open(os.path.join(HERE, "..", "..", ".vsconfig")) as f:
+        vsconfig = json.load(f).get("components", [])
+except (OSError, ValueError) as e:
+    vsconfig, why = [], " (%s)" % e
+else:
+    why = ""
+for component in (buildenv.VS_CMAKE_COMPONENT, VS_CLANG_COMPONENT):
+    ok = component in vsconfig
+    failed += not ok
+    print("%s  .vsconfig lists %s%s" % ("pass" if ok else "FAIL", component, why))
 
 r = subprocess.run([sys.executable, os.path.join(HERE, "..", "cmake", "gen_game_sources.py"), "--check"])
 failed += r.returncode != 0
